@@ -592,19 +592,13 @@ def randomize_page():
         async function loadSiteOptions() {
           const sel = document.getElementById("site");
           if (!sel) return;
-          const [sitesRes, batchRes] = await Promise.all([
-            fetch("/admin/sites"),
-            fetch("/admin/recruitment-batches/current")
-          ]);
-          const sitesData = await sitesRes.json().catch(() => ({}));
-          const batchData = await batchRes.json().catch(() => ({}));
-          if (!sitesRes.ok || !batchRes.ok) {
+          const res = await fetch("/participant/active-sites");
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
             document.getElementById("errText").textContent = "站點列表加載失败";
             return;
           }
-          const allSites = sitesData.items || [];
-          const activeSiteIds = ((batchData.batch && batchData.batch.site_ids) || []).map(x => String(x));
-          const items = allSites.filter((row) => activeSiteIds.includes(String(row.site_id)));
+          const items = data.items || [];
           if (!items.length) {
             sel.innerHTML = '<option value="">暂无已啟用站點</option>';
             document.getElementById("errText").textContent = "當前无已啟用站點，請先在管理後台啟用站點。";
@@ -1244,6 +1238,21 @@ def get_participant_ui_config(db: Session = Depends(get_db)):
     if setting is None:
         return {"show_allocation_group": True}
     return {"show_allocation_group": bool(getattr(setting, "h5_show_allocation_group", True))}
+
+
+@app.get("/participant/active-sites")
+def participant_active_sites(db: Session = Depends(get_db)):
+    """當前開放招募批次內的站點（僅 ID/名稱）。無需管理員登入，供手機等設備單獨打開 /h5/randomize 時加載下拉框。"""
+    batch = get_open_batch(db)
+    if batch is None:
+        return {"items": []}
+    site_ids = db.scalars(
+        select(RecruitmentBatchSite.site_id).where(RecruitmentBatchSite.batch_id == batch.id)
+    ).all()
+    if not site_ids:
+        return {"items": []}
+    sites = db.scalars(select(Site).where(Site.site_id.in_(site_ids)).order_by(Site.site_id.asc())).all()
+    return {"items": [{"site_id": s.site_id, "site_name": s.site_name} for s in sites]}
 
 
 @app.put("/admin/participant-page-settings")

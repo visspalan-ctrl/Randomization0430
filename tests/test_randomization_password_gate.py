@@ -103,6 +103,18 @@ def test_phone_and_password_allows_randomization():
     assert ov["intervention_count"] + ov["control_count"] + ov["other_group_count"] == ov["total_enrolled"]
 
 
+def test_participant_active_sites_public_no_admin_session():
+    """受試者設備未登入後台時須仍能加載當前批次站點（與 /h5/randomize 一致）。"""
+    client = TestClient(app)
+    assert client.get("/participant/active-sites").json() == {"items": []}
+    open_batch(client, ["SITE_01", "SITE_02"])
+    res = client.get("/participant/active-sites")
+    assert res.status_code == 200
+    items = res.json()["items"]
+    assert len(items) == 2
+    assert {x["site_id"] for x in items} == {"SITE_01", "SITE_02"}
+
+
 def test_wrong_password_lockout():
     client = TestClient(app)
     open_batch(client, ["SITE_01"])
