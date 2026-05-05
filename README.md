@@ -49,7 +49,7 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ### 4) 打开页面
 - 首页：<http://127.0.0.1:8000/>
 - 登录页：<http://127.0.0.1:8000/admin/login>
-- 管理页：<http://127.0.0.1:8000/admin/web?page=settings>
+- 管理页（需先登录）：先打开 <http://127.0.0.1:8000/admin/login>，登录后进入 <http://127.0.0.1:8000/admin/web?page=settings>
 - API 文档：<http://127.0.0.1:8000/docs>
 
 默认管理员账号（仅本地开发）：
