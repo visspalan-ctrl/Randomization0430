@@ -63,6 +63,7 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 - 浏览器访问 `/admin/*` 未登录时，会跳转到 `/admin/login`
 - 登录成功后写入 HttpOnly Cookie
 - API 调用仍兼容 HTTP Basic Auth
+- 删除站点时仅删除站点配置与关联口令/批次，不会删除历史入组记录（用于审计追溯）
 - 建议通过环境变量覆盖默认账号密码：
 
 ```bash

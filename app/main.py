@@ -332,9 +332,9 @@ class PhoneCorrectionRequest(BaseModel):
     reason: str = ""
 
 
-class RecordDeleteRequest(BaseModel):
+class RecordVoidRequest(BaseModel):
     enrollment_no: str
-    deleted_by: str
+    voided_by: str
     reason: str = ""
 
 
@@ -1150,10 +1150,20 @@ def get_randomization_records(db: Session = Depends(get_db)):
         or 0
     )
     other = max(0, total - intervention - control)
+    voided = (
+        db.scalar(
+            select(func.count())
+            .select_from(RandomizationRecord)
+            .where(RandomizationRecord.activation_status == "voided")
+        )
+        or 0
+    )
     records = db.scalars(select(RandomizationRecord).order_by(RandomizationRecord.id.desc())).all()
     return {
         "overview": {
             "total_enrolled": total,
+            "valid_enrolled": max(0, total - voided),
+            "voided_count": voided,
             "intervention_count": intervention,
             "control_count": control,
             "other_group_count": other,
@@ -1330,28 +1340,46 @@ def admin_correct_phone(payload: PhoneCorrectionRequest, db: Session = Depends(g
 
 
 @app.post("/admin/randomization-records/delete")
-def admin_delete_record(payload: RecordDeleteRequest, db: Session = Depends(get_db)):
+def admin_delete_record(payload: RecordVoidRequest, db: Session = Depends(get_db)):
+    """
+    Backward-compatible endpoint:
+    keep route name 'delete', but perform soft-void to preserve randomization history.
+    """
     record = db.scalar(select(RandomizationRecord).where(RandomizationRecord.enrollment_no == payload.enrollment_no))
     if record is None:
         raise HTTPException(status_code=404, detail="record_not_found")
-    snapshot = {
-        "enrollment_no": record.enrollment_no,
-        "phone_number": record.phone_number,
-        "site_id": record.site_id,
-        "allocation_group": record.allocation_group,
-    }
-    db.delete(record)
+    now = utc_now()
+    is_voided = record.activation_status == "voided"
+    record.activation_status = "pending" if is_voided else "voided"
+    record.activation_timestamp = now
     db.commit()
+    if is_voided:
+        add_audit(
+            db,
+            "admin_record_restored",
+            {
+                "restored_by": payload.voided_by,
+                "reason": payload.reason,
+                "enrollment_no": record.enrollment_no,
+                "phone_number": record.phone_number,
+                "site_id": record.site_id,
+                "allocation_group": record.allocation_group,
+            },
+        )
+        return {"ok": True, "restored_enrollment_no": payload.enrollment_no, "activation_status": record.activation_status}
     add_audit(
         db,
-        "admin_record_deleted",
+        "admin_record_voided",
         {
-            "deleted_by": payload.deleted_by,
+            "voided_by": payload.voided_by,
             "reason": payload.reason,
-            "record": snapshot,
+            "enrollment_no": record.enrollment_no,
+            "phone_number": record.phone_number,
+            "site_id": record.site_id,
+            "allocation_group": record.allocation_group,
         },
     )
-    return {"ok": True, "deleted_enrollment_no": payload.enrollment_no}
+    return {"ok": True, "voided_enrollment_no": payload.enrollment_no, "activation_status": record.activation_status}
 
 
 @app.post("/admin/dev/reset")

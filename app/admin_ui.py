@@ -219,7 +219,7 @@ table.data th {
 table.data td {
   padding: 8px;
   border-bottom: 1px solid var(--border);
-  vertical-align: top;
+  vertical-align: middle;
 }
 table.data tr:hover td { background: #fafafa; }
 .scroll-box {
@@ -227,6 +227,10 @@ table.data tr:hover td { background: #fafafa; }
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
+}
+#recordsScrollBox {
+  max-height: none;
+  height: 760px; /* roughly 20 rows visible before scrolling */
 }
 .batch-pick-zone {
   margin-top: 18px;
@@ -376,25 +380,47 @@ table.data tr:hover td { background: #fafafa; }
 .password-field-wrap.is-revealed .icon-eye-off { display: inline-flex; }
 .table-pwd-cell {
   display: inline-flex;
-  align-items: center;
+  align-items: baseline;
   gap: 6px;
+  white-space: nowrap;
 }
 .table-pwd {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
+  line-height: 1.4;
   color: #334155;
 }
-.pwd-mini-toggle {
-  border: 1px solid var(--border);
-  background: #fff;
-  border-radius: 6px;
-  padding: 2px 6px;
-  cursor: pointer;
+.table-status {
+  display: inline-flex;
+  align-items: center;
   font-size: 12px;
-  line-height: 1;
-  color: #64748b;
+  line-height: 1.4;
+  color: #334155;
 }
-.pwd-mini-toggle:hover { color: var(--accent); border-color: #c7d2fe; }
+.table-time {
+  display: inline-block;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.pwd-mini-toggle {
+  border: none;
+  background: transparent;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  vertical-align: baseline;
+  color: #64748b;
+  margin-top: 0;
+}
+.pwd-mini-toggle:hover { color: var(--accent); }
+.pwd-mini-toggle svg { display: block; width: 16px; height: 16px; }
+.pwd-mini-toggle .icon-eye-off { display: none; }
+.table-pwd-cell[data-revealed='1'] .pwd-mini-toggle .icon-eye { display: none; }
+.table-pwd-cell[data-revealed='1'] .pwd-mini-toggle .icon-eye-off { display: inline-flex; }
 #qrPreview {
   max-width: 240px;
   max-height: 240px;
@@ -470,18 +496,29 @@ def panel_sites() -> str:
       <p class="lead">在站點一览中点击「啟用」加入待选列表（最多 <strong>{RECRUITMENT_BATCH_MAX_ACTIVE_SITES}</strong> 个），再点「開啟新批次」；或仍可通过 <a href="/docs" target="_blank">Swagger</a> 调用接口。口令须落在<strong>同一香港日历日</strong>内的起止時間（本地時間选择器）。</p>
     </div>
     <div class="card">
-      <h3>站點、口令与招募</h3>
-
       <h4 class="subhead subhead-first">統計概覽</h4>
       <div id="siteOverview" class="muted" style="margin-bottom:10px;">加載中…</div>
       <button type="button" class="secondary" onclick="loadSiteOverview()">重新整理概覽</button>
 
-      <h4 class="subhead">站點管理</h4>
-      <p class="muted" style="margin-top:0;">上方用于編輯已有站點（可改名稱/ID）；下方用于新增站點。</p>
-      <div class="site-name-row">
+      <h4 class="subhead">站點設置</h4>
+      <div class="site-name-row" style="margin-top:0;">
+        <div class="field-name">
+          <label for="addSiteNameInput">新增站點名稱</label>
+          <input id="addSiteNameInput" type="text" placeholder="顯示名稱" />
+        </div>
+        <div class="field-site-id">
+          <label for="addSiteIdInput">新增站點 ID</label>
+          <input id="addSiteIdInput" type="text" placeholder="SITE_04" autocomplete="off" />
+        </div>
+        <button type="button" class="btn-save-inline secondary" onclick="addSite()">新增站點</button>
+      </div>
+      <div class="site-name-row" style="margin-top:10px;">
         <div class="field-site">
-          <label for="editSiteSelect">站點</label>
-          <select id="editSiteSelect" onchange="syncEditNameFromSelect()">
+          <label for="editSiteSelect">選擇站點</label>
+          <select id="editSiteSelect" onchange="syncEditNameFromSelect(); document.getElementById('pwdSiteSelect').value = this.value;">
+            <option value="">請選擇站點</option>
+          </select>
+          <select id="pwdSiteSelect" class="pwd-site-select" style="display:none;">
             <option value="">請選擇站點</option>
           </select>
         </div>
@@ -493,34 +530,7 @@ def panel_sites() -> str:
           <label for="editSiteIdInput">站點 ID</label>
           <input id="editSiteIdInput" type="text" placeholder="SITE_01" autocomplete="off" onblur="syncEditSelectFromIdInput()" />
         </div>
-        <button type="button" class="btn-save-inline" onclick="saveSiteName()">儲存名稱</button>
-      </div>
-      <div class="site-name-row" style="margin-top:10px;">
-        <div class="field-site-id">
-          <label for="addSiteIdInput">新增站點 ID</label>
-          <input id="addSiteIdInput" type="text" placeholder="SITE_04" autocomplete="off" />
-        </div>
-        <div class="field-name">
-          <label for="addSiteNameInput">新增站點名稱</label>
-          <input id="addSiteNameInput" type="text" placeholder="顯示名稱" />
-        </div>
-        <button type="button" class="btn-save-inline secondary" onclick="addSite()">新增站點</button>
-      </div>
-
-      <h4 class="subhead">口令設置</h4>
-      <label for="pwdSiteSelect">站點</label>
-      <select id="pwdSiteSelect" class="pwd-site-select">
-        <option value="">請選擇站點</option>
-      </select>
-      <div class="row">
-        <div>
-          <label>生效开始（本地）</label>
-          <input id="pwdWinStart" type="datetime-local" />
-        </div>
-        <div>
-          <label>生效结束（本地）</label>
-          <input id="pwdWinEnd" type="datetime-local" />
-        </div>
+        <button type="button" class="btn-save-inline" onclick="saveSiteName()">保存修改</button>
       </div>
       <label for="pwdRaw">口令</label>
       <div class="password-field-wrap" id="pwdRawWrap">
@@ -531,24 +541,37 @@ def panel_sites() -> str:
         </button>
       </div>
       <p class="muted" style="margin:6px 0 0;font-size:12px;">要求：至少 6 位，且只能为数字（例如 123456）。</p>
-      <label>變更人</label>
-      <input id="pwdBy" value="admin" />
-      <button type="button" onclick="savePassword()">儲存口令</button>
+      <div class="row">
+        <div>
+          <label>生效开始（本地）</label>
+          <input id="pwdWinStart" type="datetime-local" />
+        </div>
+        <div>
+          <label>生效结束（本地）</label>
+          <input id="pwdWinEnd" type="datetime-local" />
+        </div>
+      </div>
+      <div class="site-name-row" style="margin-top:10px;">
+        <div class="field-name">
+          <label>變更人</label>
+          <input id="pwdBy" value="admin" />
+        </div>
+        <button type="button" class="btn-save-inline" onclick="savePassword()">儲存口令</button>
+      </div>
 
       <h4 class="subhead">站點一览</h4>
       <button type="button" class="secondary" onclick="loadSitesAdminTable()">重新整理表格</button>
       <div class="scroll-box" style="margin-top:12px;">
         <table class="data" id="sitesAdminTable">
-          <thead><tr><th>站點ID</th><th>名稱</th><th>口令</th><th>生效起(UTC)</th><th>生效止(UTC)</th><th>操作</th></tr></thead>
+          <thead><tr><th>站點ID</th><th>名稱</th><th>當前狀態</th><th>口令</th><th>生效起(UTC)</th><th>生效止(UTC)</th><th>操作</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
 
+      <h4 style="margin-top:16px;margin-bottom:8px;font-size:12px;font-weight:600;color:#64748b;">已啟用站點</h4>
       <div id="batchPickList" class="batch-pick-zone"></div>
       <p class="muted" style="margin:8px 0 0;">点击表格中的「啟用/取消啟用」将立即同步到當前开放批次。</p>
 
-      <h4 style="margin-top:16px;margin-bottom:8px;font-size:12px;font-weight:600;color:#64748b;">當前开放批次</h4>
-      <pre id="currentBatchJson" class="muted" style="white-space:pre-wrap;background:#f8fafc;color:#334155;border:1px solid var(--border);padding:12px;border-radius:8px;">加載中…</pre>
     </div>
     """
 
@@ -608,47 +631,61 @@ def panel_records() -> str:
     return """
     <div class="page-header">
       <h2>隨機化分組記錄</h2>
-      <p class="lead">查詢入組記錄；在列表中可直接修改手機號或刪除記錄（刪除后手機號可再次入組）。審計以「admin」及預設原因記錄。</p>
+      <p class="lead">查詢入組記錄；在列表中可直接修改手機號或作廢記錄（保留歷史，不影響後續隨機化序列）。審計以「admin」及預設原因記錄。</p>
     </div>
     <div class="card">
       <h3>入組概覽</h3>
       <div id="recordsOverview" class="muted" style="margin-top:8px;">加載中…</div>
     </div>
     <div class="card">
-      <h3>記錄列表</h3>
-      <button type="button" class="secondary" onclick="loadRecords()">重新整理</button>
-      <button type="button" class="secondary" onclick="exportRecordsCsv()">匯出 CSV</button>
-      <div class="row" style="margin-top:10px;">
-        <div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+        <h3 style="margin:0;">記錄列表</h3>
+        <div style="display:flex;gap:8px;">
+          <button type="button" class="secondary" onclick="loadRecords()">重新整理</button>
+          <button type="button" class="secondary" onclick="exportRecordsCsv()">匯出 CSV</button>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px;max-width:none;flex-wrap:nowrap;">
+        <div style="flex:1 1 0;min-width:0;">
           <label>站點</label>
           <select id="recordsFilterSite">
             <option value="">全部站點</option>
           </select>
         </div>
-        <div>
+        <div style="flex:1 1 0;min-width:0;">
           <label>日期</label>
           <input id="recordsFilterDate" type="date" />
         </div>
-      </div>
-      <div class="row">
-        <div>
+        <div style="flex:1 1 0;min-width:0;">
           <label>分組</label>
           <select id="recordsFilterGroup">
             <option value="">全部分組</option>
           </select>
         </div>
-        <div>
+        <div style="flex:1 1 0;min-width:0;">
           <label>招募員ID</label>
           <input id="recordsFilterRecruiter" placeholder="輸入招募員ID關鍵字" />
         </div>
       </div>
-      <button type="button" class="secondary" onclick="applyRecordsFilter()">套用篩選</button>
-      <button type="button" class="secondary" onclick="resetRecordsFilter()">重設篩選</button>
-      <div class="scroll-box" style="margin-top:12px;">
+      <div class="scroll-box" id="recordsScrollBox" style="margin-top:12px;">
         <table class="data" id="recordsTable">
-          <thead><tr><th>入組编号</th><th>手機號</th><th>站點</th><th>招募员ID</th><th>分組</th><th>時間</th><th>操作</th></tr></thead>
+          <thead><tr><th>编号</th><th>入組编号</th><th>手機號</th><th>站點</th><th>招募员ID</th><th>分組</th><th>狀態</th><th>時間</th><th>操作</th></tr></thead>
           <tbody></tbody>
         </table>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px;flex-wrap:wrap;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <label for="recordsPageSize" style="margin:0;">每页</label>
+          <select id="recordsPageSize" style="width:auto;max-width:none;padding:6px 8px;">
+            <option value="20">20</option>
+            <option value="50">50</option>
+          </select>
+          <span id="recordsPageMeta" class="muted">—</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button type="button" class="secondary" id="recordsPrevBtn" style="margin:0;padding:6px 10px;font-size:12px;">上一页</button>
+          <button type="button" class="secondary" id="recordsNextBtn" style="margin:0;padding:6px 10px;font-size:12px;">下一页</button>
+        </div>
       </div>
     </div>
     <div class="card">
@@ -833,14 +870,12 @@ ADMIN_SCRIPTS = """
     if (revealed) {
       textEl.textContent = maskPassword(raw);
       wrap.setAttribute("data-revealed", "0");
-      btn.textContent = "👁";
       btn.title = "顯示口令";
       btn.setAttribute("aria-label", "顯示口令");
       return;
     }
     textEl.textContent = raw || "—";
     wrap.setAttribute("data-revealed", "1");
-    btn.textContent = "🙈";
     btn.title = "隱藏口令";
     btn.setAttribute("aria-label", "隱藏口令");
   }
@@ -943,21 +978,28 @@ ADMIN_SCRIPTS = """
       const pwdCell =
         "<div class='table-pwd-cell' data-revealed='0'><span class='table-pwd' data-raw='" + escapeHtml(pwd) + "'>"
         + maskPassword(pwd)
-        + "</span><button type='button' class='pwd-mini-toggle' title='顯示口令' aria-label='顯示口令' onclick='toggleSiteTablePassword(this)'>👁</button></div>";
+        + "</span><button type='button' class='pwd-mini-toggle' title='顯示口令' aria-label='顯示口令' onclick='toggleSiteTablePassword(this)'>"
+        + "<span class='icon-eye' aria-hidden='true'><svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z'/><circle cx='12' cy='12' r='3'/></svg></span>"
+        + "<span class='icon-eye-off' aria-hidden='true'><svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24'/><line x1='1' y1='1' x2='23' y2='23'/></svg></span>"
+        + "</button></div>";
       const sid = JSON.stringify(row.site_id);
       const isPicked = picked.indexOf(row.site_id) >= 0;
       const actLabel = isPicked ? "取消啟用" : "啟用";
       const actCls = isPicked ? "secondary" : "";
+      const statusText = isPicked ? "已啟用" : "未啟用";
       tr.innerHTML =
         "<td>" +
         row.site_id +
         "</td><td>" +
         row.site_name +
+        "</td><td><span class='table-status'>" +
+        statusText +
+        "</span>" +
         "</td><td>" +
         pwdCell +
-        "</td><td>" +
+        "</td><td><span class='table-time'>" +
         (row.window_start || "—") +
-        "</td><td>" +
+        "</span></td><td><span class='table-time'>" +
         (row.window_end || "—") +
         "</td><td><div class=\\\"table-actions\\\"><button type=\\\"button\\\" class=\\\"" +
         actCls +
@@ -1189,11 +1231,13 @@ ADMIN_SCRIPTS = """
       return;
     }
     const total = Number(ov.total_enrolled) || 0;
+    const valid = Number(ov.valid_enrolled ?? total) || 0;
+    const voided = Number(ov.voided_count) || 0;
     const inter = Number(ov.intervention_count) || 0;
     const ctrl = Number(ov.control_count) || 0;
     const other = Number(ov.other_group_count) || 0;
     let html =
-      "已入組 <strong>" + total + "</strong> 人；其中干预組（GENAI）<strong>" + inter
+      "總記錄 <strong>" + total + "</strong> 人（有效 <strong>" + valid + "</strong>，作廢 <strong>" + voided + "</strong>）；其中干预組（GENAI）<strong>" + inter
       + "</strong> 人，對照組（HUMAN）<strong>" + ctrl + "</strong> 人。";
     if (other > 0) {
       html += " <span class='muted'>另有其他分組記錄 " + other + " 條。</span>";
@@ -1201,23 +1245,37 @@ ADMIN_SCRIPTS = """
     el.innerHTML = html;
   }
 
-  function renderRecordsRows(items) {
+  function renderRecordsRows(items, startIndex) {
     const tbody = document.querySelector("#recordsTable tbody");
     if (!tbody) return;
     tbody.innerHTML = "";
-    (items || []).forEach(row => {
+    (items || []).forEach((row, idx) => {
       const tr = document.createElement("tr");
       const enc = JSON.stringify(row.enrollment_no);
       const phoneVal = escapeHtml(row.phone_number || "");
+      const status = String(row.activation_status || "pending");
+      const isVoided = status === "voided";
+      const statusText = isVoided ? "作廢" : "有效";
+      const actionText = isVoided ? "恢復" : "作廢";
       tr.innerHTML =
-        "<td>" + escapeHtml(row.enrollment_no) + "</td><td><input type='text' class='rec-phone-input' value='" + phoneVal + "' /></td><td>"
+        "<td>" + String((startIndex || 0) + idx + 1) + "</td><td>" + escapeHtml(row.enrollment_no) + "</td><td><input type='text' class='rec-phone-input' value='" + phoneVal + "' /></td><td>"
         + escapeHtml(row.site_id) + "</td><td>"
-        + escapeHtml(row.recruiter_id || "") + "</td><td>" + escapeHtml(row.allocation_group) + "</td><td>"
+        + escapeHtml(row.recruiter_id || "") + "</td><td>" + escapeHtml(row.allocation_group) + "</td><td>" + statusText + "</td><td>"
         + escapeHtml(String(row.randomized_at || "")) + "</td><td><div class='table-actions'>"
-        + "<button type='button' class='secondary' style='margin:0;padding:6px 10px;font-size:12px' onclick='saveRecordPhone(" + enc + ", this)'>儲存手機號</button>"
-        + "<button type='button' class='danger' style='margin:0;padding:6px 10px;font-size:12px' onclick='deleteRecordRow(" + enc + ")'>刪除</button></div></td>";
+        + "<button type='button' class='secondary' style='margin:0;padding:6px 10px;font-size:12px' onclick='saveRecordPhone(" + enc + ", this)'>修改手機號</button>"
+        + "<button type='button' class='danger' style='margin:0;padding:6px 10px;font-size:12px' onclick='voidRecordRow(" + enc + ", " + (isVoided ? "true" : "false") + ")'>" + actionText + "</button></div></td>";
       tbody.appendChild(tr);
     });
+  }
+
+  function renderRecordsPagination(totalItems, pageSize, currentPage) {
+    const meta = document.getElementById("recordsPageMeta");
+    const prevBtn = document.getElementById("recordsPrevBtn");
+    const nextBtn = document.getElementById("recordsNextBtn");
+    const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+    if (meta) meta.textContent = "第 " + currentPage + "/" + totalPages + " 页，共 " + totalItems + " 条";
+    if (prevBtn) prevBtn.disabled = currentPage <= 1;
+    if (nextBtn) nextBtn.disabled = currentPage >= totalPages;
   }
 
   function refillRecordsFilterOptions(items) {
@@ -1262,7 +1320,15 @@ ADMIN_SCRIPTS = """
       if (recruiter && !String(row.recruiter_id || "").toLowerCase().includes(recruiter)) return false;
       return true;
     });
-    renderRecordsRows(filtered);
+    window.__recordsFilteredItems = filtered;
+    const pageSize = Number(document.getElementById("recordsPageSize")?.value || 20);
+    const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+    const current = Math.min(Math.max(1, window.__recordsCurrentPage || 1), totalPages);
+    window.__recordsCurrentPage = current;
+    const start = (current - 1) * pageSize;
+    const end = start + pageSize;
+    renderRecordsRows(filtered.slice(start, end), start);
+    renderRecordsPagination(filtered.length, pageSize, current);
   }
 
   function resetRecordsFilter() {
@@ -1272,7 +1338,8 @@ ADMIN_SCRIPTS = """
       if (!el) return;
       el.value = "";
     });
-    renderRecordsRows(window.__recordsItems || []);
+    window.__recordsCurrentPage = 1;
+    applyRecordsFilter();
   }
 
   async function loadRecords() {
@@ -1305,12 +1372,15 @@ ADMIN_SCRIPTS = """
     await loadRecords();
   }
 
-  async function deleteRecordRow(enrollmentNo) {
-    if (!confirm("确认刪除入組编号 " + enrollmentNo + " 的記錄？刪除后该手機號可再次入組。")) return;
+  async function voidRecordRow(enrollmentNo, isVoided) {
+    const tip = isVoided
+      ? "确认恢復入組编号 " + enrollmentNo + " 的記錄為有效狀態？"
+      : "确认作廢入組编号 " + enrollmentNo + " 的記錄？作廢會保留歷史記錄並不影響後續隨機化。";
+    if (!confirm(tip)) return;
     await api("/admin/randomization-records/delete", "POST", {
       enrollment_no: enrollmentNo,
-      deleted_by: "admin",
-      reason: "manual delete (list)"
+      voided_by: "admin",
+      reason: isVoided ? "manual restore (list)" : "manual void (list)"
     });
     await loadRecords();
   }
@@ -1337,7 +1407,41 @@ ADMIN_SCRIPTS = """
       renderBatchPickList();
     }
     if (PAGE === "qr") { loadGroupLabels(); loadParticipantPageUi(); loadQrCurrent(); }
-    if (PAGE === "records") { loadRecords(); loadAudits(); }
+    if (PAGE === "records") {
+      const siteSel = document.getElementById("recordsFilterSite");
+      const dateInp = document.getElementById("recordsFilterDate");
+      const groupSel = document.getElementById("recordsFilterGroup");
+      const recruiterInp = document.getElementById("recordsFilterRecruiter");
+      const pageSizeSel = document.getElementById("recordsPageSize");
+      const prevBtn = document.getElementById("recordsPrevBtn");
+      const nextBtn = document.getElementById("recordsNextBtn");
+      window.__recordsCurrentPage = 1;
+      [siteSel, dateInp, groupSel].forEach(el => {
+        if (!el) return;
+        el.addEventListener("change", function() {
+          window.__recordsCurrentPage = 1;
+          applyRecordsFilter();
+        });
+      });
+      if (recruiterInp) recruiterInp.addEventListener("input", function() {
+        window.__recordsCurrentPage = 1;
+        applyRecordsFilter();
+      });
+      if (pageSizeSel) pageSizeSel.addEventListener("change", function() {
+        window.__recordsCurrentPage = 1;
+        applyRecordsFilter();
+      });
+      if (prevBtn) prevBtn.addEventListener("click", function() {
+        window.__recordsCurrentPage = Math.max(1, (window.__recordsCurrentPage || 1) - 1);
+        applyRecordsFilter();
+      });
+      if (nextBtn) nextBtn.addEventListener("click", function() {
+        window.__recordsCurrentPage = (window.__recordsCurrentPage || 1) + 1;
+        applyRecordsFilter();
+      });
+      loadRecords();
+      loadAudits();
+    }
   });
 </script>
 """

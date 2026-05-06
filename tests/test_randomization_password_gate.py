@@ -343,7 +343,7 @@ def test_max_enrollment_blocks_new_randomization():
     assert second.status_code == 409
 
 
-def test_admin_can_delete_randomization_record():
+def test_admin_can_void_randomization_record():
     client = TestClient(app)
     open_batch(client, ["SITE_01"])
     set_site_password(client, "SITE_01")
@@ -357,18 +357,60 @@ def test_admin_can_delete_randomization_record():
         },
     )
     enrollment_no = created.json()["enrollment_no"]
-    deleted = admin_post(
+    voided = admin_post(
         client,
         "/admin/randomization-records/delete",
         json={
             "enrollment_no": enrollment_no,
-            "deleted_by": "admin",
-            "reason": "cleanup test",
+            "voided_by": "admin",
+            "reason": "void test",
         },
     )
-    assert deleted.status_code == 200
+    assert voided.status_code == 200
     records = admin_get(client, "/admin/randomization-records").json()["items"]
-    assert all(r["enrollment_no"] != enrollment_no for r in records)
+    target = next((r for r in records if r["enrollment_no"] == enrollment_no), None)
+    assert target is not None
+    assert target["activation_status"] == "voided"
+
+
+def test_admin_can_restore_voided_record():
+    client = TestClient(app)
+    open_batch(client, ["SITE_01"])
+    set_site_password(client, "SITE_01")
+    created = client.post(
+        "/randomization/trigger",
+        json={
+            "phone_number": "+85263333334",
+            "recruiter_id": "r1",
+            "site_id": "SITE_01",
+            "recruiter_password": "123456",
+        },
+    )
+    enrollment_no = created.json()["enrollment_no"]
+    first = admin_post(
+        client,
+        "/admin/randomization-records/delete",
+        json={
+            "enrollment_no": enrollment_no,
+            "voided_by": "admin",
+            "reason": "void for test",
+        },
+    )
+    assert first.status_code == 200
+    second = admin_post(
+        client,
+        "/admin/randomization-records/delete",
+        json={
+            "enrollment_no": enrollment_no,
+            "voided_by": "admin",
+            "reason": "restore for test",
+        },
+    )
+    assert second.status_code == 200
+    records = admin_get(client, "/admin/randomization-records").json()["items"]
+    target = next((r for r in records if r["enrollment_no"] == enrollment_no), None)
+    assert target is not None
+    assert target["activation_status"] != "voided"
 
 
 def test_list_sites_and_recruitment_overview():
