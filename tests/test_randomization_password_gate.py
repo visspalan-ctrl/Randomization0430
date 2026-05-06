@@ -33,6 +33,11 @@ def admin_patch(client: TestClient, path: str, **kwargs):
     return client.patch(path, headers=headers, **kwargs)
 
 
+def admin_delete(client: TestClient, path: str, **kwargs):
+    headers = {**_admin_headers(), **kwargs.pop("headers", {})}
+    return client.delete(path, headers=headers, **kwargs)
+
+
 def ensure_std_test_sites(client: TestClient) -> None:
     """reset 后默认 0 个站点，测试用例需先登记 SITE_01 / SITE_02。"""
     for sid, name in (("SITE_01", "站点01"), ("SITE_02", "站点02")):
@@ -113,6 +118,27 @@ def test_participant_active_sites_public_no_admin_session():
     items = res.json()["items"]
     assert len(items) == 2
     assert {x["site_id"] for x in items} == {"SITE_01", "SITE_02"}
+
+
+def test_site_can_be_deleted_even_if_history_exists():
+    client = TestClient(app)
+    open_batch(client, ["SITE_01"])
+    set_site_password(client, "SITE_01")
+    randomized = client.post(
+        "/randomization/trigger",
+        json={
+            "phone_number": "+85260000008",
+            "recruiter_id": "r8",
+            "site_id": "SITE_01",
+            "recruiter_password": "123456",
+        },
+    )
+    assert randomized.status_code == 200
+
+    deleted = admin_delete(client, "/admin/sites/SITE_01")
+    assert deleted.status_code == 200
+    sites = admin_get(client, "/admin/sites").json()["items"]
+    assert {x["site_id"] for x in sites} == {"SITE_02"}
 
 
 def test_wrong_password_lockout():

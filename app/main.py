@@ -707,8 +707,7 @@ def rename_site_id(payload: SiteRenameIdRequest, db: Session = Depends(get_db)):
 
 @app.delete("/admin/sites/{site_id}")
 def delete_site(site_id: str, db: Session = Depends(get_db)):
-    if db.scalar(select(RandomizationRecord).where(RandomizationRecord.site_id == site_id).limit(1)):
-        raise HTTPException(status_code=409, detail="site_has_randomization_records")
+    record_count = db.query(RandomizationRecord).where(RandomizationRecord.site_id == site_id).count()
     db.query(RecruitmentBatchSite).where(RecruitmentBatchSite.site_id == site_id).delete()
     db.query(SiteDailyPassword).where(SiteDailyPassword.site_id == site_id).delete()
     site = db.get(Site, site_id)
@@ -716,7 +715,7 @@ def delete_site(site_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="site_not_found")
     db.delete(site)
     db.commit()
-    add_audit(db, "site_deleted", {"site_id": site_id})
+    add_audit(db, "site_deleted", {"site_id": site_id, "history_record_count": record_count})
     return {"ok": True}
 
 
