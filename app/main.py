@@ -9,8 +9,11 @@ import json
 import os
 from pathlib import Path
 import secrets
+from typing import Literal
 from urllib.parse import quote
 
+import segno
+from PIL import Image
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -56,6 +59,13 @@ ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin")
 ADMIN_SESSION_COOKIE = "admin_session"
 ADMIN_SESSION_VALUE = "ok"
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+QR_GROUP_TYPES = frozenset({"GENAI", "HUMAN"})
+QR_MODES = frozenset({"dynamic", "static_url", "static_image"})
+QR_GROUP_COLORS: dict[str, dict[str, str]] = {
+    "GENAI": {"dark": "#dc2626", "light": "#ffffff"},
+    "HUMAN": {"dark": "#2563eb", "light": "#ffffff"},
+}
 
 
 def _is_admin_request(path: str) -> bool:
@@ -165,14 +175,14 @@ def _render_admin_login_page(error: str = "", next_path: str = "/admin/web?page=
     </head>
     <body>
       <form class="card" method="post" action="/admin/login">
-        <h2>管理端登录</h2>
+        <h2>管理端登入</h2>
         {error_html}
         <input type="hidden" name="next" value="{next_path}" />
-        <label>用户名</label>
+        <label>用戶名稱</label>
         <input name="username" autocomplete="username" required />
-        <label>密码</label>
+        <label>密碼</label>
         <input name="password" type="password" autocomplete="current-password" required />
-        <button type="submit">登录</button>
+        <button type="submit">登入</button>
       </form>
     </body>
     </html>
@@ -191,7 +201,7 @@ def admin_login_submit(
     next: str = Form("/admin/web?page=settings"),
 ):
     if not (secrets.compare_digest(username, ADMIN_USERNAME) and secrets.compare_digest(password, ADMIN_PASSWORD)):
-        return HTMLResponse(_render_admin_login_page(error="用户名或密码错误", next_path=next), status_code=401)
+        return HTMLResponse(_render_admin_login_page(error="用戶名稱或密碼錯誤", next_path=next), status_code=401)
     response = RedirectResponse(url=next or "/admin/web?page=settings", status_code=302)
     response.set_cookie(
         key=ADMIN_SESSION_COOKIE,
@@ -241,7 +251,7 @@ def next_enrollment_no(db: Session) -> str:
 
 
 def ensure_schema_migrations() -> None:
-    # 轻量 schema 自修复：老库补 recruiter_id 列，避免升级后查詢报错。
+    # 輕量 schema 自修復：舊庫補 recruiter_id 欄，避免升級後查詢報錯。
     with engine.begin() as conn:
         cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_records')")).fetchall()]
         if "recruiter_id" not in cols:
@@ -251,6 +261,14 @@ def ensure_schema_migrations() -> None:
             conn.execute(
                 text("ALTER TABLE randomization_settings ADD COLUMN h5_show_allocation_group BOOLEAN DEFAULT 1")
             )
+        qr_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('qr_configs')")).fetchall()]
+        if qr_cols and "qr_mode" not in qr_cols:
+            conn.execute(text("ALTER TABLE qr_configs ADD COLUMN qr_mode VARCHAR(32) DEFAULT 'static_url'"))
+            conn.execute(
+                text("UPDATE qr_configs SET qr_mode = 'static_image' WHERE qr_value LIKE '/uploads/%'")
+            )
+        if qr_cols and "qr_logo_path" not in qr_cols:
+            conn.execute(text("ALTER TABLE qr_configs ADD COLUMN qr_logo_path VARCHAR(512)"))
 
 
 @app.on_event("startup")
@@ -264,8 +282,17 @@ def startup() -> None:
         }.items():
             existing = db.scalar(select(QRConfig).where(QRConfig.group_type == group))
             if not existing:
-                db.add(QRConfig(group_type=group, qr_value=value, version=1, changed_by="system", reason="seed"))
-        for group, name in {"GENAI": "干预組", "HUMAN": "對照組"}.items():
+                db.add(
+                    QRConfig(
+                        group_type=group,
+                        qr_mode="static_url",
+                        qr_value=value,
+                        version=1,
+                        changed_by="system",
+                        reason="seed",
+                    )
+                )
+        for group, name in {"GENAI": "干預組", "HUMAN": "對照組"}.items():
             if db.get(GroupLabel, group) is None:
                 db.add(GroupLabel(group_type=group, display_name=name, changed_by="system", reason="seed"))
         if db.get(EnrollmentCounter, 1) is None:
@@ -313,9 +340,107 @@ class RecruitmentBatchOpenRequest(BaseModel):
 
 class QRUpdateRequest(BaseModel):
     group: str
+    qr_mode: Literal["dynamic", "static_url", "static_image"] = "static_url"
     qr_value: str
     changed_by: str
     reason: str = ""
+
+
+def _infer_qr_mode(qr_value: str, qr_mode: str | None = None) -> str:
+    if qr_mode and qr_mode in QR_MODES:
+        return qr_mode
+    if qr_value.startswith("/uploads/"):
+        return "static_image"
+    return "static_url"
+
+
+def _public_base_url(request: Request | None = None) -> str:
+    if PUBLIC_BASE_URL:
+        return PUBLIC_BASE_URL
+    if request is not None:
+        return str(request.base_url).rstrip("/")
+    return "http://127.0.0.1:8000"
+
+
+def _stable_qr_path(group: str) -> str:
+    return f"/r/{group}"
+
+
+def _stable_qr_url(group: str, request: Request | None = None) -> str:
+    return f"{_public_base_url(request)}{_stable_qr_path(group)}"
+
+
+def _upload_path_from_url(url: str | None) -> Path | None:
+    if not url or not url.startswith("/uploads/"):
+        return None
+    rel = url.removeprefix("/uploads/")
+    path = UPLOAD_DIR.parent / rel
+    return path if path.is_file() else None
+
+
+def _serialize_qr_config(cfg: QRConfig, request: Request | None = None) -> dict:
+    mode = _infer_qr_mode(cfg.qr_value, cfg.qr_mode)
+    item = {
+        "group_type": cfg.group_type,
+        "qr_mode": mode,
+        "qr_value": cfg.qr_value,
+        "qr_logo_path": cfg.qr_logo_path,
+        "version": cfg.version,
+        "changed_by": cfg.changed_by,
+        "reason": cfg.reason,
+        "changed_at": cfg.changed_at.isoformat() if cfg.changed_at else None,
+    }
+    if mode == "dynamic":
+        item["stable_qr_url"] = _stable_qr_url(cfg.group_type, request)
+        item["stable_qr_path"] = _stable_qr_path(cfg.group_type)
+    return item
+
+
+def _participant_qr_fields(cfg: QRConfig | None, group: str) -> dict[str, str]:
+    if cfg is None:
+        return {"whatsapp_qr": "", "qr_display_mode": "none"}
+    mode = _infer_qr_mode(cfg.qr_value, cfg.qr_mode)
+    if mode == "dynamic":
+        return {"whatsapp_qr": _stable_qr_path(group), "qr_display_mode": "dynamic"}
+    return {"whatsapp_qr": cfg.qr_value, "qr_display_mode": mode}
+
+
+def _make_qr_png(content: str, group: str | None = None, logo_path: Path | None = None) -> bytes:
+    buf = io.BytesIO()
+    save_kwargs: dict[str, object] = {"kind": "png", "scale": 8, "border": 2}
+    colors = QR_GROUP_COLORS.get(group or "")
+    if colors:
+        save_kwargs["dark"] = colors["dark"]
+        save_kwargs["light"] = colors["light"]
+        save_kwargs["data_dark"] = colors["dark"]
+        save_kwargs["finder_dark"] = colors["dark"]
+        save_kwargs["alignment_dark"] = colors["dark"]
+        save_kwargs["timing_dark"] = colors["dark"]
+    segno.make(content, error="h").save(buf, **save_kwargs)
+    qr_bytes = buf.getvalue()
+    if logo_path is None or not logo_path.is_file():
+        return qr_bytes
+    qr_img = Image.open(io.BytesIO(qr_bytes)).convert("RGBA")
+    logo = Image.open(logo_path).convert("RGBA")
+    qr_w, qr_h = qr_img.size
+    logo_max = int(min(qr_w, qr_h) * 0.22)
+    logo.thumbnail((logo_max, logo_max), Image.Resampling.LANCZOS)
+    pad = max(6, logo_max // 10)
+    bg_size = (logo.width + pad * 2, logo.height + pad * 2)
+    bg = Image.new("RGBA", bg_size, (255, 255, 255, 255))
+    bg.paste(logo, (pad, pad), logo)
+    pos = ((qr_w - bg_size[0]) // 2, (qr_h - bg_size[1]) // 2)
+    qr_img.paste(bg, pos, bg)
+    out = io.BytesIO()
+    qr_img.save(out, format="PNG")
+    return out.getvalue()
+
+
+def _qr_logo_path_for_group(db: Session, group: str) -> Path | None:
+    cfg = db.scalar(select(QRConfig).where(QRConfig.group_type == group))
+    if cfg is None:
+        return None
+    return _upload_path_from_url(cfg.qr_logo_path)
 
 
 class GroupLabelUpdateRequest(BaseModel):
@@ -381,13 +506,45 @@ def parse_block_sizes(block_sizes_csv: str) -> tuple[int, ...]:
     return values
 
 
+@app.get("/r/{group}/qr.png")
+def qr_group_png(group: str, request: Request, db: Session = Depends(get_db)):
+    if group not in QR_GROUP_TYPES:
+        raise HTTPException(status_code=404, detail="invalid_group")
+    cfg = db.scalar(select(QRConfig).where(QRConfig.group_type == group))
+    if cfg is None or _infer_qr_mode(cfg.qr_value, cfg.qr_mode) != "dynamic":
+        raise HTTPException(status_code=404, detail="dynamic_qr_not_configured")
+    png = _make_qr_png(_stable_qr_url(group, request), group, _qr_logo_path_for_group(db, group))
+    return Response(content=png, media_type="image/png")
+
+
+@app.get("/admin/qr-preview/{group}.png")
+def admin_qr_preview_png(group: str, request: Request, db: Session = Depends(get_db)):
+    """管理端預覽：無需先儲存，即可生成固定動態碼二維碼圖。"""
+    if group not in QR_GROUP_TYPES:
+        raise HTTPException(status_code=400, detail="invalid_group")
+    png = _make_qr_png(_stable_qr_url(group, request), group, _qr_logo_path_for_group(db, group))
+    return Response(content=png, media_type="image/png")
+
+
+@app.get("/r/{group}")
+def qr_group_redirect(group: str, db: Session = Depends(get_db)):
+    if group not in QR_GROUP_TYPES:
+        raise HTTPException(status_code=404, detail="invalid_group")
+    cfg = db.scalar(select(QRConfig).where(QRConfig.group_type == group))
+    if cfg is None or _infer_qr_mode(cfg.qr_value, cfg.qr_mode) != "dynamic":
+        raise HTTPException(status_code=404, detail="dynamic_qr_not_configured")
+    if not cfg.qr_value:
+        raise HTTPException(status_code=404, detail="target_not_configured")
+    return RedirectResponse(url=cfg.qr_value, status_code=302)
+
+
 @app.get("/", response_class=HTMLResponse)
 def home_page():
     return """
     <html><body>
     <h2>Randomization Product</h2>
-    <p><a href="/h5/randomize">受試者扫码页</a></p>
-    <p><a href="/admin/web?page=settings">管理員後台页</a></p>
+    <p><a href="/h5/randomize">受試者掃碼頁</a></p>
+    <p><a href="/admin/web?page=settings">管理員後台頁</a></p>
     </body></html>
     """
 
@@ -502,7 +659,7 @@ def randomize_page():
       <div class="wrap">
       <div class="card">
         <h3 class="title">歡迎參加第十七屆「戒煙大贏家」</h3>
-        <p class="lead">请按现场信息填写后提交。系统会按當前站點批次与口令時間窗校验后完成隨機化。</p>
+        <p class="lead">請按現場資訊填寫後提交。系統會按當前招募地點與密碼時間窗校驗後完成隨機化。</p>
         <form id="f">
           <label>手機號</label>
           <div class="phone-row">
@@ -514,20 +671,20 @@ def randomize_page():
             </select>
             <input id="phone" placeholder="請輸入號碼（不含區號）" inputmode="numeric" />
           </div>
-          <label>站點ID</label>
+          <label>招募地點</label>
           <select id="site">
             <option value="">請選擇站點</option>
           </select>
-          <label>招募员ID</label><input id="rid" placeholder="REC001" />
-          <label>口令</label><input id="pwd" type="password" />
-          <p class="muted" style="font-size:12px;margin-top:6px;">校验時間以服务器當前時間为准；站點须属于當前已開啟的招募批次，且口令在配置的時間窗内有效。</p>
+          <label>招募員姓名</label><input id="rid" placeholder="請輸入姓名" />
+          <label>密碼</label><input id="pwd" type="password" />
+          <p class="muted" style="font-size:12px;margin-top:6px;">校驗時間以伺服器當前時間為準；站點須屬於當前已開啟的招募批次，且密碼在設定的時間窗內有效。</p>
           <button type="submit">提交隨機化</button>
         </form>
 
         <div class="result">
-          <div class="kv"><strong>入組编号：</strong><span id="enrollmentNo">-</span></div>
+          <div class="kv"><strong>入組編號：</strong><span id="enrollmentNo">-</span></div>
           <div class="kv"><strong>招募地點：</strong><span id="siteName">-</span></div>
-          <div class="group" id="groupRow">分組结果：<span id="groupResult">-</span></div>
+          <div class="group" id="groupRow">分組結果：<span id="groupResult">-</span></div>
           <div class="kv"><strong>二維碼：</strong></div>
           <img id="qrImage" alt="whatsapp-qr" />
           <div class="kv" id="qrLinkText"></div>
@@ -561,22 +718,30 @@ def randomize_page():
         function renderResult(data) {
           document.getElementById("errText").textContent = "";
           document.getElementById("okText").textContent = data.idempotent
-            ? "该手機號已隨機化，展示历史结果。"
-            : "隨機化成功，请扫码添加对应 WhatsApp 账号。";
+            ? "該手機號已隨機化，展示過往結果。"
+            : "隨機化成功，請掃碼加入對應 WhatsApp 帳號。";
           document.getElementById("enrollmentNo").textContent = data.enrollment_no || "-";
           document.getElementById("siteName").textContent = data.site_name || data.site_id || "-";
           const gr = document.getElementById("groupResult");
           if (gr) gr.textContent = showAllocationGroup ? (data.allocation_group || "-") : "-";
 
           const qrRaw = data.whatsapp_qr || "";
+          const qrMode = data.qr_display_mode || "";
           const qrUrl = toAbsoluteUrl(qrRaw);
           const qrImg = document.getElementById("qrImage");
           const qrLinkText = document.getElementById("qrLinkText");
           qrLinkText.innerHTML = "";
 
-          if (!qrUrl) {
+          if (!qrRaw) {
             qrImg.style.display = "none";
             qrLinkText.textContent = "未配置二維碼";
+            return;
+          }
+          if (qrMode === "dynamic") {
+            const group = data.allocation_group || "";
+            qrImg.src = window.location.origin + "/r/" + group + "/qr.png";
+            qrImg.style.display = "block";
+            qrLinkText.textContent = "請掃碼加入 WhatsApp";
             return;
           }
           const isImg = /\\.(png|jpg|jpeg|webp)(\\?.*)?$/i.test(qrUrl) || qrUrl.includes("/uploads/qr/");
@@ -586,7 +751,7 @@ def randomize_page():
           } else {
             qrImg.style.display = "none";
           }
-          qrLinkText.innerHTML = '二維碼地址：<a href="' + qrUrl + '" target="_blank">' + qrRaw + '</a>';
+          qrLinkText.innerHTML = '二維碼連結：<a href="' + qrUrl + '" target="_blank">' + qrRaw + '</a>';
         }
 
         async function loadSiteOptions() {
@@ -595,13 +760,13 @@ def randomize_page():
           const res = await fetch("/participant/active-sites");
           const data = await res.json().catch(() => ({}));
           if (!res.ok) {
-            document.getElementById("errText").textContent = "站點列表加載失败";
+            document.getElementById("errText").textContent = "站點列表載入失敗";
             return;
           }
           const items = data.items || [];
           if (!items.length) {
-            sel.innerHTML = '<option value="">暂无已啟用站點</option>';
-            document.getElementById("errText").textContent = "當前无已啟用站點，請先在管理後台啟用站點。";
+            sel.innerHTML = '<option value="">暫無已啟用站點</option>';
+            document.getElementById("errText").textContent = "當前沒有已啟用站點，請先在管理後台啟用站點。";
             return;
           }
           sel.innerHTML = '<option value="">請選擇已啟用站點</option>';
@@ -620,7 +785,7 @@ def randomize_page():
           const code = document.getElementById("phoneCode").value || "+852";
           const localPhone = (document.getElementById("phone").value || "").trim().replace(/\\s+/g, "");
           if (!/^\\d{6,}$/.test(localPhone)) {
-            document.getElementById("errText").textContent = "手機號格式应为：區號 + 號碼，號碼至少 6 位数字。";
+            document.getElementById("errText").textContent = "手機號格式應為：區號 + 號碼，號碼至少 6 位數字。";
             return;
           }
           const payload = {
@@ -638,7 +803,7 @@ def randomize_page():
           const data = await res.json().catch(() => ({}));
           if (!res.ok) {
             document.getElementById("errText").textContent =
-              "隨機化失败：" + (data.detail || "unknown_error");
+              "隨機化失敗：" + (data.detail || "unknown_error");
             return;
           }
           renderResult(data);
@@ -727,7 +892,7 @@ def list_sites(db: Session = Depends(get_db)):
 
 @app.get("/admin/site-recruitment-overview")
 def site_recruitment_overview(at: datetime | None = None, db: Session = Depends(get_db)):
-    """統計：预设站點容量、當前口令窗口覆盖的站點数、當前开放招募批次站點数等。"""
+    """統計：預設站點容量、當前密碼視窗覆蓋的站點數、當前開放招募批次站點數等。"""
     max_parallel = RECRUITMENT_BATCH_MAX_ACTIVE_SITES
     ref = normalize_utc(at) if at else utc_now()
     sites = db.scalars(select(Site).order_by(Site.site_id.asc())).all()
@@ -759,7 +924,7 @@ def site_recruitment_overview(at: datetime | None = None, db: Session = Depends(
 
 @app.get("/admin/sites/table")
 def sites_admin_table(db: Session = Depends(get_db)):
-    """管理員表格：站點ID、名稱、口令明文（若已儲存）、生效时段、是否在开放招募批次中等。"""
+    """管理員表格：站點ID、名稱、密碼明文（若已儲存）、生效時段、是否在開放招募批次中等。"""
     sites = db.scalars(select(Site).order_by(Site.site_id.asc())).all()
     batch = get_open_batch(db)
     batch_site_ids: set[str] = set()
@@ -951,7 +1116,7 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
             "site_id": existing.site_id,
             "site_name": existing.site_name,
             "allocation_group": existing.allocation_group,
-            "whatsapp_qr": qr.qr_value if qr else "",
+            **_participant_qr_fields(qr, existing.allocation_group),
             "randomized_at": existing.randomized_at.isoformat(),
             "idempotent": True,
         }
@@ -984,7 +1149,7 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
         "site_id": record.site_id,
         "site_name": record.site_name,
         "allocation_group": group,
-        "whatsapp_qr": qr.qr_value if qr else "",
+        **_participant_qr_fields(qr, group),
         "randomized_at": record.randomized_at.isoformat(),
         "idempotent": False,
     }
@@ -992,43 +1157,44 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
 
 @app.post("/admin/qr-config")
 def update_qr_config(payload: QRUpdateRequest, db: Session = Depends(get_db)):
-    if payload.group not in {"GENAI", "HUMAN"}:
+    if payload.group not in QR_GROUP_TYPES:
         raise HTTPException(status_code=400, detail="invalid_group")
+    if payload.qr_mode not in QR_MODES:
+        raise HTTPException(status_code=400, detail="invalid_qr_mode")
     cfg = db.scalar(select(QRConfig).where(QRConfig.group_type == payload.group))
     if cfg is None:
-        cfg = QRConfig(group_type=payload.group, qr_value=payload.qr_value, changed_by=payload.changed_by, reason=payload.reason)
+        cfg = QRConfig(
+            group_type=payload.group,
+            qr_mode=payload.qr_mode,
+            qr_value=payload.qr_value,
+            changed_by=payload.changed_by,
+            reason=payload.reason,
+        )
         db.add(cfg)
     else:
         cfg.version += 1
+        cfg.qr_mode = payload.qr_mode
         cfg.qr_value = payload.qr_value
         cfg.changed_by = payload.changed_by
         cfg.reason = payload.reason
     db.commit()
-    add_audit(db, "qr_config_updated", {"group": payload.group, "version": cfg.version})
-    return {"ok": True, "group": payload.group, "version": cfg.version}
+    db.refresh(cfg)
+    add_audit(db, "qr_config_updated", {"group": payload.group, "version": cfg.version, "qr_mode": cfg.qr_mode})
+    result = {"ok": True, "group": payload.group, "version": cfg.version, "qr_mode": cfg.qr_mode}
+    if payload.qr_mode == "dynamic":
+        result["stable_qr_path"] = _stable_qr_path(payload.group)
+    return result
 
 
 @app.get("/admin/qr-configs")
-def get_qr_configs(db: Session = Depends(get_db)):
+def get_qr_configs(request: Request, db: Session = Depends(get_db)):
     items = db.scalars(select(QRConfig).order_by(QRConfig.group_type.asc())).all()
-    return {
-        "items": [
-            {
-                "group_type": i.group_type,
-                "qr_value": i.qr_value,
-                "version": i.version,
-                "changed_by": i.changed_by,
-                "reason": i.reason,
-                "changed_at": i.changed_at.isoformat() if i.changed_at else None,
-            }
-            for i in items
-        ]
-    }
+    return {"items": [_serialize_qr_config(i, request) for i in items]}
 
 
 @app.get("/admin/group-labels")
 def get_group_labels(db: Session = Depends(get_db)):
-    result = {"GENAI": "干预組", "HUMAN": "對照組"}
+    result = {"GENAI": "干預組", "HUMAN": "對照組"}
     items = db.scalars(select(GroupLabel).where(GroupLabel.group_type.in_(["GENAI", "HUMAN"]))).all()
     for it in items:
         if it.display_name:
@@ -1063,7 +1229,7 @@ if _HAS_MULTIPART:
         file: UploadFile = File(...),
         db: Session = Depends(get_db),
     ):
-        if group not in {"GENAI", "HUMAN"}:
+        if group not in QR_GROUP_TYPES:
             raise HTTPException(status_code=400, detail="invalid_group")
         ext = Path(file.filename or "").suffix.lower()
         if ext not in {".png", ".jpg", ".jpeg", ".webp"}:
@@ -1078,16 +1244,73 @@ if _HAS_MULTIPART:
         qr_value = f"/uploads/qr/{saved_name}"
         cfg = db.scalar(select(QRConfig).where(QRConfig.group_type == group))
         if cfg is None:
-            cfg = QRConfig(group_type=group, qr_value=qr_value, changed_by=changed_by, reason=reason)
+            cfg = QRConfig(
+                group_type=group,
+                qr_mode="static_image",
+                qr_value=qr_value,
+                changed_by=changed_by,
+                reason=reason,
+            )
             db.add(cfg)
         else:
             cfg.version += 1
+            cfg.qr_mode = "static_image"
             cfg.qr_value = qr_value
             cfg.changed_by = changed_by
             cfg.reason = reason
         db.commit()
         add_audit(db, "qr_config_image_uploaded", {"group": group, "version": cfg.version, "path": qr_value})
         return {"ok": True, "group": group, "version": cfg.version, "qr_value": qr_value}
+
+    @app.post("/admin/qr-config/logo")
+    async def upload_qr_logo(
+        group: str = Form(...),
+        changed_by: str = Form(...),
+        file: UploadFile = File(...),
+        db: Session = Depends(get_db),
+    ):
+        if group not in QR_GROUP_TYPES:
+            raise HTTPException(status_code=400, detail="invalid_group")
+        ext = Path(file.filename or "").suffix.lower()
+        if ext not in {".png", ".jpg", ".jpeg", ".webp"}:
+            raise HTTPException(status_code=400, detail="invalid_file_type")
+        saved_name = f"{group.lower()}_logo_{secrets.token_hex(8)}{ext}"
+        saved_path = UPLOAD_DIR / saved_name
+        content = await file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="empty_file")
+        with open(saved_path, "wb") as f:
+            f.write(content)
+        logo_path = f"/uploads/qr/{saved_name}"
+        cfg = db.scalar(select(QRConfig).where(QRConfig.group_type == group))
+        if cfg is None:
+            cfg = QRConfig(
+                group_type=group,
+                qr_mode="dynamic",
+                qr_value="",
+                qr_logo_path=logo_path,
+                changed_by=changed_by,
+                reason="logo upload",
+            )
+            db.add(cfg)
+        else:
+            cfg.qr_logo_path = logo_path
+            cfg.changed_by = changed_by
+        db.commit()
+        add_audit(db, "qr_logo_uploaded", {"group": group, "path": logo_path})
+        return {"ok": True, "group": group, "qr_logo_path": logo_path}
+
+    @app.delete("/admin/qr-config/logo")
+    def delete_qr_logo(group: str = Query(...), db: Session = Depends(get_db)):
+        if group not in QR_GROUP_TYPES:
+            raise HTTPException(status_code=400, detail="invalid_group")
+        cfg = db.scalar(select(QRConfig).where(QRConfig.group_type == group))
+        if cfg is None or not cfg.qr_logo_path:
+            raise HTTPException(status_code=404, detail="logo_not_configured")
+        cfg.qr_logo_path = None
+        db.commit()
+        add_audit(db, "qr_logo_removed", {"group": group})
+        return {"ok": True, "group": group}
 else:
 
     @app.post("/admin/qr-config/upload")
@@ -1242,7 +1465,7 @@ def get_randomization_settings(db: Session = Depends(get_db)):
 
 @app.get("/participant-ui/config")
 def get_participant_ui_config(db: Session = Depends(get_db)):
-    """供受試者 H5 頁讀取展示選項（無敏感字段）。"""
+    """供受試者 H5 頁讀取展示選項（無敏感欄位）。"""
     setting = db.get(RandomizationSetting, 1)
     if setting is None:
         return {"show_allocation_group": True}
@@ -1251,7 +1474,7 @@ def get_participant_ui_config(db: Session = Depends(get_db)):
 
 @app.get("/participant/active-sites")
 def participant_active_sites(db: Session = Depends(get_db)):
-    """當前開放招募批次內的站點（僅 ID/名稱）。無需管理員登入，供手機等設備單獨打開 /h5/randomize 時加載下拉框。"""
+    """當前開放招募批次內的站點（僅 ID/名稱）。無需管理員登入，供手機等設備單獨打開 /h5/randomize 時載入下拉框。"""
     batch = get_open_batch(db)
     if batch is None:
         return {"items": []}
@@ -1387,8 +1610,26 @@ def dev_reset():
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
-        db.add(QRConfig(group_type="GENAI", qr_value="https://wa.me/genai_default", version=1, changed_by="system", reason="reset"))
-        db.add(QRConfig(group_type="HUMAN", qr_value="https://wa.me/human_default", version=1, changed_by="system", reason="reset"))
+        db.add(
+            QRConfig(
+                group_type="GENAI",
+                qr_mode="static_url",
+                qr_value="https://wa.me/genai_default",
+                version=1,
+                changed_by="system",
+                reason="reset",
+            )
+        )
+        db.add(
+            QRConfig(
+                group_type="HUMAN",
+                qr_mode="static_url",
+                qr_value="https://wa.me/human_default",
+                version=1,
+                changed_by="system",
+                reason="reset",
+            )
+        )
         db.add(EnrollmentCounter(id=1, seq=0))
         db.add(RandomizationSetting(id=1, max_enrollment=None, block_sizes_csv="4,8,12", updated_by="system"))
         ensure_preset_sites(db)

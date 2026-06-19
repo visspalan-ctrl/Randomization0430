@@ -39,8 +39,8 @@ def admin_delete(client: TestClient, path: str, **kwargs):
 
 
 def ensure_std_test_sites(client: TestClient) -> None:
-    """reset 后默认 0 个站点，测试用例需先登记 SITE_01 / SITE_02。"""
-    for sid, name in (("SITE_01", "站点01"), ("SITE_02", "站点02")):
+    """reset 後預設 0 個站點，測試用例需先登記 SITE_01 / SITE_02。"""
+    for sid, name in (("SITE_01", "站點01"), ("SITE_02", "站點02")):
         r = admin_post(client, "/admin/sites", json={"site_id": sid, "site_name": name})
         assert r.status_code == 200, r.text
 
@@ -109,7 +109,7 @@ def test_phone_and_password_allows_randomization():
 
 
 def test_participant_active_sites_public_no_admin_session():
-    """受試者設備未登入後台時須仍能加載當前批次站點（與 /h5/randomize 一致）。"""
+    """受試者設備未登入後台時須仍能載入當前批次站點（與 /h5/randomize 一致）。"""
     client = TestClient(app)
     assert client.get("/participant/active-sites").json() == {"items": []}
     open_batch(client, ["SITE_01", "SITE_02"])
@@ -231,6 +231,7 @@ def test_qr_config_update_is_versioned():
         "/admin/qr-config",
         json={
             "group": "GENAI",
+            "qr_mode": "static_url",
             "qr_value": "https://wa.me/new_genai",
             "changed_by": "admin",
             "reason": "rotation",
@@ -238,6 +239,159 @@ def test_qr_config_update_is_versioned():
     )
     assert updated.status_code == 200
     assert updated.json()["version"] == 2
+
+
+def test_dynamic_qr_redirect_and_update():
+    client = TestClient(app)
+    created = admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_value": "https://wa.me/old_genai",
+            "changed_by": "admin",
+            "reason": "init dynamic",
+        },
+    )
+    assert created.status_code == 200
+
+    first = client.get("/r/GENAI", follow_redirects=False)
+    assert first.status_code == 302
+    assert first.headers["location"] == "https://wa.me/old_genai"
+
+    updated = admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_value": "https://wa.me/new_genai",
+            "changed_by": "admin",
+            "reason": "rotate target",
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["version"] == 3
+
+    second = client.get("/r/GENAI", follow_redirects=False)
+    assert second.status_code == 302
+    assert second.headers["location"] == "https://wa.me/new_genai"
+
+
+def test_dynamic_qr_png_endpoint():
+    client = TestClient(app)
+    admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_value": "https://wa.me/png_test",
+            "changed_by": "admin",
+            "reason": "png test",
+        },
+    )
+    res = client.get("/r/GENAI/qr.png")
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "image/png"
+    assert res.content.startswith(b"\x89PNG")
+
+
+def test_randomization_returns_stable_qr_for_dynamic_mode():
+    client = TestClient(app)
+    for group, target in (("GENAI", "https://wa.me/dyn_genai"), ("HUMAN", "https://wa.me/dyn_human")):
+        admin_post(
+            client,
+            "/admin/qr-config",
+            json={
+                "group": group,
+                "qr_mode": "dynamic",
+                "qr_value": target,
+                "changed_by": "admin",
+                "reason": "dynamic for randomization",
+            },
+        )
+    open_batch(client, ["SITE_01"])
+    set_site_password(client, "SITE_01")
+    randomized = client.post(
+        "/randomization/trigger",
+        json={
+            "phone_number": "+85260000123",
+            "recruiter_id": "r1",
+            "site_id": "SITE_01",
+            "recruiter_password": "123456",
+        },
+    )
+    assert randomized.status_code == 200
+    body = randomized.json()
+    group = body["allocation_group"]
+    assert body["whatsapp_qr"] == f"/r/{group}"
+    assert body["qr_display_mode"] == "dynamic"
+
+
+def test_qr_configs_includes_qr_mode_and_stable_url():
+    client = TestClient(app)
+    admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_value": "https://wa.me/config_test",
+            "changed_by": "admin",
+            "reason": "config list",
+        },
+    )
+    res = admin_get(client, "/admin/qr-configs")
+    assert res.status_code == 200
+    genai = next(i for i in res.json()["items"] if i["group_type"] == "GENAI")
+    assert genai["qr_mode"] == "dynamic"
+    assert genai["stable_qr_path"] == "/r/GENAI"
+    assert genai["stable_qr_url"].endswith("/r/GENAI")
+
+
+def test_admin_qr_preview_png_before_save():
+    client = TestClient(app)
+    res = admin_get(client, "/admin/qr-preview/GENAI.png")
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "image/png"
+    assert res.content.startswith(b"\x89PNG")
+
+
+def test_qr_logo_upload_and_preview():
+    client = TestClient(app)
+    file_content = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+        b"\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
+        b"\x00\x00\x00\x0bIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01"
+        b"\x0d\n\x2d\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    uploaded = admin_post(
+        client,
+        "/admin/qr-config/logo",
+        data={"group": "GENAI", "changed_by": "admin"},
+        files={"file": ("logo.png", file_content, "image/png")},
+    )
+    assert uploaded.status_code == 200
+    assert uploaded.json()["qr_logo_path"].startswith("/uploads/qr/")
+
+    admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_value": "https://wa.me/logo_test",
+            "changed_by": "admin",
+            "reason": "dynamic with logo",
+        },
+    )
+    preview = admin_get(client, "/admin/qr-preview/GENAI.png")
+    assert preview.status_code == 200
+    assert preview.headers["content-type"] == "image/png"
+    assert preview.content.startswith(b"\x89PNG")
+    assert len(preview.content) > 500
 
 
 def test_qr_config_image_upload_is_supported():
@@ -252,6 +406,10 @@ def test_qr_config_image_upload_is_supported():
     assert uploaded.status_code == 200
     body = uploaded.json()
     assert body["qr_value"].startswith("/uploads/qr/")
+
+    configs = admin_get(client, "/admin/qr-configs")
+    genai = next(i for i in configs.json()["items"] if i["group_type"] == "GENAI")
+    assert genai["qr_mode"] == "static_image"
 
 
 def test_qr_configs_endpoint_returns_groups():

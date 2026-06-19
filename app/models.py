@@ -8,12 +8,12 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db import Base
 
 
-# 最多可登记的站点数（含管理员后续新增）
+# 最多可登記的站點數（含管理員後續新增）
 PRESET_SITE_COUNT = 50
-# 首次种子 / reset 时自动创建的站点数量；0 表示不预建，由管理员自行登记
+# 首次種子 / reset 時自動建立的站點數量；0 表示不預建，由管理員自行登記
 PRESET_SITE_INITIAL_COUNT = 0
 
-# 单次招募批次最多可激活的站点数
+# 單次招募批次最多可啟用的站點數
 RECRUITMENT_BATCH_MAX_ACTIVE_SITES = 10
 
 
@@ -25,7 +25,7 @@ class Site(Base):
 
 
 class SiteDailyPassword(Base):
-    """口令在「当日香港时区」同一日历日内生效；起止为精确 UTC 时间戳。"""
+    """密碼在「當日香港時區」同一日曆日內生效；起止為精確 UTC 時間戳。"""
 
     __tablename__ = "site_daily_passwords"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -61,7 +61,9 @@ class QRConfig(Base):
     __tablename__ = "qr_configs"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     group_type: Mapped[str] = mapped_column(String(16), nullable=False, unique=True)
+    qr_mode: Mapped[str] = mapped_column(String(32), default="static_url", nullable=False)
     qr_value: Mapped[str] = mapped_column(String(512), nullable=False)
+    qr_logo_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
     changed_by: Mapped[str] = mapped_column(String(64), nullable=False)
     reason: Mapped[str] = mapped_column(String(255), default="")

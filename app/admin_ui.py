@@ -1,4 +1,4 @@
-"""管理員後台：左侧导航 + 分頁面内容（由 /admin/web?page= 驱动）。"""
+"""管理員後台：左側導航 + 分頁面內容（由 /admin/web?page= 驅動）。"""
 
 from __future__ import annotations
 
@@ -421,12 +421,177 @@ table.data tr:hover td { background: #fafafa; }
 .pwd-mini-toggle .icon-eye-off { display: none; }
 .table-pwd-cell[data-revealed='1'] .pwd-mini-toggle .icon-eye { display: none; }
 .table-pwd-cell[data-revealed='1'] .pwd-mini-toggle .icon-eye-off { display: inline-flex; }
-#qrPreview {
+#qrPreview, #qrLivePreview {
   max-width: 240px;
   max-height: 240px;
   border-radius: 10px;
   border: 1px solid var(--border);
   margin-top: 10px;
+  background: #fff;
+  padding: 8px;
+}
+.qr-mode-card {
+  margin-top: 20px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
+  overflow: hidden;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.8);
+}
+.qr-mode-card-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px 14px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255,255,255,0.6);
+}
+.qr-mode-card-header h4 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.qr-mode-card-header p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: right;
+  max-width: 280px;
+  line-height: 1.45;
+}
+.qr-mode-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 16px 18px 18px;
+}
+.qr-mode-option {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-height: 148px;
+  padding: 16px 16px 14px;
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.12s;
+}
+.qr-mode-option:hover {
+  border-color: #c7d2fe;
+  box-shadow: 0 4px 14px rgba(79, 70, 229, 0.08);
+  transform: translateY(-1px);
+}
+.qr-mode-option:has(input:checked) {
+  border-color: var(--accent);
+  background: linear-gradient(180deg, rgba(79, 70, 229, 0.05) 0%, #fff 72%);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
+}
+.qr-mode-option input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+.qr-mode-option-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.qr-mode-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--accent);
+  background: rgba(79, 70, 229, 0.1);
+}
+.qr-mode-option:has(input:checked) .qr-mode-icon {
+  color: #fff;
+  background: var(--accent);
+}
+.qr-mode-check {
+  width: 18px;
+  height: 18px;
+  border: 2px solid #cbd5e1;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 2px;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+.qr-mode-option:has(input:checked) .qr-mode-check {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: inset 0 0 0 3px #fff;
+}
+.qr-mode-option strong {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.35;
+}
+.qr-mode-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #4338ca;
+  background: #e0e7ff;
+}
+.qr-mode-option span.qr-mode-desc {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 8px;
+  line-height: 1.55;
+}
+@media (max-width: 960px) {
+  .qr-mode-options {
+    grid-template-columns: 1fr;
+  }
+  .qr-mode-card-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .qr-mode-card-header p {
+    text-align: left;
+    max-width: none;
+  }
+}
+.qr-preview-panel {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  background: #fff;
+  text-align: center;
+}
+.qr-preview-panel #qrLivePreview {
+  max-width: 220px;
+  max-height: 220px;
+  margin: 8px auto 0;
+}
+.qr-preview-hint {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 8px;
+  line-height: 1.5;
 }
 @media (max-width: 900px) {
   .app-shell { flex-direction: column; }
@@ -448,17 +613,17 @@ def render_sidebar(active: PageId) -> str:
     <aside class="sidebar">
       <div class="sidebar-brand">
         <h1>隨機化管理台</h1>
-        <p>最多 {PRESET_SITE_COUNT} 站 · 首次预建 {PRESET_SITE_INITIAL_COUNT} 站 · 单批次 ≤{RECRUITMENT_BATCH_MAX_ACTIVE_SITES} 站 · 口令按香港同日時間窗</p>
+        <p>最多 {PRESET_SITE_COUNT} 站 · 首次預建 {PRESET_SITE_INITIAL_COUNT} 站 · 單批次 ≤{RECRUITMENT_BATCH_MAX_ACTIVE_SITES} 站 · 密碼按香港同日時間窗</p>
       </div>
       <nav class="nav">
-        {_nav_link("settings", active, base + "settings", "⚙", "隨機化設置")}
-        {_nav_link("sites", active, base + "sites", "◎", "站點与口令")}
+        {_nav_link("settings", active, base + "settings", "⚙", "隨機化設定")}
+        {_nav_link("sites", active, base + "sites", "◎", "站點與密碼")}
         {_nav_link("qr", active, base + "qr", "▣", "WhatsApp 二維碼")}
         {_nav_link("records", active, base + "records", "☰", "隨機化分組記錄")}
       </nav>
       <div class="sidebar-footer">
         <a href="/docs" target="_blank">API 文件 (Swagger)</a>
-        · <a href="/h5/randomize" target="_blank">受試者页</a>
+        · <a href="/h5/randomize" target="_blank">受試者頁</a>
       </div>
     </aside>
     """
@@ -467,24 +632,24 @@ def render_sidebar(active: PageId) -> str:
 def panel_settings() -> str:
     return """
     <div class="page-header">
-      <h2>隨機化設置</h2>
-      <p class="lead">下方概覽展示服务端當前生效值；在「參數」中修改后儲存，将立即作用于后续隨機化。</p>
+      <h2>隨機化設定</h2>
+      <p class="lead">下方概覽展示服務端當前生效值；在「參數」中修改後儲存，將立即作用於後續隨機化。</p>
     </div>
     <div class="card">
       <h3>當前參數概覽</h3>
-      <div id="settingsOverview" class="muted" style="margin-top:8px;">加載中…</div>
-      <button type="button" class="secondary" style="margin-top:12px;" onclick="loadSettings()">重新整理概覽并同步表单</button>
+      <div id="settingsOverview" class="muted" style="margin-top:8px;">載入中…</div>
+      <button type="button" class="secondary" style="margin-top:12px;" onclick="loadSettings()">重新整理概覽並同步表單</button>
     </div>
     <div class="card">
       <h3>參數</h3>
-      <label>随机人数上限（留空表示不限制）</label>
+      <label>隨機人數上限（留空表示不限制）</label>
       <input id="maxEnrollment" placeholder="例如 5000" />
-      <label>区組大小（逗号分隔，须为偶数）</label>
+      <label>區組大小（逗號分隔，須為偶數）</label>
       <input id="blockSizes" value="4,8,12" />
       <label>更新人</label>
       <input id="settingsUpdatedBy" value="admin" />
-      <button type="button" onclick="saveSettings()">儲存設置</button>
-      <button type="button" class="secondary" onclick="loadSettings()">重新加載</button>
+      <button type="button" onclick="saveSettings()">儲存設定</button>
+      <button type="button" class="secondary" onclick="loadSettings()">重新載入</button>
     </div>
     """
 
@@ -492,15 +657,15 @@ def panel_settings() -> str:
 def panel_sites() -> str:
     return f"""
     <div class="page-header">
-      <h2>站點与口令</h2>
-      <p class="lead">在站點一览中点击「啟用」加入待选列表（最多 <strong>{RECRUITMENT_BATCH_MAX_ACTIVE_SITES}</strong> 个），再点「開啟新批次」；或仍可通过 <a href="/docs" target="_blank">Swagger</a> 调用接口。口令须落在<strong>同一香港日历日</strong>内的起止時間（本地時間选择器）。</p>
+      <h2>站點與密碼</h2>
+      <p class="lead">在站點一覽中點擊「啟用」加入待選列表（最多 <strong>{RECRUITMENT_BATCH_MAX_ACTIVE_SITES}</strong> 個），再點「開啟新批次」；或仍可透過 <a href="/docs" target="_blank">Swagger</a> 調用介面。密碼須落在<strong>同一香港日曆日</strong>內的起止時間（本地時間選擇器）。</p>
     </div>
     <div class="card">
       <h4 class="subhead subhead-first">統計概覽</h4>
-      <div id="siteOverview" class="muted" style="margin-bottom:10px;">加載中…</div>
+      <div id="siteOverview" class="muted" style="margin-bottom:10px;">載入中…</div>
       <button type="button" class="secondary" onclick="loadSiteOverview()">重新整理概覽</button>
 
-      <h4 class="subhead">站點設置</h4>
+      <h4 class="subhead">站點設定</h4>
       <div class="site-name-row" style="margin-top:0;">
         <div class="field-name">
           <label for="addSiteNameInput">新增站點名稱</label>
@@ -530,24 +695,24 @@ def panel_sites() -> str:
           <label for="editSiteIdInput">站點 ID</label>
           <input id="editSiteIdInput" type="text" placeholder="SITE_01" autocomplete="off" onblur="syncEditSelectFromIdInput()" />
         </div>
-        <button type="button" class="btn-save-inline" onclick="saveSiteName()">保存修改</button>
+        <button type="button" class="btn-save-inline" onclick="saveSiteName()">儲存修改</button>
       </div>
-      <label for="pwdRaw">口令</label>
+      <label for="pwdRaw">密碼</label>
       <div class="password-field-wrap" id="pwdRawWrap">
         <input id="pwdRaw" type="password" autocomplete="new-password" />
-        <button type="button" class="pwd-toggle" id="pwdToggle" onclick="togglePwdVisibility()" title="顯示口令" aria-label="顯示或隱藏口令">
+        <button type="button" class="pwd-toggle" id="pwdToggle" onclick="togglePwdVisibility()" title="顯示密碼" aria-label="顯示或隱藏密碼">
           <span class="icon-eye" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg></span>
           <span class="icon-eye-off" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg></span>
         </button>
       </div>
-      <p class="muted" style="margin:6px 0 0;font-size:12px;">要求：至少 6 位，且只能为数字（例如 123456）。</p>
+      <p class="muted" style="margin:6px 0 0;font-size:12px;">要求：至少 6 位，且只能為數字（例如 123456）。</p>
       <div class="row">
         <div>
-          <label>生效开始（本地）</label>
+          <label>生效開始（本地）</label>
           <input id="pwdWinStart" type="datetime-local" />
         </div>
         <div>
-          <label>生效结束（本地）</label>
+          <label>生效結束（本地）</label>
           <input id="pwdWinEnd" type="datetime-local" />
         </div>
       </div>
@@ -556,21 +721,21 @@ def panel_sites() -> str:
           <label>變更人</label>
           <input id="pwdBy" value="admin" />
         </div>
-        <button type="button" class="btn-save-inline" onclick="savePassword()">儲存口令</button>
+        <button type="button" class="btn-save-inline" onclick="savePassword()">儲存密碼</button>
       </div>
 
-      <h4 class="subhead">站點一览</h4>
+      <h4 class="subhead">站點一覽</h4>
       <button type="button" class="secondary" onclick="loadSitesAdminTable()">重新整理表格</button>
       <div class="scroll-box" style="margin-top:12px;">
         <table class="data" id="sitesAdminTable">
-          <thead><tr><th>站點ID</th><th>名稱</th><th>當前狀態</th><th>口令</th><th>生效起(UTC)</th><th>生效止(UTC)</th><th>操作</th></tr></thead>
+          <thead><tr><th>站點ID</th><th>名稱</th><th>當前狀態</th><th>密碼</th><th>生效起(UTC)</th><th>生效止(UTC)</th><th>操作</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
 
       <h4 style="margin-top:16px;margin-bottom:8px;font-size:12px;font-weight:600;color:#64748b;">已啟用站點</h4>
       <div id="batchPickList" class="batch-pick-zone"></div>
-      <p class="muted" style="margin:8px 0 0;">点击表格中的「啟用/取消啟用」将立即同步到當前开放批次。</p>
+      <p class="muted" style="margin:8px 0 0;">點擊表格中的「啟用/取消啟用」將立即同步到當前開放批次。</p>
 
     </div>
     """
@@ -580,15 +745,15 @@ def panel_qr() -> str:
     return """
     <div class="page-header">
       <h2>WhatsApp 二維碼</h2>
-      <p class="lead">按干预組 / 對照組維護展示用二維碼。支援 URL 或上傳图片。</p>
+      <p class="lead">按干預組 / 對照組維護展示用二維碼。推薦使用動態二維碼：固定碼不變，可隨時更換跳轉連結。</p>
     </div>
     <div class="card">
-      <h3>組別与资源</h3>
-      <label>組別与名稱</label>
+      <h3>組別與資源</h3>
+      <label>組別與名稱</label>
       <div class="site-name-row">
         <div class="field-site">
           <select id="qrGroup" onchange="onQrGroupChange()">
-            <option value="GENAI">干预組（干预組）</option>
+            <option value="GENAI">干預組（干預組）</option>
             <option value="HUMAN">對照組（對照組）</option>
           </select>
         </div>
@@ -597,7 +762,81 @@ def panel_qr() -> str:
         </div>
         <button type="button" class="btn-save-inline secondary" onclick="saveGroupLabels()">儲存</button>
       </div>
-      <div class="participant-ui-card">
+
+      <div class="qr-mode-card">
+        <div class="qr-mode-card-header">
+          <h4>二維碼模式</h4>
+          <p>選擇一種模式；動態二維碼適合印刷後仍可更換連結。</p>
+        </div>
+        <div class="qr-mode-options" id="qrModeOptions">
+          <label class="qr-mode-option">
+            <input type="radio" name="qrModeRadio" value="dynamic" checked onchange="onQrModeRadioChange(this.value)" />
+            <div class="qr-mode-option-top">
+              <span class="qr-mode-icon" aria-hidden="true">⟳</span>
+              <span class="qr-mode-check" aria-hidden="true"></span>
+            </div>
+            <strong>動態二維碼 <span class="qr-mode-badge">推薦</span></strong>
+            <span class="qr-mode-desc">固定二維碼圖案不變，後台可隨時更換 wa.me 等跳轉連結，適合印刷海報。</span>
+          </label>
+          <label class="qr-mode-option">
+            <input type="radio" name="qrModeRadio" value="static_url" onchange="onQrModeRadioChange(this.value)" />
+            <div class="qr-mode-option-top">
+              <span class="qr-mode-icon" aria-hidden="true">🔗</span>
+              <span class="qr-mode-check" aria-hidden="true"></span>
+            </div>
+            <strong>靜態 URL</strong>
+            <span class="qr-mode-desc">直接使用連結生成二維碼；更換連結後需重新生成並替換圖片。</span>
+          </label>
+          <label class="qr-mode-option">
+            <input type="radio" name="qrModeRadio" value="static_image" onchange="onQrModeRadioChange(this.value)" />
+            <div class="qr-mode-option-top">
+              <span class="qr-mode-icon" aria-hidden="true">🖼</span>
+              <span class="qr-mode-check" aria-hidden="true"></span>
+            </div>
+            <strong>靜態圖片（上傳）</strong>
+            <span class="qr-mode-desc">上傳已製作好的二維碼圖片檔案，系統直接展示該圖片。</span>
+          </label>
+        </div>
+        <select id="qrMode" style="display:none;" onchange="onQrModeChange()">
+          <option value="dynamic" selected>dynamic</option>
+          <option value="static_url">static_url</option>
+          <option value="static_image">static_image</option>
+        </select>
+      </div>
+
+      <div id="qrPreviewPanel" class="qr-preview-panel" style="display:none;">
+        <div style="font-size:13px;font-weight:600;color:#334155;">二維碼預覽（儲存前即可查看固定碼）</div>
+        <div id="qrColorHint" class="qr-preview-hint"></div>
+        <img id="qrLivePreview" alt="qr-live-preview" />
+        <div id="qrLivePreviewUrl" class="qr-preview-hint"></div>
+        <div style="margin-top:10px;">
+          <button type="button" class="secondary" onclick="downloadQrPng()">下載二維碼 PNG</button>
+        </div>
+      </div>
+
+      <label id="qrValueLabel">跳轉目標（可隨時更換）</label>
+      <input id="qrValue" placeholder="https://wa.me/..." oninput="onQrValueInput()" />
+      <div id="qrDynamicExtras" style="display:none;margin-top:10px;">
+        <label>固定二維碼連結（印刷用，不變）</label>
+        <input id="qrStableUrl" readonly />
+        <label id="qrLogoLabel" style="margin-top:12px;">中心 Logo（可選，PNG/JPG）</label>
+        <input id="qrLogoFile" type="file" accept="image/png,image/jpeg,image/webp" />
+        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+          <button type="button" class="secondary" onclick="uploadQrLogo()">上傳 Logo</button>
+          <button type="button" class="secondary" onclick="removeQrLogo()">移除 Logo</button>
+        </div>
+        <div id="qrLogoCurrent" class="muted" style="margin-top:6px;"></div>
+      </div>
+      <label id="qrFileLabel">或上傳圖片</label>
+      <input id="qrFile" type="file" accept="image/png,image/jpeg,image/webp" />
+      <label>變更人</label>
+      <input id="qrBy" value="admin" />
+      <label>原因</label>
+      <input id="qrReason" value="manual update" />
+      <button type="button" onclick="saveQr()">儲存</button>
+      <button type="button" class="secondary" onclick="loadQrCurrent()">讀取當前</button>
+
+      <div class="participant-ui-card" style="margin-top:18px;">
         <h4 style="margin-top:0;margin-bottom:8px;font-size:12px;font-weight:600;color:#64748b;">受試者互動頁（/h5/randomize）</h4>
         <div class="participant-ui-toggle-row">
           <span class="participant-ui-toggle-label">隨機化結果中顯示分組</span>
@@ -608,18 +847,9 @@ def panel_qr() -> str:
         </div>
         <button type="button" class="secondary" style="margin-top:10px;" onclick="saveParticipantPageUi()">儲存顯示設定</button>
       </div>
-      <label>二維碼链接（URL）</label>
-      <input id="qrValue" placeholder="https://wa.me/..." />
-      <label>或上傳图片</label>
-      <input id="qrFile" type="file" accept="image/png,image/jpeg,image/webp" />
-      <label>變更人</label>
-      <input id="qrBy" value="admin" />
-      <label>原因</label>
-      <input id="qrReason" value="manual update" />
-      <button type="button" onclick="saveQr()">儲存</button>
-      <button type="button" class="secondary" onclick="loadQrCurrent()">讀取當前</button>
+
       <div style="margin-top:14px;">
-        <div class="muted">當前配置</div>
+        <div class="muted">當前已儲存設定</div>
         <div id="qrCurrentText" class="muted" style="margin-top:4px;">—</div>
         <img id="qrPreview" alt="preview" style="display:none;" />
       </div>
@@ -635,7 +865,7 @@ def panel_records() -> str:
     </div>
     <div class="card">
       <h3>入組概覽</h3>
-      <div id="recordsOverview" class="muted" style="margin-top:8px;">加載中…</div>
+      <div id="recordsOverview" class="muted" style="margin-top:8px;">載入中…</div>
     </div>
     <div class="card">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
@@ -663,19 +893,19 @@ def panel_records() -> str:
           </select>
         </div>
         <div style="flex:1 1 0;min-width:0;">
-          <label>招募員ID</label>
-          <input id="recordsFilterRecruiter" placeholder="輸入招募員ID關鍵字" />
+          <label>招募員姓名</label>
+          <input id="recordsFilterRecruiter" placeholder="輸入招募員姓名關鍵字" />
         </div>
       </div>
       <div class="scroll-box" id="recordsScrollBox" style="margin-top:12px;">
         <table class="data" id="recordsTable">
-          <thead><tr><th>编号</th><th>入組编号</th><th>手機號</th><th>站點</th><th>招募员ID</th><th>分組</th><th>狀態</th><th>時間</th><th>操作</th></tr></thead>
+          <thead><tr><th>編號</th><th>入組編號</th><th>手機號</th><th>站點</th><th>招募員姓名</th><th>分組</th><th>狀態</th><th>時間</th><th>操作</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px;flex-wrap:wrap;">
         <div style="display:flex;align-items:center;gap:8px;">
-          <label for="recordsPageSize" style="margin:0;">每页</label>
+          <label for="recordsPageSize" style="margin:0;">每頁</label>
           <select id="recordsPageSize" style="width:auto;max-width:none;padding:6px 8px;">
             <option value="20">20</option>
             <option value="50">50</option>
@@ -683,8 +913,8 @@ def panel_records() -> str:
           <span id="recordsPageMeta" class="muted">—</span>
         </div>
         <div style="display:flex;align-items:center;gap:8px;">
-          <button type="button" class="secondary" id="recordsPrevBtn" style="margin:0;padding:6px 10px;font-size:12px;">上一页</button>
-          <button type="button" class="secondary" id="recordsNextBtn" style="margin:0;padding:6px 10px;font-size:12px;">下一页</button>
+          <button type="button" class="secondary" id="recordsPrevBtn" style="margin:0;padding:6px 10px;font-size:12px;">上一頁</button>
+          <button type="button" class="secondary" id="recordsNextBtn" style="margin:0;padding:6px 10px;font-size:12px;">下一頁</button>
         </div>
       </div>
     </div>
@@ -693,7 +923,7 @@ def panel_records() -> str:
       <button type="button" class="secondary" onclick="loadAudits()">重新整理日誌</button>
       <div class="scroll-box" style="margin-top:12px;">
         <table class="data" id="auditTable">
-          <thead><tr><th>ID</th><th>事件</th><th>请求ID</th><th>時間</th></tr></thead>
+          <thead><tr><th>ID</th><th>事件</th><th>請求ID</th><th>時間</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -734,7 +964,7 @@ ADMIN_SCRIPTS = """
     const by = data.updated_by ? escapeHtml(String(data.updated_by)) : "—";
     const at = data.updated_at ? escapeHtml(String(data.updated_at)) : "—";
     el.innerHTML =
-      "入組人数上限 <strong>" + escapeHtml(maxLabel) + "</strong>；区組大小 <strong>" + escapeHtml(blocks)
+      "入組人數上限 <strong>" + escapeHtml(maxLabel) + "</strong>；區組大小 <strong>" + escapeHtml(blocks)
       + "</strong>。<br/>最近更新人 <strong>" + by + "</strong>；更新時間 <code style='font-size:12px'>" + at + "</code>。";
   }
 
@@ -828,15 +1058,15 @@ ADMIN_SCRIPTS = """
     if (!el) return;
     const res = await fetch("/admin/site-recruitment-overview");
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) { el.textContent = "概覽加載失败"; return; }
+    if (!res.ok) { el.textContent = "概覽載入失敗"; return; }
     const warnBatch = data.current_open_batch_site_count > data.max_parallel_sites_recommended
-      ? " <span style='color:#b45309'>（批次站點数超建议）</span>" : "";
+      ? " <span style='color:#b45309'>（批次站點數超建議）</span>" : "";
     const warnPwd = data.sites_with_active_password_at_ref > data.max_parallel_sites_recommended
-      ? " <span style='color:#b45309'>（有效口令站點数超建议）</span>" : "";
-    el.innerHTML = "预设 <strong>" + data.preset_site_capacity + "</strong>；已登记 <strong>" + data.registered_site_count
-      + "</strong>。参考 UTC：<strong>" + data.reference_time_utc + "</strong>；口令有效站點 <strong>"
+      ? " <span style='color:#b45309'>（有效密碼站點數超建議）</span>" : "";
+    el.innerHTML = "預設 <strong>" + data.preset_site_capacity + "</strong>；已登記 <strong>" + data.registered_site_count
+      + "</strong>。參考 UTC：<strong>" + data.reference_time_utc + "</strong>；密碼有效站點 <strong>"
       + data.sites_with_active_password_at_ref + "</strong>" + warnPwd
-      + "。开放批次 ID <strong>" + (data.current_open_batch_id ?? "无") + "</strong>，本批次站點数 <strong>"
+      + "。開放批次 ID <strong>" + (data.current_open_batch_id ?? "無") + "</strong>，本批次站點數 <strong>"
       + data.current_open_batch_site_count + "</strong>" + warnBatch + "。";
     await refreshSiteDropdownsOnly();
     await loadCurrentBatchJson();
@@ -870,14 +1100,14 @@ ADMIN_SCRIPTS = """
     if (revealed) {
       textEl.textContent = maskPassword(raw);
       wrap.setAttribute("data-revealed", "0");
-      btn.title = "顯示口令";
-      btn.setAttribute("aria-label", "顯示口令");
+      btn.title = "顯示密碼";
+      btn.setAttribute("aria-label", "顯示密碼");
       return;
     }
     textEl.textContent = raw || "—";
     wrap.setAttribute("data-revealed", "1");
-    btn.title = "隱藏口令";
-    btn.setAttribute("aria-label", "隱藏口令");
+    btn.title = "隱藏密碼";
+    btn.setAttribute("aria-label", "隱藏密碼");
   }
 
   function renderBatchPickList() {
@@ -886,10 +1116,10 @@ ADMIN_SCRIPTS = """
     const arr = window.__batchPickSiteIds || [];
     const meta = window.__sitesList || [];
     if (arr.length === 0) {
-      el.innerHTML = '<p class="muted" style="margin:0">未选择站點。在上方表格「操作」列点击「啟用」加入，最多 ' + BATCH_MAX + ' 个。</p>';
+      el.innerHTML = '<p class="muted" style="margin:0">未選擇站點。在上方表格「操作」列點擊「啟用」加入，最多 ' + BATCH_MAX + ' 個。</p>';
       return;
     }
-    let html = '<p class="muted" style="margin:0 0 8px">已选 <strong>' + arr.length + "</strong> / " + BATCH_MAX + '：</p><ul class="batch-pick-chips">';
+    let html = '<p class="muted" style="margin:0 0 8px">已選 <strong>' + arr.length + "</strong> / " + BATCH_MAX + '：</p><ul class="batch-pick-chips">';
     arr.forEach(function(id) {
       const row = meta.find(function(s) { return s.site_id === id; });
       const label = row ? (escapeHtml(row.site_id) + " — " + escapeHtml(row.site_name)) : escapeHtml(id);
@@ -921,7 +1151,7 @@ ADMIN_SCRIPTS = """
       arr.splice(i, 1);
     } else {
       if (arr.length >= BATCH_MAX) {
-        resultBox.textContent = "[ERROR] 最多可选 " + BATCH_MAX + " 个站點";
+        resultBox.textContent = "[ERROR] 最多可選 " + BATCH_MAX + " 個站點";
         return;
       }
       arr.push(siteId);
@@ -944,7 +1174,7 @@ ADMIN_SCRIPTS = """
   async function openRecruitmentBatch() {
     const selected = window.__batchPickSiteIds || [];
     if (!selected.length) {
-      resultBox.textContent = "[ERROR] 請先在表格中啟用至少一个站點";
+      resultBox.textContent = "[ERROR] 請先在表格中啟用至少一個站點";
       return;
     }
     await api("/admin/recruitment-batches/open", "POST", {
@@ -978,7 +1208,7 @@ ADMIN_SCRIPTS = """
       const pwdCell =
         "<div class='table-pwd-cell' data-revealed='0'><span class='table-pwd' data-raw='" + escapeHtml(pwd) + "'>"
         + maskPassword(pwd)
-        + "</span><button type='button' class='pwd-mini-toggle' title='顯示口令' aria-label='顯示口令' onclick='toggleSiteTablePassword(this)'>"
+        + "</span><button type='button' class='pwd-mini-toggle' title='顯示密碼' aria-label='顯示密碼' onclick='toggleSiteTablePassword(this)'>"
         + "<span class='icon-eye' aria-hidden='true'><svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z'/><circle cx='12' cy='12' r='3'/></svg></span>"
         + "<span class='icon-eye-off' aria-hidden='true'><svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24'/><line x1='1' y1='1' x2='23' y2='23'/></svg></span>"
         + "</button></div>";
@@ -1018,7 +1248,7 @@ ADMIN_SCRIPTS = """
   }
 
   async function deleteSiteRow(siteId) {
-    if (!confirm("确认刪除站點 " + siteId + "？")) return;
+    if (!confirm("確認刪除站點 " + siteId + "？")) return;
     const res = await fetch("/admin/sites/" + encodeURIComponent(siteId), { method: "DELETE" });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { resultBox.textContent = "[ERROR] DELETE\\n" + JSON.stringify(data, null, 2); return; }
@@ -1037,8 +1267,8 @@ ADMIN_SCRIPTS = """
     wrap.classList.toggle("is-revealed");
     const revealed = wrap.classList.contains("is-revealed");
     inp.type = revealed ? "text" : "password";
-    btn.title = revealed ? "隱藏口令" : "顯示口令";
-    btn.setAttribute("aria-label", revealed ? "隱藏口令" : "顯示口令");
+    btn.title = revealed ? "隱藏密碼" : "顯示密碼";
+    btn.setAttribute("aria-label", revealed ? "隱藏密碼" : "顯示密碼");
   }
 
   function resetPwdFieldVisibility() {
@@ -1048,8 +1278,8 @@ ADMIN_SCRIPTS = """
     if (!wrap || !inp || !btn) return;
     wrap.classList.remove("is-revealed");
     inp.type = "password";
-    btn.title = "顯示口令";
-    btn.setAttribute("aria-label", "顯示或隱藏口令");
+    btn.title = "顯示密碼";
+    btn.setAttribute("aria-label", "顯示或隱藏密碼");
   }
 
   async function saveSiteName() {
@@ -1057,7 +1287,7 @@ ADMIN_SCRIPTS = """
     const typed = idInp ? idInp.value.trim() : "";
     const selectedId = document.getElementById("editSiteSelect").value.trim();
     const sid = typed || selectedId;
-    if (!selectedId) { resultBox.textContent = "[ERROR] 請先从下拉选择已有站點；新增请点「新增站點」按钮"; return; }
+    if (!selectedId) { resultBox.textContent = "[ERROR] 請先從下拉選擇已有站點；新增請點「新增站點」按鈕"; return; }
     if (!sid) { resultBox.textContent = "[ERROR] 請填寫站點 ID"; return; }
     const name = document.getElementById("editSiteName").value;
     if (selectedId && typed && typed !== selectedId) {
@@ -1084,8 +1314,8 @@ ADMIN_SCRIPTS = """
     const nameInp = document.getElementById("addSiteNameInput");
     const sid = idInp ? idInp.value.trim() : "";
     const name = nameInp ? nameInp.value.trim() : "";
-    if (!sid) { resultBox.textContent = "[ERROR] 新增站點需填写站點 ID"; return; }
-    if (!name) { resultBox.textContent = "[ERROR] 新增站點需填写名稱"; return; }
+    if (!sid) { resultBox.textContent = "[ERROR] 新增站點需填寫站點 ID"; return; }
+    if (!name) { resultBox.textContent = "[ERROR] 新增站點需填寫名稱"; return; }
     await api("/admin/sites", "POST", { site_id: sid, site_name: name });
     await loadSitesAdminTable();
     await loadSiteOverview();
@@ -1098,12 +1328,12 @@ ADMIN_SCRIPTS = """
 
   async function savePassword() {
     const sid = document.getElementById("pwdSiteSelect").value;
-    if (!sid) { resultBox.textContent = "[ERROR] 請先选择口令对应的站點"; return; }
+    if (!sid) { resultBox.textContent = "[ERROR] 請先選擇密碼對應的站點"; return; }
     const ws = localDatetimeToIso("pwdWinStart");
     const we = localDatetimeToIso("pwdWinEnd");
     const pwd = document.getElementById("pwdRaw").value;
-    if (!ws || !we) { resultBox.textContent = "[ERROR] 請填寫口令生效开始和结束時間"; return; }
-    if (!/^\d{6,}$/.test(pwd || "")) { resultBox.textContent = "[ERROR] 口令要求：至少 6 位且只能为数字"; return; }
+    if (!ws || !we) { resultBox.textContent = "[ERROR] 請填寫密碼生效開始和結束時間"; return; }
+    if (!/^\d{6,}$/.test(pwd || "")) { resultBox.textContent = "[ERROR] 密碼要求：至少 6 位且只能為數字"; return; }
     await api("/admin/site-passwords", "POST", {
       site_id: sid,
       window_start: ws,
@@ -1123,6 +1353,117 @@ ADMIN_SCRIPTS = """
     return window.location.origin + raw;
   }
 
+  function syncQrModeRadio(mode) {
+    const sel = document.getElementById("qrMode");
+    const val = mode || sel?.value || "static_url";
+    if (sel) sel.value = val;
+    document.querySelectorAll('input[name="qrModeRadio"]').forEach(r => {
+      r.checked = r.value === val;
+    });
+  }
+
+  function onQrModeRadioChange(mode) {
+    syncQrModeRadio(mode);
+    onQrModeChange();
+  }
+
+  function onQrValueInput() {
+    updateQrLivePreview();
+  }
+
+  function updateQrLivePreview() {
+    const mode = document.getElementById("qrMode")?.value || "static_url";
+    const group = document.getElementById("qrGroup")?.value;
+    const panel = document.getElementById("qrPreviewPanel");
+    const img = document.getElementById("qrLivePreview");
+    const hint = document.getElementById("qrLivePreviewUrl");
+    const colorHint = document.getElementById("qrColorHint");
+    if (!panel || !img) return;
+    if (mode !== "dynamic" || !group) {
+      panel.style.display = "none";
+      img.removeAttribute("src");
+      if (colorHint) colorHint.textContent = "";
+      return;
+    }
+    const stableUrl = window.location.origin + "/r/" + group;
+    const stableInp = document.getElementById("qrStableUrl");
+    if (stableInp) stableInp.value = stableUrl;
+    img.src = "/admin/qr-preview/" + group + ".png?t=" + Date.now();
+    img.style.display = "block";
+    panel.style.display = "block";
+    if (colorHint) {
+      colorHint.textContent = group === "GENAI"
+        ? "干預組：紅色二維碼"
+        : "對照組：藍色二維碼";
+    }
+    const target = (document.getElementById("qrValue")?.value || "").trim();
+    if (hint) {
+      hint.innerHTML = "固定碼連結：<strong>" + stableUrl + "</strong>"
+        + (target ? ("<br>當前跳轉目標（儲存後生效）：" + target) : "<br>請填寫跳轉目標後點擊儲存");
+    }
+  }
+
+  function onQrModeChange() {
+    const mode = document.getElementById("qrMode")?.value || "static_url";
+    syncQrModeRadio(mode);
+    const dynamicExtras = document.getElementById("qrDynamicExtras");
+    const valueLabel = document.getElementById("qrValueLabel");
+    const fileLabel = document.getElementById("qrFileLabel");
+    const fileInput = document.getElementById("qrFile");
+    if (dynamicExtras) dynamicExtras.style.display = mode === "dynamic" ? "block" : "none";
+    if (valueLabel) {
+      valueLabel.textContent = mode === "dynamic"
+        ? "跳轉目標（可隨時更換）"
+        : (mode === "static_image" ? "當前圖片路徑（上傳後自動填入）" : "二維碼連結（URL）");
+    }
+    if (fileLabel && fileInput) {
+      const showFile = mode === "static_image";
+      fileLabel.style.display = showFile ? "" : "none";
+      fileInput.style.display = showFile ? "" : "none";
+    }
+    updateQrLivePreview();
+  }
+
+  function downloadQrPng() {
+    const group = document.getElementById("qrGroup")?.value;
+    if (!group) return;
+    const mode = document.getElementById("qrMode")?.value;
+    const url = mode === "dynamic"
+      ? "/admin/qr-preview/" + group + ".png?t=" + Date.now()
+      : "/r/" + group + "/qr.png";
+    window.open(url, "_blank");
+  }
+
+  async function uploadQrLogo() {
+    const fileInput = document.getElementById("qrLogoFile");
+    if (!fileInput || !fileInput.files || !fileInput.files.length) {
+      resultBox.textContent = "[ERROR] 請選擇 Logo 圖片";
+      return;
+    }
+    const fd = new FormData();
+    fd.append("group", document.getElementById("qrGroup").value);
+    fd.append("changed_by", document.getElementById("qrBy").value || "admin");
+    fd.append("file", fileInput.files[0]);
+    const res = await fetch("/admin/qr-config/logo", { method: "POST", body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { resultBox.textContent = "[ERROR] logo upload\\n" + JSON.stringify(data, null, 2); return; }
+    resultBox.textContent = "[OK] Logo 已上傳";
+    fileInput.value = "";
+    await loadQrCurrent();
+    updateQrLivePreview();
+  }
+
+  async function removeQrLogo() {
+    const group = document.getElementById("qrGroup")?.value;
+    if (!group) return;
+    const res = await fetch("/admin/qr-config/logo?group=" + encodeURIComponent(group), { method: "DELETE" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { resultBox.textContent = "[ERROR] remove logo\\n" + JSON.stringify(data, null, 2); return; }
+    resultBox.textContent = "[OK] Logo 已移除";
+    await loadQrCurrent();
+    updateQrLivePreview();
+  }
+
   async function loadQrCurrent() {
     const text = document.getElementById("qrCurrentText");
     const img = document.getElementById("qrPreview");
@@ -1130,8 +1471,34 @@ ADMIN_SCRIPTS = """
     const group = document.getElementById("qrGroup").value;
     const data = await api("/admin/qr-configs", "GET");
     const current = (data.items || []).find(x => x.group_type === group);
-    if (!current) { text.textContent = "無配置"; if (img) img.style.display = "none"; return; }
+    if (!current) {
+      text.textContent = "尚無已儲存設定，可選擇模式並預覽後點擊儲存";
+      if (img) img.style.display = "none";
+      const logoEl = document.getElementById("qrLogoCurrent");
+      if (logoEl) logoEl.textContent = "尚未上傳中心 Logo";
+      syncQrModeRadio("dynamic");
+      onQrModeChange();
+      return;
+    }
+    const modeSel = document.getElementById("qrMode");
+    if (modeSel) modeSel.value = current.qr_mode || "static_url";
+    syncQrModeRadio(current.qr_mode || "static_url");
     document.getElementById("qrValue").value = current.qr_value || "";
+    const stableInp = document.getElementById("qrStableUrl");
+    if (stableInp) stableInp.value = current.stable_qr_url || "";
+    const logoEl = document.getElementById("qrLogoCurrent");
+    if (logoEl) {
+      logoEl.textContent = current.qr_logo_path
+        ? "當前 Logo：" + current.qr_logo_path
+        : "尚未上傳中心 Logo";
+    }
+    const mode = current.qr_mode || "static_url";
+    onQrModeChange();
+    if (mode === "dynamic") {
+      text.textContent = "v" + current.version + " · 動態碼 → " + (current.qr_value || "");
+      if (img) { img.style.display = "none"; }
+      return;
+    }
     text.textContent = "v" + current.version + " · " + (current.qr_value || "");
     const previewUrl = toAbsoluteUrl(current.qr_value || "");
     const isImg = /\\.(png|jpg|jpeg|webp)(\\?.*)?$/i.test(previewUrl) || previewUrl.includes("/uploads/qr/");
@@ -1160,12 +1527,12 @@ ADMIN_SCRIPTS = """
     if (!nameInp || !sel) return;
     const data = await api("/admin/group-labels", "GET");
     window.__groupLabels = {
-      GENAI: data.intervention_name || "干预組",
+      GENAI: data.intervention_name || "干預組",
       HUMAN: data.control_name || "對照組"
     };
     const optGen = sel.querySelector("option[value='GENAI']");
     const optHum = sel.querySelector("option[value='HUMAN']");
-    if (optGen) optGen.textContent = (window.__groupLabels.GENAI || "干预組") + "（干预組）";
+    if (optGen) optGen.textContent = (window.__groupLabels.GENAI || "干預組") + "（干預組）";
     if (optHum) optHum.textContent = (window.__groupLabels.HUMAN || "對照組") + "（對照組）";
     nameInp.value = window.__groupLabels[sel.value] || "";
   }
@@ -1174,18 +1541,18 @@ ADMIN_SCRIPTS = """
     const sel = document.getElementById("qrGroup");
     const nameInp = document.getElementById("groupNameCurrent");
     if (sel && nameInp) {
-      const labels = window.__groupLabels || { GENAI: "干预組", HUMAN: "對照組" };
+      const labels = window.__groupLabels || { GENAI: "干預組", HUMAN: "對照組" };
       nameInp.value = labels[sel.value] || "";
-      nameInp.placeholder = sel.value === "GENAI" ? "請輸入干预組名稱" : "請輸入對照組名稱";
+      nameInp.placeholder = sel.value === "GENAI" ? "請輸入干預組名稱" : "請輸入對照組名稱";
     }
-    loadQrCurrent();
+    loadQrCurrent().then(() => onQrModeChange());
   }
 
   async function saveGroupLabels() {
     const sel = document.getElementById("qrGroup");
     const nameInp = document.getElementById("groupNameCurrent");
     if (!sel || !nameInp) return;
-    const labels = window.__groupLabels || { GENAI: "干预組", HUMAN: "對照組" };
+    const labels = window.__groupLabels || { GENAI: "干預組", HUMAN: "對照組" };
     const next = nameInp.value.trim();
     if (!next) { resultBox.textContent = "[ERROR] 請輸入組別名稱"; return; }
     if (sel.value === "GENAI") labels.GENAI = next;
@@ -1216,6 +1583,7 @@ ADMIN_SCRIPTS = """
     }
     await api("/admin/qr-config", "POST", {
       group: document.getElementById("qrGroup").value,
+      qr_mode: document.getElementById("qrMode").value,
       qr_value: document.getElementById("qrValue").value,
       changed_by: document.getElementById("qrBy").value,
       reason: document.getElementById("qrReason").value
@@ -1227,7 +1595,7 @@ ADMIN_SCRIPTS = """
     const el = document.getElementById("recordsOverview");
     if (!el) return;
     if (!ov) {
-      el.textContent = "暂无統計数据。";
+      el.textContent = "暫無統計數據。";
       return;
     }
     const total = Number(ov.total_enrolled) || 0;
@@ -1237,7 +1605,7 @@ ADMIN_SCRIPTS = """
     const ctrl = Number(ov.control_count) || 0;
     const other = Number(ov.other_group_count) || 0;
     let html =
-      "總記錄 <strong>" + total + "</strong> 人（有效 <strong>" + valid + "</strong>，作廢 <strong>" + voided + "</strong>）；其中干预組（GENAI）<strong>" + inter
+      "總記錄 <strong>" + total + "</strong> 人（有效 <strong>" + valid + "</strong>，作廢 <strong>" + voided + "</strong>）；其中干預組（GENAI）<strong>" + inter
       + "</strong> 人，對照組（HUMAN）<strong>" + ctrl + "</strong> 人。";
     if (other > 0) {
       html += " <span class='muted'>另有其他分組記錄 " + other + " 條。</span>";
@@ -1273,7 +1641,7 @@ ADMIN_SCRIPTS = """
     const prevBtn = document.getElementById("recordsPrevBtn");
     const nextBtn = document.getElementById("recordsNextBtn");
     const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
-    if (meta) meta.textContent = "第 " + currentPage + "/" + totalPages + " 页，共 " + totalItems + " 条";
+    if (meta) meta.textContent = "第 " + currentPage + "/" + totalPages + " 頁，共 " + totalItems + " 條";
     if (prevBtn) prevBtn.disabled = currentPage <= 1;
     if (nextBtn) nextBtn.disabled = currentPage >= totalPages;
   }
@@ -1360,7 +1728,7 @@ ADMIN_SCRIPTS = """
   async function saveRecordPhone(enrollmentNo, btn) {
     const tr = btn && btn.closest ? btn.closest("tr") : null;
     const inp = tr ? tr.querySelector("input.rec-phone-input") : null;
-    if (!inp) { resultBox.textContent = "[ERROR] 未找到该行手機號输入框"; return; }
+    if (!inp) { resultBox.textContent = "[ERROR] 未找到該行手機號輸入框"; return; }
     const newPhone = inp.value.trim();
     if (!newPhone) { resultBox.textContent = "[ERROR] 請輸入新手機號"; return; }
     await api("/admin/randomization-records/phone", "PATCH", {
@@ -1374,8 +1742,8 @@ ADMIN_SCRIPTS = """
 
   async function voidRecordRow(enrollmentNo, isVoided) {
     const tip = isVoided
-      ? "确认恢復入組编号 " + enrollmentNo + " 的記錄為有效狀態？"
-      : "确认作廢入組编号 " + enrollmentNo + " 的記錄？作廢會保留歷史記錄並不影響後續隨機化。";
+      ? "確認恢復入組編號 " + enrollmentNo + " 的記錄為有效狀態？"
+      : "確認作廢入組編號 " + enrollmentNo + " 的記錄？作廢會保留歷史記錄並不影響後續隨機化。";
     if (!confirm(tip)) return;
     await api("/admin/randomization-records/delete", "POST", {
       enrollment_no: enrollmentNo,
@@ -1406,7 +1774,11 @@ ADMIN_SCRIPTS = """
       loadSitesAdminTable();
       renderBatchPickList();
     }
-    if (PAGE === "qr") { loadGroupLabels(); loadParticipantPageUi(); loadQrCurrent(); }
+    if (PAGE === "qr") {
+      loadGroupLabels();
+      loadParticipantPageUi();
+      loadQrCurrent().then(() => onQrModeChange());
+    }
     if (PAGE === "records") {
       const siteSel = document.getElementById("recordsFilterSite");
       const dateInp = document.getElementById("recordsFilterDate");
@@ -1473,7 +1845,7 @@ def render_admin_page(page: PageId) -> str:
     {render_sidebar(page)}
     <main class="main">
       {inner}
-      <h3 style="margin-top:28px;font-size:13px;color:#64748b;">接口反馈</h3>
+      <h3 style="margin-top:28px;font-size:13px;color:#64748b;">介面回饋</h3>
       <pre id="result">ready</pre>
     </main>
   </div>
