@@ -191,6 +191,70 @@ button.secondary:hover { background: #334155; }
 button.danger { background: var(--danger); }
 button.danger:hover { background: #b91c1c; }
 .muted { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.records-overview {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.overview-stat-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #f8fafc;
+}
+.overview-stat-row.overview-stat-trial { border-left: 4px solid #15803d; }
+.overview-stat-row.overview-stat-nontrial { border-left: 4px solid #2563eb; }
+.overview-stat-row.overview-stat-voided { border-left: 4px solid #dc2626; }
+.overview-stat-label {
+  flex: 0 0 88px;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--text);
+}
+.overview-stat-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 20px;
+}
+.overview-metric {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.overview-metric-total { margin-left: 4px; }
+.overview-metric-label {
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.overview-num {
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.overview-num-md { font-size: 18px; }
+.overview-num-lg { font-size: 26px; }
+.overview-num.valid { color: #15803d; }
+.overview-num.invalid { color: #dc2626; }
+.overview-num.neutral { color: #2563eb; }
+.overview-cap {
+  font-size: 15px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.overview-stat-footer {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+  line-height: 1.6;
+}
 pre#result {
   background: #1e293b;
   color: #e2e8f0;
@@ -228,9 +292,10 @@ table.data tr:hover td { background: #fafafa; }
   border: 1px solid var(--border);
   border-radius: 8px;
 }
-#recordsScrollBox {
-  max-height: none;
-  height: 760px; /* roughly 20 rows visible before scrolling */
+.table-wrap {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow-x: auto;
 }
 .batch-pick-zone {
   margin-top: 18px;
@@ -257,6 +322,13 @@ table.data tr:hover td { background: #fafafa; }
 }
 .batch-pick-chips li:last-child { border-bottom: none; }
 .table-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+select.rec-status-select {
+  width: 100%;
+  min-width: 100px;
+  max-width: 132px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
 .card .subhead {
   margin: 22px 0 8px;
   font-size: 13px;
@@ -642,8 +714,16 @@ def panel_settings() -> str:
     </div>
     <div class="card">
       <h3>參數</h3>
-      <label>隨機人數上限（留空表示不限制）</label>
-      <input id="maxEnrollment" placeholder="例如 5000" />
+      <label>有效入組總人數上限（留空表示不限制；達標後停招）</label>
+      <input id="maxEnrollment" placeholder="例如 998" />
+      <label>招募起始日（香港時間，用於入組概覽每週跟踪）</label>
+      <input id="recruitmentStartDate" type="date" />
+      <h4 style="font-size:13px;margin:18px 0 8px;color:#64748b;">入組概覽與每週跟踪</h4>
+      <label>計劃跟踪週數</label>
+      <input id="weeklyPlanWeeks" type="number" min="1" placeholder="例如 20" />
+      <label>每週預計入組人數</label>
+      <input id="weeklyPlanPerWeek" type="number" min="1" placeholder="例如 60" />
+      <p id="weeklyPlanTargetHint" class="muted" style="font-size:12px;margin-top:4px;">累計計劃目標 = 週數 × 每週人數</p>
       <label>區組大小（逗號分隔，須為偶數）</label>
       <input id="blockSizes" value="4,8,12" />
       <label>更新人</label>
@@ -658,7 +738,7 @@ def panel_sites() -> str:
     return f"""
     <div class="page-header">
       <h2>站點與密碼</h2>
-      <p class="lead">在站點一覽中點擊「啟用」加入待選列表（最多 <strong>{RECRUITMENT_BATCH_MAX_ACTIVE_SITES}</strong> 個），再點「開啟新批次」；或仍可透過 <a href="/docs" target="_blank">Swagger</a> 調用介面。密碼須落在<strong>同一香港日曆日</strong>內的起止時間（本地時間選擇器）。</p>
+      <p class="lead">在站點一覽中點擊「啟用」加入待選列表（最多 <strong>{RECRUITMENT_BATCH_MAX_ACTIVE_SITES}</strong> 個），再點「開啟新批次」；或仍可透過 <a href="/docs" target="_blank">Swagger</a> 調用介面。密碼須落在<strong>同一香港日曆日</strong>內的起止時間（以下按香港時間填寫）。</p>
     </div>
     <div class="card">
       <h4 class="subhead subhead-first">統計概覽</h4>
@@ -680,7 +760,7 @@ def panel_sites() -> str:
       <div class="site-name-row" style="margin-top:10px;">
         <div class="field-site">
           <label for="editSiteSelect">選擇站點</label>
-          <select id="editSiteSelect" onchange="syncEditNameFromSelect(); document.getElementById('pwdSiteSelect').value = this.value;">
+          <select id="editSiteSelect" onchange="syncEditNameFromSelect()">
             <option value="">請選擇站點</option>
           </select>
           <select id="pwdSiteSelect" class="pwd-site-select" style="display:none;">
@@ -708,11 +788,11 @@ def panel_sites() -> str:
       <p class="muted" style="margin:6px 0 0;font-size:12px;">要求：至少 6 位，且只能為數字（例如 123456）。</p>
       <div class="row">
         <div>
-          <label>生效開始（本地）</label>
+          <label>生效開始（香港時間）</label>
           <input id="pwdWinStart" type="datetime-local" />
         </div>
         <div>
-          <label>生效結束（本地）</label>
+          <label>生效結束（香港時間）</label>
           <input id="pwdWinEnd" type="datetime-local" />
         </div>
       </div>
@@ -728,7 +808,7 @@ def panel_sites() -> str:
       <button type="button" class="secondary" onclick="loadSitesAdminTable()">重新整理表格</button>
       <div class="scroll-box" style="margin-top:12px;">
         <table class="data" id="sitesAdminTable">
-          <thead><tr><th>站點ID</th><th>名稱</th><th>當前狀態</th><th>密碼</th><th>生效起(UTC)</th><th>生效止(UTC)</th><th>操作</th></tr></thead>
+          <thead><tr><th>站點ID</th><th>名稱</th><th>當前狀態</th><th>密碼</th><th>生效起（香港時間）</th><th>生效止（香港時間）</th><th>操作</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -861,11 +941,18 @@ def panel_records() -> str:
     return """
     <div class="page-header">
       <h2>隨機化分組記錄</h2>
-      <p class="lead">查詢入組記錄；在列表中可直接修改手機號或作廢記錄（保留歷史，不影響後續隨機化序列）。審計以「admin」及預設原因記錄。</p>
+      <p class="lead">查詢入組記錄；可編輯受試者編碼、手機號與狀態（Trial / Non-trial / 作廢），修改後分別點「保存編碼」「修改手機號」「保存狀態」。新隨機默認為 Trial。</p>
     </div>
     <div class="card">
       <h3>入組概覽</h3>
-      <div id="recordsOverview" class="muted" style="margin-top:8px;">載入中…</div>
+      <div id="recordsOverview" class="records-overview">載入中…</div>
+      <div id="recordsWeeklySection" style="margin-top:16px;">
+        <h4 style="font-size:13px;margin:0 0 8px;color:#64748b;">每週招募跟踪（Trial 有效入組）</h4>
+        <p id="recordsWeeklyCaption" class="muted" style="font-size:12px;margin-bottom:8px;">載入中…</p>
+        <div style="max-width:560px;">
+          <canvas id="recordsWeeklyChart" height="150"></canvas>
+        </div>
+      </div>
     </div>
     <div class="card">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
@@ -883,7 +970,7 @@ def panel_records() -> str:
           </select>
         </div>
         <div style="flex:1 1 0;min-width:0;">
-          <label>日期</label>
+          <label>日期（香港時間）</label>
           <input id="recordsFilterDate" type="date" />
         </div>
         <div style="flex:1 1 0;min-width:0;">
@@ -897,9 +984,9 @@ def panel_records() -> str:
           <input id="recordsFilterRecruiter" placeholder="輸入招募員姓名關鍵字" />
         </div>
       </div>
-      <div class="scroll-box" id="recordsScrollBox" style="margin-top:12px;">
+      <div class="table-wrap" style="margin-top:12px;">
         <table class="data" id="recordsTable">
-          <thead><tr><th>編號</th><th>入組編號</th><th>手機號</th><th>站點</th><th>招募員姓名</th><th>分組</th><th>狀態</th><th>時間</th><th>操作</th></tr></thead>
+          <thead><tr><th>頁內序號</th><th>入組編號</th><th>受試者編碼</th><th>手機號</th><th>站點</th><th>招募員姓名</th><th>分組</th><th>狀態</th><th>時間（香港時間）</th><th>操作</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -923,7 +1010,7 @@ def panel_records() -> str:
       <button type="button" class="secondary" onclick="loadAudits()">重新整理日誌</button>
       <div class="scroll-box" style="margin-top:12px;">
         <table class="data" id="auditTable">
-          <thead><tr><th>ID</th><th>事件</th><th>請求ID</th><th>時間</th></tr></thead>
+          <thead><tr><th>ID</th><th>事件</th><th>請求ID</th><th>時間（香港時間）</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -939,20 +1026,98 @@ ADMIN_SCRIPTS = """
   const resultBox = document.getElementById("result");
 
   async function api(path, method, body) {
-    const options = { method: method || "GET", headers: { "Content-Type": "application/json" } };
+    const options = {
+      method: method || "GET",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    };
     if (body) options.body = JSON.stringify(body);
     const res = await fetch(path, options);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      resultBox.textContent = "[ERROR] " + path + "\\n" + JSON.stringify(data, null, 2);
+      if (resultBox) resultBox.textContent = "[ERROR] " + path + "\\n" + JSON.stringify(data, null, 2);
       throw new Error(data.detail || "request_failed");
     }
-    resultBox.textContent = "[OK] " + path + "\\n" + JSON.stringify(data, null, 2);
+    if (resultBox) resultBox.textContent = "[OK] " + path + "\\n" + JSON.stringify(data, null, 2);
     return data;
+  }
+
+  const HK_TZ = "Asia/Hong_Kong";
+
+  function formatHkTime(iso) {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return String(iso);
+    const parts = new Intl.DateTimeFormat("zh-HK", {
+      timeZone: HK_TZ,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).formatToParts(d);
+    const get = (t) => (parts.find(p => p.type === t) || {}).value || "";
+    return get("year") + "-" + get("month") + "-" + get("day") + " "
+      + get("hour") + ":" + get("minute") + ":" + get("second") + " HKT";
+  }
+
+  function hkDateFromIso(iso) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: HK_TZ,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(d);
+  }
+
+  function isoToHkDatetimeLocal(iso) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: HK_TZ,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(d);
+    const get = (t) => (parts.find(p => p.type === t) || {}).value || "";
+    return get("year") + "-" + get("month") + "-" + get("day") + "T" + get("hour") + ":" + get("minute");
+  }
+
+  function hkDatetimeLocalToIso(value) {
+    if (!value) return null;
+    const m = String(value).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+    if (!m) return null;
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
+    const h = Number(m[4]);
+    const mi = Number(m[5]);
+    return new Date(Date.UTC(y, mo - 1, d, h - 8, mi, 0)).toISOString();
   }
 
   function csvToInts(raw) {
     return raw.split(",").map(x => Number(x.trim())).filter(x => !Number.isNaN(x));
+  }
+
+  function updateWeeklyPlanTargetHint() {
+    const hint = document.getElementById("weeklyPlanTargetHint");
+    if (!hint) return;
+    const weeks = Number(document.getElementById("weeklyPlanWeeks")?.value || 0);
+    const perWeek = Number(document.getElementById("weeklyPlanPerWeek")?.value || 0);
+    if (weeks > 0 && perWeek > 0) {
+      hint.textContent = "累計計劃目標 = " + weeks + " 週 × " + perWeek + " 人/週 = " + (weeks * perWeek) + " 人";
+    } else {
+      hint.textContent = "累計計劃目標 = 週數 × 每週人數";
+    }
   }
 
   function renderSettingsOverview(data) {
@@ -961,10 +1126,16 @@ ADMIN_SCRIPTS = """
     const maxE = data.max_enrollment;
     const maxLabel = maxE == null || maxE === "" ? "不限制" : String(maxE);
     const blocks = (data.block_sizes || []).length ? (data.block_sizes || []).join("、") : "—";
+    const startDate = data.recruitment_start_date ? escapeHtml(String(data.recruitment_start_date)) : "—";
+    const planWeeks = Number(data.weekly_plan_weeks) || 20;
+    const planPerWeek = Number(data.weekly_plan_per_week) || 60;
     const by = data.updated_by ? escapeHtml(String(data.updated_by)) : "—";
-    const at = data.updated_at ? escapeHtml(String(data.updated_at)) : "—";
+    const at = data.updated_at ? escapeHtml(formatHkTime(data.updated_at)) : "—";
     el.innerHTML =
-      "入組人數上限 <strong>" + escapeHtml(maxLabel) + "</strong>；區組大小 <strong>" + escapeHtml(blocks)
+      "有效入組總上限 <strong>" + escapeHtml(maxLabel)
+      + "</strong>（達標後停招）；招募起始日 <strong>" + startDate
+      + "</strong>；每週跟踪 <strong>" + planWeeks + " 週 × " + planPerWeek + " 人/週 = " + (planWeeks * planPerWeek) + " 人</strong>"
+      + "；區組大小 <strong>" + escapeHtml(blocks)
       + "</strong>。<br/>最近更新人 <strong>" + by + "</strong>；更新時間 <code style='font-size:12px'>" + at + "</code>。";
   }
 
@@ -973,36 +1144,46 @@ ADMIN_SCRIPTS = """
     const data = await api("/admin/randomization-settings", "GET");
     renderSettingsOverview(data);
     document.getElementById("maxEnrollment").value = data.max_enrollment ?? "";
+    const startEl = document.getElementById("recruitmentStartDate");
+    if (startEl) startEl.value = data.recruitment_start_date ?? "";
+    const weeksEl = document.getElementById("weeklyPlanWeeks");
+    if (weeksEl) weeksEl.value = data.weekly_plan_weeks ?? "";
+    const perWeekEl = document.getElementById("weeklyPlanPerWeek");
+    if (perWeekEl) perWeekEl.value = data.weekly_plan_per_week ?? "";
+    updateWeeklyPlanTargetHint();
     document.getElementById("blockSizes").value = (data.block_sizes || []).join(",");
   }
   async function saveSettings() {
     const maxRaw = document.getElementById("maxEnrollment").value.trim();
+    const startRaw = (document.getElementById("recruitmentStartDate")?.value || "").trim();
+    const weeksRaw = (document.getElementById("weeklyPlanWeeks")?.value || "").trim();
+    const perWeekRaw = (document.getElementById("weeklyPlanPerWeek")?.value || "").trim();
     await api("/admin/randomization-settings", "PUT", {
       max_enrollment: maxRaw === "" ? null : Number(maxRaw),
+      recruitment_start_date: startRaw === "" ? null : startRaw,
+      weekly_plan_weeks: weeksRaw === "" ? null : Number(weeksRaw),
+      weekly_plan_per_week: perWeekRaw === "" ? null : Number(perWeekRaw),
       block_sizes: csvToInts(document.getElementById("blockSizes").value),
       updated_by: document.getElementById("settingsUpdatedBy").value
     });
     await loadSettings();
   }
 
-  function localDatetimeToIso(elId) {
-    const v = document.getElementById(elId);
-    if (!v || !v.value) return null;
-    return new Date(v.value).toISOString();
-  }
-
-  function ensurePasswordWindowDefaults() {
+  function applyPasswordWindowDefaults(data) {
     const startEl = document.getElementById("pwdWinStart");
     const endEl = document.getElementById("pwdWinEnd");
     if (!startEl || !endEl) return;
     if (startEl.value && endEl.value) return;
-    const now = new Date();
-    const pad = (n) => String(n).padStart(2, "0");
-    const y = now.getFullYear();
-    const m = pad(now.getMonth() + 1);
-    const d = pad(now.getDate());
-    if (!startEl.value) startEl.value = y + "-" + m + "-" + d + "T00:00";
-    if (!endEl.value) endEl.value = y + "-" + m + "-" + d + "T23:59";
+    const ws = data && data.default_password_window_start;
+    const we = data && data.default_password_window_end;
+    if (ws && we) {
+      if (!startEl.value) startEl.value = isoToHkDatetimeLocal(ws);
+      if (!endEl.value) endEl.value = isoToHkDatetimeLocal(we);
+      return;
+    }
+    const today = hkDateFromIso(new Date().toISOString());
+    if (!startEl.value) startEl.value = today + "T00:00";
+    if (!endEl.value) endEl.value = today + "T23:59";
   }
 
   function fillSiteIdSelects(items) {
@@ -1034,6 +1215,13 @@ ADMIN_SCRIPTS = """
     syncEditNameFromSelect();
   }
 
+  function syncPwdSiteFromEdit() {
+    const selEdit = document.getElementById("editSiteSelect");
+    const selPwd = document.getElementById("pwdSiteSelect");
+    if (!selEdit || !selPwd) return;
+    selPwd.value = selEdit.value;
+  }
+
   function syncEditNameFromSelect() {
     const sel = document.getElementById("editSiteSelect");
     const inp = document.getElementById("editSiteName");
@@ -1042,6 +1230,7 @@ ADMIN_SCRIPTS = """
     const row = (window.__sitesList || []).find(s => s.site_id === sel.value);
     if (idInp) idInp.value = sel.value || "";
     inp.value = row ? row.site_name : "";
+    syncPwdSiteFromEdit();
   }
 
   function syncEditSelectFromIdInput() {
@@ -1051,6 +1240,7 @@ ADMIN_SCRIPTS = """
     const v = idInp.value.trim();
     if (!v) return;
     if ([...sel.options].some(o => o.value === v)) sel.value = v;
+    syncEditNameFromSelect();
   }
 
   async function loadSiteOverview() {
@@ -1064,10 +1254,11 @@ ADMIN_SCRIPTS = """
     const warnPwd = data.sites_with_active_password_at_ref > data.max_parallel_sites_recommended
       ? " <span style='color:#b45309'>（有效密碼站點數超建議）</span>" : "";
     el.innerHTML = "預設 <strong>" + data.preset_site_capacity + "</strong>；已登記 <strong>" + data.registered_site_count
-      + "</strong>。參考 UTC：<strong>" + data.reference_time_utc + "</strong>；密碼有效站點 <strong>"
+      + "</strong>。參考時間（香港時間）：<strong>" + escapeHtml(formatHkTime(data.reference_time_utc)) + "</strong>；密碼有效站點 <strong>"
       + data.sites_with_active_password_at_ref + "</strong>" + warnPwd
       + "。開放批次 ID <strong>" + (data.current_open_batch_id ?? "無") + "</strong>，本批次站點數 <strong>"
       + data.current_open_batch_site_count + "</strong>" + warnBatch + "。";
+    applyPasswordWindowDefaults(data);
     await refreshSiteDropdownsOnly();
     await loadCurrentBatchJson();
   }
@@ -1228,9 +1419,9 @@ ADMIN_SCRIPTS = """
         "</td><td>" +
         pwdCell +
         "</td><td><span class='table-time'>" +
-        (row.window_start || "—") +
+        formatHkTime(row.window_start) +
         "</span></td><td><span class='table-time'>" +
-        (row.window_end || "—") +
+        formatHkTime(row.window_end) +
         "</td><td><div class=\\\"table-actions\\\"><button type=\\\"button\\\" class=\\\"" +
         actCls +
         "\\\" style=\\\"margin:0;padding:6px 10px;font-size:12px\\\" onclick='toggleBatchPickSite(" +
@@ -1307,6 +1498,7 @@ ADMIN_SCRIPTS = """
     if (idInp) idInp.value = sid;
     const sel = document.getElementById("editSiteSelect");
     if (sel) sel.value = sid;
+    syncEditNameFromSelect();
   }
 
   async function addSite() {
@@ -1329,8 +1521,8 @@ ADMIN_SCRIPTS = """
   async function savePassword() {
     const sid = document.getElementById("pwdSiteSelect").value;
     if (!sid) { resultBox.textContent = "[ERROR] 請先選擇密碼對應的站點"; return; }
-    const ws = localDatetimeToIso("pwdWinStart");
-    const we = localDatetimeToIso("pwdWinEnd");
+    const ws = hkDatetimeLocalToIso(document.getElementById("pwdWinStart").value);
+    const we = hkDatetimeLocalToIso(document.getElementById("pwdWinEnd").value);
     const pwd = document.getElementById("pwdRaw").value;
     if (!ws || !we) { resultBox.textContent = "[ERROR] 請填寫密碼生效開始和結束時間"; return; }
     if (!/^\d{6,}$/.test(pwd || "")) { resultBox.textContent = "[ERROR] 密碼要求：至少 6 位且只能為數字"; return; }
@@ -1591,6 +1783,288 @@ ADMIN_SCRIPTS = """
     await loadQrCurrent();
   }
 
+  function overviewStatNum(n, kind, size) {
+    const colorClass = kind === "invalid" ? "invalid" : (kind === "neutral" ? "neutral" : "valid");
+    const sizeClass = size === "lg" ? "overview-num-lg" : "overview-num-md";
+    return "<span class='overview-num " + sizeClass + " " + colorClass + "'>" + (Number(n) || 0) + "</span>";
+  }
+
+  function overviewStatFraction(n, cap, kind, size) {
+    const num = overviewStatNum(n, kind, size);
+    if (cap == null || cap === "") return num;
+    return num + "<span class='overview-cap'>/" + escapeHtml(String(cap)) + "</span>";
+  }
+
+  function overviewStatRow(label, rowClass, inter, ctrl, total, numKind, groupCap, totalCap) {
+    return "<div class='overview-stat-row " + rowClass + "'>"
+      + "<div class='overview-stat-label'>" + escapeHtml(label) + "</div>"
+      + "<div class='overview-stat-metrics'>"
+      + "<span class='overview-metric'><span class='overview-metric-label'>干預</span>" + overviewStatFraction(inter, groupCap, numKind, "md") + "</span>"
+      + "<span class='overview-metric'><span class='overview-metric-label'>對照</span>" + overviewStatFraction(ctrl, groupCap, numKind, "md") + "</span>"
+      + "<span class='overview-metric overview-metric-total'><span class='overview-metric-label'>小計</span>"
+      + overviewStatFraction(total, totalCap, numKind, "lg") + "</span>"
+      + "</div></div>";
+  }
+
+  let recordsWeeklyChartInstance = null;
+
+  function weeklyChartValueLabelPlugin() {
+    return {
+      id: "weeklyChartValueLabels",
+      afterDatasetsDraw: function(chart) {
+        const ctx = chart.ctx;
+        const datasets = chart.data.datasets || [];
+        ctx.save();
+        ctx.font = "600 11px system-ui, -apple-system, sans-serif";
+        ctx.textAlign = "center";
+
+        function drawBarLabels(datasetIndex, textColor) {
+          const meta = chart.getDatasetMeta(datasetIndex);
+          if (!meta || meta.hidden) return;
+          const dataset = datasets[datasetIndex];
+          meta.data.forEach(function(bar, index) {
+            const value = Number(dataset.data[index]) || 0;
+            if (value <= 0) return;
+            const props = bar.getProps(["x", "y", "base"], true);
+            const midY = (props.y + props.base) / 2;
+            ctx.fillStyle = textColor;
+            ctx.textBaseline = "middle";
+            ctx.fillText(String(value), props.x, midY);
+          });
+        }
+
+        drawBarLabels(0, "#ffffff");
+        drawBarLabels(1, "#ffffff");
+
+        const metaInter = chart.getDatasetMeta(0);
+        const metaCtrl = chart.getDatasetMeta(1);
+        if (metaInter && metaCtrl && !metaInter.hidden) {
+          metaInter.data.forEach(function(bar, index) {
+            const interVal = Number(datasets[0].data[index]) || 0;
+            const ctrlVal = Number(datasets[1].data[index]) || 0;
+            const total = interVal + ctrlVal;
+            if (total <= 0) return;
+            const topBar = ctrlVal > 0 ? metaCtrl.data[index] : bar;
+            const props = topBar.getProps(["x", "y"], true);
+            ctx.fillStyle = "#334155";
+            ctx.textBaseline = "bottom";
+            ctx.font = "700 11px system-ui, -apple-system, sans-serif";
+            ctx.fillText(String(total), props.x, props.y - 4);
+          });
+        }
+
+        const lineIndex = datasets.findIndex(function(ds) {
+          return ds.label && String(ds.label).indexOf("累計實際") >= 0;
+        });
+        if (lineIndex >= 0) {
+          const lineMeta = chart.getDatasetMeta(lineIndex);
+          const lineData = datasets[lineIndex].data || [];
+          if (lineMeta && !lineMeta.hidden) {
+            lineMeta.data.forEach(function(point, index) {
+              const value = Number(lineData[index]) || 0;
+              const prev = index > 0 ? Number(lineData[index - 1]) || 0 : -1;
+              const isLast = index === lineData.length - 1;
+              if (value <= 0) return;
+              if (!(index === 0 || value !== prev || isLast)) return;
+              const props = point.getProps(["x", "y"], true);
+              ctx.fillStyle = "#15803d";
+              ctx.textBaseline = "bottom";
+              ctx.font = "700 11px system-ui, -apple-system, sans-serif";
+              ctx.fillText(String(value), props.x, props.y - 6);
+            });
+          }
+        }
+
+        const planIndex = datasets.findIndex(function(ds) {
+          return ds.label && String(ds.label).indexOf("累計計劃") >= 0;
+        });
+        if (planIndex >= 0) {
+          const planMeta = chart.getDatasetMeta(planIndex);
+          const planData = datasets[planIndex].data || [];
+          if (planMeta && !planMeta.hidden && planData.length > 0) {
+            const lastIdx = planData.length - 1;
+            const value = Number(planData[lastIdx]) || 0;
+            if (value > 0) {
+              const point = planMeta.data[lastIdx];
+              const props = point.getProps(["x", "y"], true);
+              ctx.fillStyle = "#b45309";
+              ctx.textBaseline = "bottom";
+              ctx.font = "700 11px system-ui, -apple-system, sans-serif";
+              ctx.fillText(String(value), props.x, props.y - 6);
+            }
+          }
+        }
+
+        ctx.restore();
+      },
+    };
+  }
+
+  function renderWeeklyChart(ov) {
+    const canvas = document.getElementById("recordsWeeklyChart");
+    const caption = document.getElementById("recordsWeeklyCaption");
+    if (!canvas) return;
+    try {
+    const weeks = (ov && ov.weekly_tracking) || [];
+    const start = ov && ov.recruitment_start_date;
+    const planWeeks = (ov && ov.weekly_plan && ov.weekly_plan.weeks) || 20;
+    const planPerWeek = (ov && ov.weekly_plan && ov.weekly_plan.per_week) || 60;
+    const planTotal = (ov && ov.weekly_plan && ov.weekly_plan.total_target) || (planWeeks * planPerWeek);
+    if (caption) {
+      caption.textContent = start
+        ? "招募起始：" + start + "（香港時間）· 柱狀為每週 Trial 有效入組（柱頂數字=該週合計，段內數字=干預/對照）· 虛線為累計計劃（第"
+          + planWeeks + "周達 " + planTotal + " 人，" + planPerWeek + " 人/周）· 實線為 Trial 累計實際（旁邊數字標註；右軸刻度含計劃目標，勿與左軸柱高直接比對）"
+        : "請在隨機化設定中配置招募起始日";
+    }
+    if (typeof Chart === "undefined") {
+      if (caption) caption.textContent += "（圖表庫載入中，請重新整理）";
+      return;
+    }
+    if (recordsWeeklyChartInstance) {
+      recordsWeeklyChartInstance.destroy();
+      recordsWeeklyChartInstance = null;
+    }
+    const labels = weeks.map(function(w) { return String(w.week_no); });
+    const inter = weeks.map(function(w) { return Number(w.valid_intervention) || 0; });
+    const ctrl = weeks.map(function(w) { return Number(w.valid_control) || 0; });
+    const actualCumulative = weeks.map(function(w) { return Number(w.valid_cumulative) || 0; });
+    const planCumulative = weeks.map(function(w) {
+      return w.week_no <= planWeeks ? w.week_no * planPerWeek : null;
+    });
+    const actualMax = actualCumulative.reduce(function(m, v) { return Math.max(m, Number(v) || 0); }, 0);
+    const planMax = planCumulative.reduce(function(m, v) { return Math.max(m, Number(v) || 0); }, 0);
+    const weeklyMax = weeks.reduce(function(m, w) {
+      return Math.max(m, (Number(w.valid_intervention) || 0) + (Number(w.valid_control) || 0));
+    }, 0);
+    recordsWeeklyChartInstance = new Chart(canvas, {
+      type: "bar",
+      plugins: [weeklyChartValueLabelPlugin()],
+      data: {
+        labels: labels,
+        datasets: [
+          { label: "干預組（每週）", data: inter, backgroundColor: "#dc2626", stack: "recruitment", order: 3, yAxisID: "y" },
+          { label: "對照組（每週）", data: ctrl, backgroundColor: "#2563eb", stack: "recruitment", order: 3, yAxisID: "y" },
+          {
+            type: "line",
+            label: "累計計劃（第" + planWeeks + "周 " + planTotal + " 人）",
+            data: planCumulative,
+            borderColor: "#b45309",
+            backgroundColor: "#b45309",
+            borderDash: [6, 4],
+            borderWidth: 2,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            fill: false,
+            order: 1,
+            spanGaps: false,
+            yAxisID: "y1",
+          },
+          {
+            type: "line",
+            label: "累計實際（Trial）",
+            data: actualCumulative,
+            borderColor: "#15803d",
+            backgroundColor: "#15803d",
+            borderWidth: 2,
+            pointRadius: 2,
+            pointHoverRadius: 5,
+            fill: false,
+            order: 2,
+            yAxisID: "y1",
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        plugins: {
+          legend: { position: "top" },
+          tooltip: {
+            callbacks: {
+              afterTitle: function(items) {
+                const idx = items[0] && items[0].dataIndex;
+                if (idx == null || !weeks[idx]) return "";
+                return weeks[idx].range_label || "";
+              },
+              label: function(ctx) {
+                const label = ctx.dataset.label || "";
+                const value = Number(ctx.parsed.y) || 0;
+                if (ctx.dataset.type === "line") {
+                  return label + "：" + value;
+                }
+                return label + "：" + value;
+              },
+              footer: function(items) {
+                const idx = items[0] && items[0].dataIndex;
+                if (idx == null || !weeks[idx]) return "";
+                const w = weeks[idx];
+                const interN = Number(w.valid_intervention) || 0;
+                const ctrlN = Number(w.valid_control) || 0;
+                const totalN = Number(w.valid_total) || 0;
+                const cumN = Number(w.valid_cumulative) || 0;
+                const lines = ["本週合計 " + totalN + " 人（干預 " + interN + " + 對照 " + ctrlN + "）"];
+                if (totalN !== interN + ctrlN) {
+                  lines.push("另有 " + (totalN - interN - ctrlN) + " 人未歸入干預/對照");
+                }
+                lines.push("累計實際 " + cumN + " 人");
+                return lines;
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            stacked: true,
+            title: { display: true, text: "招募週次" },
+          },
+          y: {
+            stacked: true,
+            beginAtZero: true,
+            suggestedMax: Math.max(weeklyMax * 1.25, 4),
+            ticks: { precision: 0 },
+            title: { display: true, text: "每週入組人數（左軸）" },
+            position: "left",
+          },
+          y1: {
+            beginAtZero: true,
+            suggestedMax: Math.max(planMax, actualMax) * 1.08,
+            ticks: { precision: 0 },
+            title: { display: true, text: "累計入組人數（右軸）" },
+            position: "right",
+            grid: { drawOnChartArea: false },
+          },
+        },
+      },
+    });
+    } catch (err) {
+      if (caption) caption.textContent = (caption.textContent || "") + "（圖表渲染失敗）";
+      if (resultBox) resultBox.textContent = "[ERROR] weekly chart\\n" + String(err && err.message ? err.message : err);
+    }
+  }
+
+  function recordEffectiveStatus(row) {
+    if (String(row.activation_status || "") === "voided") return "voided";
+    const ts = String(row.trial_status || "trial");
+    return ts === "nontrial" ? "nontrial" : "trial";
+  }
+
+  function renderStatusSelect(row) {
+    const current = recordEffectiveStatus(row);
+    const options = [
+      ["trial", "Trial"],
+      ["nontrial", "Non-trial"],
+      ["voided", "作廢"],
+    ];
+    return "<select class='rec-status-select'>"
+      + options.map(function(pair) {
+        const val = pair[0];
+        const label = pair[1];
+        const selected = current === val ? " selected" : "";
+        return "<option value='" + val + "'" + selected + ">" + label + "</option>";
+      }).join("")
+      + "</select>";
+  }
+
   function renderRecordsOverview(ov) {
     const el = document.getElementById("recordsOverview");
     if (!el) return;
@@ -1598,19 +2072,37 @@ ADMIN_SCRIPTS = """
       el.textContent = "暫無統計數據。";
       return;
     }
-    const total = Number(ov.total_enrolled) || 0;
-    const valid = Number(ov.valid_enrolled ?? total) || 0;
+    const trialTotal = Number(ov.trial_enrolled != null ? ov.trial_enrolled : ov.valid_enrolled) || 0;
+    const nontrialTotal = Number(ov.nontrial_enrolled) || 0;
     const voided = Number(ov.voided_count) || 0;
-    const inter = Number(ov.intervention_count) || 0;
-    const ctrl = Number(ov.control_count) || 0;
-    const other = Number(ov.other_group_count) || 0;
-    let html =
-      "總記錄 <strong>" + total + "</strong> 人（有效 <strong>" + valid + "</strong>，作廢 <strong>" + voided + "</strong>）；其中干預組（GENAI）<strong>" + inter
-      + "</strong> 人，對照組（HUMAN）<strong>" + ctrl + "</strong> 人。";
-    if (other > 0) {
-      html += " <span class='muted'>另有其他分組記錄 " + other + " 條。</span>";
-    }
-    el.innerHTML = html;
+    const totalAll = Number(ov.total_enrolled != null ? ov.total_enrolled : ov.total_randomized) || 0;
+    const trialInter = Number(ov.trial_intervention_count != null ? ov.trial_intervention_count : ov.valid_intervention_count) || 0;
+    const trialCtrl = Number(ov.trial_control_count != null ? ov.trial_control_count : ov.valid_control_count) || 0;
+    const nontrialInter = Number(ov.nontrial_intervention_count) || 0;
+    const nontrialCtrl = Number(ov.nontrial_control_count) || 0;
+    const voidInter = Number(ov.voided_intervention_count) || 0;
+    const voidCtrl = Number(ov.voided_control_count) || 0;
+    const maxTotal = ov.max_enrollment;
+    const maxNum = maxTotal == null || maxTotal === "" ? null : Number(maxTotal);
+    const trialGroupCap = maxNum && maxNum > 0 ? Math.floor(maxNum / 2) : null;
+    const trialTotalCap = maxNum && maxNum > 0 ? maxNum : null;
+    const statusText = ov.recruitment_open === false
+      ? "<span style='color:#b45309;font-weight:600;'>已停招</span>"
+      : "<span style='color:#15803d;font-weight:600;'>招募中</span>";
+    const planWeeks = Number(ov.weekly_plan && ov.weekly_plan.weeks) || 20;
+    const planPerWeek = Number(ov.weekly_plan && ov.weekly_plan.per_week) || 60;
+    const planTotal = Number(ov.weekly_plan && ov.weekly_plan.total_target) || (planWeeks * planPerWeek);
+    const planText = "計劃 " + planWeeks + " 週 × " + planPerWeek + " 人/週 = " + planTotal + " 人";
+    el.innerHTML =
+      overviewStatRow("Trial", "overview-stat-trial", trialInter, trialCtrl, trialTotal, "valid", trialGroupCap, trialTotalCap)
+      + overviewStatRow("Non-trial", "overview-stat-nontrial", nontrialInter, nontrialCtrl, nontrialTotal, "neutral", null, null)
+      + overviewStatRow("作廢", "overview-stat-voided", voidInter, voidCtrl, voided, "invalid", null, null)
+      + "<div class='overview-stat-footer'>"
+      + "隨機總計 " + overviewStatNum(totalAll, "valid", "md")
+      + " · " + escapeHtml(planText)
+      + " · 停招狀態 " + statusText
+      + "</div>";
+    renderWeeklyChart(ov);
   }
 
   function renderRecordsRows(items, startIndex) {
@@ -1620,18 +2112,24 @@ ADMIN_SCRIPTS = """
     (items || []).forEach((row, idx) => {
       const tr = document.createElement("tr");
       const enc = JSON.stringify(row.enrollment_no);
+      const codeVal = escapeHtml(row.subject_code || "");
       const phoneVal = escapeHtml(row.phone_number || "");
       const status = String(row.activation_status || "pending");
       const isVoided = status === "voided";
-      const statusText = isVoided ? "作廢" : "有效";
-      const actionText = isVoided ? "恢復" : "作廢";
+      const trialStatus = String(row.trial_status || "trial");
+      tr.dataset.voided = isVoided ? "1" : "0";
+      tr.dataset.trialStatus = trialStatus;
       tr.innerHTML =
-        "<td>" + String((startIndex || 0) + idx + 1) + "</td><td>" + escapeHtml(row.enrollment_no) + "</td><td><input type='text' class='rec-phone-input' value='" + phoneVal + "' /></td><td>"
+        "<td>" + String((startIndex || 0) + idx + 1) + "</td><td>" + escapeHtml(row.enrollment_no) + "</td>"
+        + "<td><input type='text' class='rec-subject-code-input' value='" + codeVal + "' placeholder='可選' /></td>"
+        + "<td><input type='text' class='rec-phone-input' value='" + phoneVal + "' /></td><td>"
         + escapeHtml(row.site_id) + "</td><td>"
-        + escapeHtml(row.recruiter_id || "") + "</td><td>" + escapeHtml(row.allocation_group) + "</td><td>" + statusText + "</td><td>"
-        + escapeHtml(String(row.randomized_at || "")) + "</td><td><div class='table-actions'>"
+        + escapeHtml(row.recruiter_id || "") + "</td><td>" + escapeHtml(row.allocation_group) + "</td><td>"
+        + renderStatusSelect(row) + "</td><td>"
+        + escapeHtml(formatHkTime(row.randomized_at)) + "</td><td><div class='table-actions'>"
+        + "<button type='button' class='secondary' style='margin:0;padding:6px 10px;font-size:12px' onclick='saveRecordSubjectCode(" + enc + ", this)'>保存編碼</button>"
         + "<button type='button' class='secondary' style='margin:0;padding:6px 10px;font-size:12px' onclick='saveRecordPhone(" + enc + ", this)'>修改手機號</button>"
-        + "<button type='button' class='danger' style='margin:0;padding:6px 10px;font-size:12px' onclick='voidRecordRow(" + enc + ", " + (isVoided ? "true" : "false") + ")'>" + actionText + "</button></div></td>";
+        + "<button type='button' class='secondary' style='margin:0;padding:6px 10px;font-size:12px' onclick='saveRecordStatus(" + enc + ", this)'>保存狀態</button></div></td>";
       tbody.appendChild(tr);
     });
   }
@@ -1682,7 +2180,7 @@ ADMIN_SCRIPTS = """
       if (site && String(row.site_id || "") !== site) return false;
       if (group && String(row.allocation_group || "") !== group) return false;
       if (date) {
-        const d = String(row.randomized_at || "").slice(0, 10);
+        const d = hkDateFromIso(row.randomized_at);
         if (d !== date) return false;
       }
       if (recruiter && !String(row.recruiter_id || "").toLowerCase().includes(recruiter)) return false;
@@ -1712,17 +2210,38 @@ ADMIN_SCRIPTS = """
 
   async function loadRecords() {
     const tbody = document.querySelector("#recordsTable tbody");
+    const overviewEl = document.getElementById("recordsOverview");
     if (!tbody) return;
-    const data = await api("/admin/randomization-records", "GET");
-    renderRecordsOverview(data.overview);
-    window.__recordsItems = data.items || [];
-    refillRecordsFilterOptions(window.__recordsItems);
-    applyRecordsFilter();
+    try {
+      const data = await api("/admin/randomization-records", "GET");
+      if (!data || !data.overview) throw new Error("invalid_records_response");
+      renderRecordsOverview(data.overview);
+      window.__recordsItems = data.items || [];
+      refillRecordsFilterOptions(window.__recordsItems);
+      applyRecordsFilter();
+    } catch (err) {
+      const msg = err && err.message ? String(err.message) : String(err);
+      if (overviewEl) overviewEl.textContent = "載入失敗：" + msg + "（請重新登入或點「重新整理」）";
+      if (resultBox) resultBox.textContent = "[ERROR] loadRecords\\n" + msg;
+    }
   }
 
   function exportRecordsCsv() {
     const url = "/admin/randomization-records.csv";
     window.open(url, "_blank");
+  }
+
+  async function saveRecordSubjectCode(enrollmentNo, btn) {
+    const tr = btn && btn.closest ? btn.closest("tr") : null;
+    const inp = tr ? tr.querySelector("input.rec-subject-code-input") : null;
+    if (!inp) { resultBox.textContent = "[ERROR] 未找到該行受試者編碼輸入框"; return; }
+    await api("/admin/randomization-records/subject-code", "PATCH", {
+      enrollment_no: enrollmentNo,
+      subject_code: inp.value.trim(),
+      changed_by: "admin",
+      reason: "manual subject code (list)"
+    });
+    await loadRecords();
   }
 
   async function saveRecordPhone(enrollmentNo, btn) {
@@ -1740,16 +2259,50 @@ ADMIN_SCRIPTS = """
     await loadRecords();
   }
 
-  async function voidRecordRow(enrollmentNo, isVoided) {
-    const tip = isVoided
-      ? "確認恢復入組編號 " + enrollmentNo + " 的記錄為有效狀態？"
-      : "確認作廢入組編號 " + enrollmentNo + " 的記錄？作廢會保留歷史記錄並不影響後續隨機化。";
+  async function saveRecordStatus(enrollmentNo, btn) {
+    const tr = btn && btn.closest ? btn.closest("tr") : null;
+    const sel = tr ? tr.querySelector("select.rec-status-select") : null;
+    if (!sel) { resultBox.textContent = "[ERROR] 未找到該行狀態選擇框"; return; }
+    const newStatus = sel.value;
+    const wasVoided = tr.dataset.voided === "1";
+    const wasTrial = tr.dataset.trialStatus || "trial";
+    const currentStatus = wasVoided ? "voided" : wasTrial;
+    if (newStatus === currentStatus) {
+      resultBox.textContent = "[OK] 狀態未變更";
+      return;
+    }
+    let statusLabel = newStatus === "voided" ? "作廢" : (newStatus === "trial" ? "Trial" : "Non-trial");
+    let tip = "確認將入組編號 " + enrollmentNo + " 的狀態改為「" + statusLabel + "」？";
+    if (newStatus === "trial") tip += "（計入 998 上限）";
+    if (newStatus === "nontrial") tip += "（不計 998 上限，手機號仍不可重複隨機）";
+    if (newStatus === "voided") tip += "（作廢會保留歷史記錄並釋放手機號）";
     if (!confirm(tip)) return;
-    await api("/admin/randomization-records/delete", "POST", {
-      enrollment_no: enrollmentNo,
-      voided_by: "admin",
-      reason: isVoided ? "manual restore (list)" : "manual void (list)"
-    });
+
+    if (newStatus === "voided") {
+      await api("/admin/randomization-records/delete", "POST", {
+        enrollment_no: enrollmentNo,
+        voided_by: "admin",
+        reason: "manual void (list status)"
+      });
+      await loadRecords();
+      return;
+    }
+
+    if (wasVoided) {
+      await api("/admin/randomization-records/delete", "POST", {
+        enrollment_no: enrollmentNo,
+        voided_by: "admin",
+        reason: "manual restore (list status)"
+      });
+    }
+    if (!wasVoided || newStatus !== wasTrial) {
+      await api("/admin/randomization-records/trial-status", "PATCH", {
+        enrollment_no: enrollmentNo,
+        trial_status: newStatus,
+        changed_by: "admin",
+        reason: "manual trial status (list status)"
+      });
+    }
     await loadRecords();
   }
 
@@ -1760,16 +2313,57 @@ ADMIN_SCRIPTS = """
     tbody.innerHTML = "";
     (data.items || []).forEach(row => {
       const tr = document.createElement("tr");
-      tr.innerHTML = "<td>" + row.id + "</td><td>" + row.event_type + "</td><td>" + row.request_id + "</td><td>" + (row.created_at || "") + "</td>";
+      tr.innerHTML = "<td>" + row.id + "</td><td>" + row.event_type + "</td><td>" + row.request_id + "</td><td>" + escapeHtml(formatHkTime(row.created_at)) + "</td>";
       tbody.appendChild(tr);
     });
   }
 
-  document.addEventListener("DOMContentLoaded", function() {
-    if (PAGE === "settings") loadSettings();
+  function initRecordsPage() {
+    const siteSel = document.getElementById("recordsFilterSite");
+    const dateInp = document.getElementById("recordsFilterDate");
+    const groupSel = document.getElementById("recordsFilterGroup");
+    const recruiterInp = document.getElementById("recordsFilterRecruiter");
+    const pageSizeSel = document.getElementById("recordsPageSize");
+    const prevBtn = document.getElementById("recordsPrevBtn");
+    const nextBtn = document.getElementById("recordsNextBtn");
+    window.__recordsCurrentPage = 1;
+    [siteSel, dateInp, groupSel].forEach(el => {
+      if (!el) return;
+      el.addEventListener("change", function() {
+        window.__recordsCurrentPage = 1;
+        applyRecordsFilter();
+      });
+    });
+    if (recruiterInp) recruiterInp.addEventListener("input", function() {
+      window.__recordsCurrentPage = 1;
+      applyRecordsFilter();
+    });
+    if (pageSizeSel) pageSizeSel.addEventListener("change", function() {
+      window.__recordsCurrentPage = 1;
+      applyRecordsFilter();
+    });
+    if (prevBtn) prevBtn.addEventListener("click", function() {
+      window.__recordsCurrentPage = Math.max(1, (window.__recordsCurrentPage || 1) - 1);
+      applyRecordsFilter();
+    });
+    if (nextBtn) nextBtn.addEventListener("click", function() {
+      window.__recordsCurrentPage = (window.__recordsCurrentPage || 1) + 1;
+      applyRecordsFilter();
+    });
+    loadRecords();
+    loadAudits();
+  }
+
+  function bootAdminPage() {
+    if (PAGE === "settings") {
+      const weeksEl = document.getElementById("weeklyPlanWeeks");
+      const perWeekEl = document.getElementById("weeklyPlanPerWeek");
+      if (weeksEl) weeksEl.addEventListener("input", updateWeeklyPlanTargetHint);
+      if (perWeekEl) perWeekEl.addEventListener("input", updateWeeklyPlanTargetHint);
+      loadSettings();
+    }
     if (PAGE === "sites") {
       window.__batchPickSiteIds = [];
-      ensurePasswordWindowDefaults();
       loadSiteOverview();
       loadSitesAdminTable();
       renderBatchPickList();
@@ -1779,42 +2373,14 @@ ADMIN_SCRIPTS = """
       loadParticipantPageUi();
       loadQrCurrent().then(() => onQrModeChange());
     }
-    if (PAGE === "records") {
-      const siteSel = document.getElementById("recordsFilterSite");
-      const dateInp = document.getElementById("recordsFilterDate");
-      const groupSel = document.getElementById("recordsFilterGroup");
-      const recruiterInp = document.getElementById("recordsFilterRecruiter");
-      const pageSizeSel = document.getElementById("recordsPageSize");
-      const prevBtn = document.getElementById("recordsPrevBtn");
-      const nextBtn = document.getElementById("recordsNextBtn");
-      window.__recordsCurrentPage = 1;
-      [siteSel, dateInp, groupSel].forEach(el => {
-        if (!el) return;
-        el.addEventListener("change", function() {
-          window.__recordsCurrentPage = 1;
-          applyRecordsFilter();
-        });
-      });
-      if (recruiterInp) recruiterInp.addEventListener("input", function() {
-        window.__recordsCurrentPage = 1;
-        applyRecordsFilter();
-      });
-      if (pageSizeSel) pageSizeSel.addEventListener("change", function() {
-        window.__recordsCurrentPage = 1;
-        applyRecordsFilter();
-      });
-      if (prevBtn) prevBtn.addEventListener("click", function() {
-        window.__recordsCurrentPage = Math.max(1, (window.__recordsCurrentPage || 1) - 1);
-        applyRecordsFilter();
-      });
-      if (nextBtn) nextBtn.addEventListener("click", function() {
-        window.__recordsCurrentPage = (window.__recordsCurrentPage || 1) + 1;
-        applyRecordsFilter();
-      });
-      loadRecords();
-      loadAudits();
-    }
-  });
+    if (PAGE === "records") initRecordsPage();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bootAdminPage);
+  } else {
+    bootAdminPage();
+  }
 </script>
 """
 
@@ -1831,6 +2397,11 @@ def render_admin_page(page: PageId) -> str:
         ADMIN_SCRIPTS.replace("__PAGE__", page).replace(
             "__BATCH_MAX__", str(RECRUITMENT_BATCH_MAX_ACTIVE_SITES)
         )
+    )
+    chart_js = (
+        '<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>'
+        if page == "records"
+        else ""
     )
     return f"""<!doctype html>
 <html lang="zh-Hant">
@@ -1849,6 +2420,7 @@ def render_admin_page(page: PageId) -> str:
       <pre id="result">ready</pre>
     </main>
   </div>
+  {chart_js}
   {scripts}
 </body>
 </html>"""

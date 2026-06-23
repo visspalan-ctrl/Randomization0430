@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -90,6 +90,8 @@ class RandomizationRecord(Base):
     allocation_group: Mapped[str] = mapped_column(String(16), nullable=False)
     randomized_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     activation_status: Mapped[str] = mapped_column(String(16), default="pending")
+    trial_status: Mapped[str] = mapped_column(String(16), default="trial")
+    subject_code: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     activation_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
@@ -103,7 +105,11 @@ class RandomizationSetting(Base):
     __tablename__ = "randomization_settings"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     max_enrollment: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    min_per_group: Mapped[int | None] = mapped_column(Integer, nullable=True)
     block_sizes_csv: Mapped[str] = mapped_column(String(64), default="4,8,12")
+    recruitment_start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    weekly_plan_weeks: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    weekly_plan_per_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
     h5_show_allocation_group: Mapped[bool] = mapped_column(Boolean, default=True)
     updated_by: Mapped[str] = mapped_column(String(64), default="system")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

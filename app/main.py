@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv
 import base64
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from collections.abc import Generator
 import io
 import json
@@ -18,7 +18,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request,
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, and_
 from sqlalchemy.orm import Session
 
 from app.db import Base, SessionLocal, engine
@@ -40,7 +40,20 @@ from app.admin_ui import PageId, render_admin_page
 
 from app.seed import ensure_preset_sites
 from app.state import FailedAttemptWindow, app_state, hash_password, utc_now
-from app.timeutil import assert_same_hk_calendar_day
+from app.timeutil import (
+    DEFAULT_RECRUITMENT_START_DATE,
+    DEFAULT_WEEKLY_PLAN_PER_WEEK,
+    DEFAULT_WEEKLY_PLAN_WEEKS,
+    assert_same_hk_calendar_day,
+    format_hk_datetime,
+    hk_calendar_date,
+    hk_date_stamp,
+    hk_datetime_stamp,
+    hk_today_password_window,
+    recruitment_week_no,
+    recruitment_week_bounds,
+    recruitment_week_range_label,
+)
 
 try:
     import multipart as _multipart  # type: ignore
@@ -60,6 +73,8 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin")
 ADMIN_SESSION_COOKIE = "admin_session"
 ADMIN_SESSION_VALUE = "ok"
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+TRIAL_STATUS_TRIAL = "trial"
+TRIAL_STATUS_NONTrial = "nontrial"
 QR_GROUP_TYPES = frozenset({"GENAI", "HUMAN"})
 QR_MODES = frozenset({"dynamic", "static_url", "static_image"})
 QR_GROUP_COLORS: dict[str, dict[str, str]] = {
@@ -247,7 +262,7 @@ def next_enrollment_no(db: Session) -> str:
     counter.seq += 1
     db.commit()
     db.refresh(counter)
-    return f"R{utc_now().strftime('%Y%m%d')}-{counter.seq:06d}"
+    return f"R{hk_date_stamp(utc_now())}-{counter.seq:06d}"
 
 
 def ensure_schema_migrations() -> None:
@@ -261,6 +276,36 @@ def ensure_schema_migrations() -> None:
             conn.execute(
                 text("ALTER TABLE randomization_settings ADD COLUMN h5_show_allocation_group BOOLEAN DEFAULT 1")
             )
+        rs_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_settings')")).fetchall()]
+        if rs_cols and "min_per_group" not in rs_cols:
+            conn.execute(text("ALTER TABLE randomization_settings ADD COLUMN min_per_group INTEGER"))
+        rs_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_settings')")).fetchall()]
+        if rs_cols and "recruitment_start_date" not in rs_cols:
+            conn.execute(text("ALTER TABLE randomization_settings ADD COLUMN recruitment_start_date DATE"))
+            conn.execute(
+                text(
+                    "UPDATE randomization_settings SET recruitment_start_date = '2026-06-20' "
+                    "WHERE recruitment_start_date IS NULL"
+                )
+            )
+        rs_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_settings')")).fetchall()]
+        if rs_cols and "weekly_plan_weeks" not in rs_cols:
+            conn.execute(text("ALTER TABLE randomization_settings ADD COLUMN weekly_plan_weeks INTEGER"))
+            conn.execute(
+                text(
+                    f"UPDATE randomization_settings SET weekly_plan_weeks = {DEFAULT_WEEKLY_PLAN_WEEKS} "
+                    "WHERE weekly_plan_weeks IS NULL"
+                )
+            )
+        rs_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_settings')")).fetchall()]
+        if rs_cols and "weekly_plan_per_week" not in rs_cols:
+            conn.execute(text("ALTER TABLE randomization_settings ADD COLUMN weekly_plan_per_week INTEGER"))
+            conn.execute(
+                text(
+                    f"UPDATE randomization_settings SET weekly_plan_per_week = {DEFAULT_WEEKLY_PLAN_PER_WEEK} "
+                    "WHERE weekly_plan_per_week IS NULL"
+                )
+            )
         qr_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('qr_configs')")).fetchall()]
         if qr_cols and "qr_mode" not in qr_cols:
             conn.execute(text("ALTER TABLE qr_configs ADD COLUMN qr_mode VARCHAR(32) DEFAULT 'static_url'"))
@@ -269,6 +314,13 @@ def ensure_schema_migrations() -> None:
             )
         if qr_cols and "qr_logo_path" not in qr_cols:
             conn.execute(text("ALTER TABLE qr_configs ADD COLUMN qr_logo_path VARCHAR(512)"))
+        rr_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_records')")).fetchall()]
+        if rr_cols and "trial_status" not in rr_cols:
+            conn.execute(text("ALTER TABLE randomization_records ADD COLUMN trial_status VARCHAR(16) DEFAULT 'trial'"))
+            conn.execute(text("UPDATE randomization_records SET trial_status = 'trial' WHERE trial_status IS NULL"))
+        rr_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_records')")).fetchall()]
+        if rr_cols and "subject_code" not in rr_cols:
+            conn.execute(text("ALTER TABLE randomization_records ADD COLUMN subject_code VARCHAR(64)"))
 
 
 @app.on_event("startup")
@@ -298,7 +350,17 @@ def startup() -> None:
         if db.get(EnrollmentCounter, 1) is None:
             db.add(EnrollmentCounter(id=1, seq=0))
         if db.get(RandomizationSetting, 1) is None:
-            db.add(RandomizationSetting(id=1, max_enrollment=None, block_sizes_csv="4,8,12", updated_by="system"))
+            db.add(
+                RandomizationSetting(
+                    id=1,
+                    max_enrollment=998,
+                    recruitment_start_date=DEFAULT_RECRUITMENT_START_DATE,
+                    weekly_plan_weeks=DEFAULT_WEEKLY_PLAN_WEEKS,
+                    weekly_plan_per_week=DEFAULT_WEEKLY_PLAN_PER_WEEK,
+                    block_sizes_csv="4,8,12",
+                    updated_by="system",
+                )
+            )
         ensure_preset_sites(db)
         db.commit()
 
@@ -457,6 +519,20 @@ class PhoneCorrectionRequest(BaseModel):
     reason: str = ""
 
 
+class SubjectCodeUpdateRequest(BaseModel):
+    enrollment_no: str
+    subject_code: str = ""
+    changed_by: str
+    reason: str = ""
+
+
+class TrialStatusUpdateRequest(BaseModel):
+    enrollment_no: str
+    trial_status: Literal["trial", "nontrial"]
+    changed_by: str
+    reason: str = ""
+
+
 class RecordVoidRequest(BaseModel):
     enrollment_no: str
     voided_by: str
@@ -465,8 +541,199 @@ class RecordVoidRequest(BaseModel):
 
 class RandomizationSettingUpdateRequest(BaseModel):
     max_enrollment: int | None = None
+    recruitment_start_date: date | None = None
+    weekly_plan_weeks: int | None = None
+    weekly_plan_per_week: int | None = None
     block_sizes: list[int]
     updated_by: str
+
+
+def _void_phone_storage(enrollment_no: str, phone: str) -> str:
+    return f"voided:{enrollment_no}:{phone}"
+
+
+def _display_phone(stored: str, enrollment_no: str) -> str:
+    prefix = f"voided:{enrollment_no}:"
+    if stored.startswith(prefix):
+        return stored[len(prefix) :]
+    return stored
+
+
+def _active_record_filter():
+    return RandomizationRecord.activation_status != "voided"
+
+
+def _trial_record_filter():
+    return and_(
+        RandomizationRecord.activation_status != "voided",
+        RandomizationRecord.trial_status == TRIAL_STATUS_TRIAL,
+    )
+
+
+def _nontrial_record_filter():
+    return and_(
+        RandomizationRecord.activation_status != "voided",
+        RandomizationRecord.trial_status == TRIAL_STATUS_NONTrial,
+    )
+
+
+def _group_enrollment_counts(db: Session, record_filter) -> tuple[int, int, int]:
+    total = db.scalar(select(func.count()).select_from(RandomizationRecord).where(record_filter)) or 0
+    genai = (
+        db.scalar(
+            select(func.count())
+            .select_from(RandomizationRecord)
+            .where(record_filter, RandomizationRecord.allocation_group == "GENAI")
+        )
+        or 0
+    )
+    human = (
+        db.scalar(
+            select(func.count())
+            .select_from(RandomizationRecord)
+            .where(record_filter, RandomizationRecord.allocation_group == "HUMAN")
+        )
+        or 0
+    )
+    return total, genai, human
+
+
+def _trial_enrollment_counts(db: Session) -> tuple[int, int, int]:
+    return _group_enrollment_counts(db, _trial_record_filter())
+
+
+def _nontrial_enrollment_counts(db: Session) -> tuple[int, int, int]:
+    return _group_enrollment_counts(db, _nontrial_record_filter())
+
+
+def _voided_enrollment_counts(db: Session) -> tuple[int, int, int]:
+    voided_filter = RandomizationRecord.activation_status == "voided"
+    return _group_enrollment_counts(db, voided_filter)
+
+
+def _normalize_subject_code(raw: str) -> str | None:
+    code = raw.strip()
+    return code if code else None
+
+
+def _is_recruitment_closed(setting: RandomizationSetting, valid_total: int) -> bool:
+    if setting.max_enrollment is None:
+        return False
+    return valid_total >= setting.max_enrollment
+
+
+def _recruitment_start_date(setting: RandomizationSetting) -> date:
+    raw = getattr(setting, "recruitment_start_date", None)
+    if raw is None:
+        return DEFAULT_RECRUITMENT_START_DATE
+    if isinstance(raw, date):
+        return raw
+    return date.fromisoformat(str(raw))
+
+
+def _weekly_plan_weeks(setting: RandomizationSetting) -> int:
+    raw = getattr(setting, "weekly_plan_weeks", None)
+    if raw is None or raw <= 0:
+        return DEFAULT_WEEKLY_PLAN_WEEKS
+    return int(raw)
+
+
+def _weekly_plan_per_week(setting: RandomizationSetting) -> int:
+    raw = getattr(setting, "weekly_plan_per_week", None)
+    if raw is None or raw <= 0:
+        return DEFAULT_WEEKLY_PLAN_PER_WEEK
+    return int(raw)
+
+
+def _weekly_recruitment_tracking(db: Session, start_date: date, plan_weeks: int) -> list[dict]:
+    records = db.scalars(select(RandomizationRecord).where(_trial_record_filter())).all()
+    buckets: dict[int, dict[str, int]] = {}
+    max_data_week = 0
+    for record in records:
+        if record.randomized_at is None:
+            continue
+        event_date = hk_calendar_date(record.randomized_at)
+        week_no = recruitment_week_no(start_date, event_date)
+        if week_no is None:
+            continue
+        bucket = buckets.setdefault(week_no, {"valid_total": 0, "valid_intervention": 0, "valid_control": 0})
+        bucket["valid_total"] += 1
+        if record.allocation_group == "GENAI":
+            bucket["valid_intervention"] += 1
+        elif record.allocation_group == "HUMAN":
+            bucket["valid_control"] += 1
+        max_data_week = max(max_data_week, week_no)
+
+    today_hk = hk_calendar_date(datetime.now(timezone.utc))
+    current_week = recruitment_week_no(start_date, today_hk) or 0
+    if current_week <= 0 and max_data_week <= 0:
+        end_week = plan_weeks
+    else:
+        end_week = max(max_data_week, current_week, plan_weeks)
+
+    items: list[dict] = []
+    running_total = 0
+    for week_no in range(1, end_week + 1):
+        bucket = buckets.get(week_no, {"valid_total": 0, "valid_intervention": 0, "valid_control": 0})
+        running_total += bucket["valid_total"]
+        week_start, week_end = recruitment_week_bounds(start_date, week_no)
+        inter = bucket["valid_intervention"]
+        ctrl = bucket["valid_control"]
+        total = bucket["valid_total"]
+        items.append(
+            {
+                "week_no": week_no,
+                "week_label": f"第{week_no}周",
+                "range_start": week_start.isoformat(),
+                "range_end": week_end.isoformat(),
+                "range_label": recruitment_week_range_label(start_date, week_no),
+                "valid_total": total,
+                "valid_intervention": inter,
+                "valid_control": ctrl,
+                "valid_other": max(0, total - inter - ctrl),
+                "valid_cumulative": running_total,
+            }
+        )
+    return items
+
+
+def _recruitment_overview(setting: RandomizationSetting, db: Session) -> dict:
+    trial_total, trial_genai, trial_human = _trial_enrollment_counts(db)
+    nontrial_total, nontrial_genai, nontrial_human = _nontrial_enrollment_counts(db)
+    voided_total, voided_genai, voided_human = _voided_enrollment_counts(db)
+    total = db.scalar(select(func.count()).select_from(RandomizationRecord)) or 0
+    closed = _is_recruitment_closed(setting, trial_total)
+    start_date = _recruitment_start_date(setting)
+    plan_weeks = _weekly_plan_weeks(setting)
+    plan_per_week = _weekly_plan_per_week(setting)
+    return {
+        "total_enrolled": total,
+        "total_randomized": total,
+        "trial_enrolled": trial_total,
+        "nontrial_enrolled": nontrial_total,
+        "valid_enrolled": trial_total,
+        "voided_count": voided_total,
+        "voided_intervention_count": voided_genai,
+        "voided_control_count": voided_human,
+        "trial_intervention_count": trial_genai,
+        "trial_control_count": trial_human,
+        "nontrial_intervention_count": nontrial_genai,
+        "nontrial_control_count": nontrial_human,
+        "valid_intervention_count": trial_genai,
+        "valid_control_count": trial_human,
+        "intervention_count": trial_genai,
+        "control_count": trial_human,
+        "other_group_count": max(0, trial_total - trial_genai - trial_human),
+        "max_enrollment": setting.max_enrollment,
+        "recruitment_open": not closed,
+        "recruitment_start_date": start_date.isoformat(),
+        "weekly_tracking": _weekly_recruitment_tracking(db, start_date, plan_weeks),
+        "weekly_plan": {
+            "weeks": plan_weeks,
+            "per_week": plan_per_week,
+            "total_target": plan_weeks * plan_per_week,
+        },
+    }
 
 
 class ParticipantPageSettingsRequest(BaseModel):
@@ -910,10 +1177,13 @@ def site_recruitment_overview(at: datetime | None = None, db: Session = Depends(
     batch_site_count = 0
     if batch is not None:
         batch_site_count = db.query(RecruitmentBatchSite).where(RecruitmentBatchSite.batch_id == batch.id).count()
+    start_hk, end_hk = hk_today_password_window()
     return {
         "max_parallel_sites_recommended": max_parallel,
         "preset_site_capacity": PRESET_SITE_COUNT,
         "reference_time_utc": ref.isoformat(),
+        "default_password_window_start": start_hk.astimezone(timezone.utc).isoformat(),
+        "default_password_window_end": end_hk.astimezone(timezone.utc).isoformat(),
         "registered_site_count": len(sites),
         "sites_with_active_password_at_ref": len(pwd_site_ids),
         "sites_with_active_password_ids": pwd_site_ids,
@@ -1105,14 +1375,19 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
         raise HTTPException(status_code=403, detail="invalid_password")
     window.clear()
 
-    existing = db.scalar(select(RandomizationRecord).where(RandomizationRecord.phone_number == payload.phone_number))
+    existing = db.scalar(
+        select(RandomizationRecord).where(
+            RandomizationRecord.phone_number == payload.phone_number,
+            _active_record_filter(),
+        )
+    )
     if existing:
         if existing.site_id != payload.site_id:
             raise HTTPException(status_code=403, detail="site_mismatch")
         qr = db.scalar(select(QRConfig).where(QRConfig.group_type == existing.allocation_group))
         return {
             "enrollment_no": existing.enrollment_no,
-            "phone_number": existing.phone_number,
+            "phone_number": _display_phone(existing.phone_number, existing.enrollment_no),
             "site_id": existing.site_id,
             "site_name": existing.site_name,
             "allocation_group": existing.allocation_group,
@@ -1121,11 +1396,19 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
             "idempotent": True,
         }
 
-    if setting.max_enrollment is not None:
-        current_count = db.query(RandomizationRecord).count()
-        if current_count >= setting.max_enrollment:
-            add_audit(db, "randomization_blocked_max_enrollment", {"max_enrollment": setting.max_enrollment})
-            raise HTTPException(status_code=409, detail="max_enrollment_reached")
+    trial_total, trial_genai, trial_human = _trial_enrollment_counts(db)
+    if _is_recruitment_closed(setting, trial_total):
+        add_audit(
+            db,
+            "randomization_blocked_recruitment_target_reached",
+            {
+                "max_enrollment": setting.max_enrollment,
+                "trial_total": trial_total,
+                "trial_genai": trial_genai,
+                "trial_human": trial_human,
+            },
+        )
+        raise HTTPException(status_code=409, detail="recruitment_target_reached")
 
     site = db.get(Site, payload.site_id)
     site_name = site.site_name if site else payload.site_id
@@ -1137,6 +1420,7 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
         site_id=payload.site_id,
         site_name=site_name,
         allocation_group=group,
+        trial_status=TRIAL_STATUS_TRIAL,
     )
     db.add(record)
     db.commit()
@@ -1355,52 +1639,28 @@ def get_password_configs(db: Session = Depends(get_db)):
 
 @app.get("/admin/randomization-records")
 def get_randomization_records(db: Session = Depends(get_db)):
-    total = db.scalar(select(func.count()).select_from(RandomizationRecord)) or 0
-    intervention = (
-        db.scalar(
-            select(func.count())
-            .select_from(RandomizationRecord)
-            .where(RandomizationRecord.allocation_group == "GENAI")
-        )
-        or 0
-    )
-    control = (
-        db.scalar(
-            select(func.count())
-            .select_from(RandomizationRecord)
-            .where(RandomizationRecord.allocation_group == "HUMAN")
-        )
-        or 0
-    )
-    other = max(0, total - intervention - control)
-    voided = (
-        db.scalar(
-            select(func.count())
-            .select_from(RandomizationRecord)
-            .where(RandomizationRecord.activation_status == "voided")
-        )
-        or 0
-    )
+    setting = db.get(RandomizationSetting, 1)
+    if setting is None:
+        setting = RandomizationSetting(id=1, max_enrollment=998, block_sizes_csv="4,8,12", updated_by="system")
+        db.add(setting)
+        db.commit()
+        db.refresh(setting)
     records = db.scalars(select(RandomizationRecord).order_by(RandomizationRecord.id.desc())).all()
+    overview = _recruitment_overview(setting, db)
     return {
-        "overview": {
-            "total_enrolled": total,
-            "valid_enrolled": max(0, total - voided),
-            "voided_count": voided,
-            "intervention_count": intervention,
-            "control_count": control,
-            "other_group_count": other,
-        },
+        "overview": overview,
         "items": [
             {
                 "enrollment_no": r.enrollment_no,
-                "phone_number": r.phone_number,
+                "phone_number": _display_phone(r.phone_number, r.enrollment_no),
                 "recruiter_id": r.recruiter_id,
                 "site_id": r.site_id,
                 "site_name": r.site_name,
                 "allocation_group": r.allocation_group,
                 "randomized_at": r.randomized_at.isoformat() if r.randomized_at else None,
                 "activation_status": r.activation_status,
+                "trial_status": getattr(r, "trial_status", TRIAL_STATUS_TRIAL) or TRIAL_STATUS_TRIAL,
+                "subject_code": r.subject_code,
             }
             for r in records
         ],
@@ -1420,28 +1680,32 @@ def export_randomization_records_csv(db: Session = Depends(get_db)):
             "recruiter_id",
             "site_name",
             "allocation_group",
-            "randomized_at",
+            "randomized_at (HKT)",
+            "trial_status",
             "activation_status",
+            "subject_code",
         ]
     )
     for r in records:
         writer.writerow(
             [
                 r.enrollment_no,
-                r.phone_number,
+                _display_phone(r.phone_number, r.enrollment_no),
                 r.site_id,
                 r.recruiter_id,
                 r.site_name,
                 r.allocation_group,
-                r.randomized_at.isoformat() if r.randomized_at else "",
+                format_hk_datetime(r.randomized_at),
+                getattr(r, "trial_status", TRIAL_STATUS_TRIAL) or TRIAL_STATUS_TRIAL,
                 r.activation_status,
+                r.subject_code or "",
             ]
         )
     csv_text = buf.getvalue()
     return Response(
         content=csv_text,
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f"attachment; filename=randomization_records_{utc_now().strftime('%Y%m%d_%H%M%S')}.csv"},
+        headers={"Content-Disposition": f"attachment; filename=randomization_records_{hk_datetime_stamp()}.csv"},
     )
 
 
@@ -1455,6 +1719,9 @@ def get_randomization_settings(db: Session = Depends(get_db)):
         db.refresh(setting)
     out = {
         "max_enrollment": setting.max_enrollment,
+        "recruitment_start_date": _recruitment_start_date(setting).isoformat(),
+        "weekly_plan_weeks": _weekly_plan_weeks(setting),
+        "weekly_plan_per_week": _weekly_plan_per_week(setting),
         "block_sizes": list(parse_block_sizes(setting.block_sizes_csv)),
         "h5_show_allocation_group": bool(getattr(setting, "h5_show_allocation_group", True)),
         "updated_by": setting.updated_by,
@@ -1510,12 +1777,23 @@ def update_randomization_settings(payload: RandomizationSettingUpdateRequest, db
         raise HTTPException(status_code=400, detail="invalid_block_sizes")
     if payload.max_enrollment is not None and payload.max_enrollment <= 0:
         raise HTTPException(status_code=400, detail="invalid_max_enrollment")
+    if payload.weekly_plan_weeks is not None and payload.weekly_plan_weeks <= 0:
+        raise HTTPException(status_code=400, detail="invalid_weekly_plan_weeks")
+    if payload.weekly_plan_per_week is not None and payload.weekly_plan_per_week <= 0:
+        raise HTTPException(status_code=400, detail="invalid_weekly_plan_per_week")
 
     setting = db.get(RandomizationSetting, 1)
     if setting is None:
         setting = RandomizationSetting(id=1, updated_by=payload.updated_by)
         db.add(setting)
-    setting.max_enrollment = payload.max_enrollment
+    if "max_enrollment" in payload.model_fields_set:
+        setting.max_enrollment = payload.max_enrollment
+    if "recruitment_start_date" in payload.model_fields_set:
+        setting.recruitment_start_date = payload.recruitment_start_date
+    if "weekly_plan_weeks" in payload.model_fields_set:
+        setting.weekly_plan_weeks = payload.weekly_plan_weeks
+    if "weekly_plan_per_week" in payload.model_fields_set:
+        setting.weekly_plan_per_week = payload.weekly_plan_per_week
     setting.block_sizes_csv = ",".join(str(x) for x in payload.block_sizes)
     setting.updated_by = payload.updated_by
     db.commit()
@@ -1526,6 +1804,9 @@ def update_randomization_settings(payload: RandomizationSettingUpdateRequest, db
         "randomization_settings_updated",
         {
             "max_enrollment": setting.max_enrollment,
+            "recruitment_start_date": _recruitment_start_date(setting).isoformat(),
+            "weekly_plan_weeks": _weekly_plan_weeks(setting),
+            "weekly_plan_per_week": _weekly_plan_per_week(setting),
             "block_sizes": payload.block_sizes,
             "updated_by": payload.updated_by,
         },
@@ -1533,6 +1814,9 @@ def update_randomization_settings(payload: RandomizationSettingUpdateRequest, db
     return {
         "ok": True,
         "max_enrollment": setting.max_enrollment,
+        "recruitment_start_date": _recruitment_start_date(setting).isoformat(),
+        "weekly_plan_weeks": _weekly_plan_weeks(setting),
+        "weekly_plan_per_week": _weekly_plan_per_week(setting),
         "block_sizes": payload.block_sizes,
     }
 
@@ -1542,7 +1826,12 @@ def admin_correct_phone(payload: PhoneCorrectionRequest, db: Session = Depends(g
     record = db.scalar(select(RandomizationRecord).where(RandomizationRecord.enrollment_no == payload.enrollment_no))
     if record is None:
         raise HTTPException(status_code=404, detail="record_not_found")
-    duplicate = db.scalar(select(RandomizationRecord).where(RandomizationRecord.phone_number == payload.new_phone_number))
+    duplicate = db.scalar(
+        select(RandomizationRecord).where(
+            RandomizationRecord.phone_number == payload.new_phone_number,
+            _active_record_filter(),
+        )
+    )
     if duplicate and duplicate.enrollment_no != payload.enrollment_no:
         raise HTTPException(status_code=409, detail="phone_already_exists")
     old_phone = record.phone_number
@@ -1562,6 +1851,70 @@ def admin_correct_phone(payload: PhoneCorrectionRequest, db: Session = Depends(g
     return {"ok": True, "enrollment_no": record.enrollment_no, "phone_number": record.phone_number}
 
 
+@app.patch("/admin/randomization-records/subject-code")
+def admin_update_subject_code(payload: SubjectCodeUpdateRequest, db: Session = Depends(get_db)):
+    record = db.scalar(select(RandomizationRecord).where(RandomizationRecord.enrollment_no == payload.enrollment_no))
+    if record is None:
+        raise HTTPException(status_code=404, detail="record_not_found")
+    new_code = _normalize_subject_code(payload.subject_code)
+    if new_code:
+        duplicate = db.scalar(
+            select(RandomizationRecord).where(
+                RandomizationRecord.subject_code == new_code,
+                RandomizationRecord.enrollment_no != payload.enrollment_no,
+            )
+        )
+        if duplicate:
+            raise HTTPException(status_code=409, detail="subject_code_already_exists")
+    old_code = record.subject_code
+    record.subject_code = new_code
+    db.commit()
+    add_audit(
+        db,
+        "admin_subject_code_updated",
+        {
+            "enrollment_no": payload.enrollment_no,
+            "old_subject_code": old_code,
+            "new_subject_code": new_code,
+            "changed_by": payload.changed_by,
+            "reason": payload.reason,
+        },
+    )
+    return {"ok": True, "enrollment_no": record.enrollment_no, "subject_code": record.subject_code}
+
+
+@app.patch("/admin/randomization-records/trial-status")
+def admin_update_trial_status(payload: TrialStatusUpdateRequest, db: Session = Depends(get_db)):
+    record = db.scalar(select(RandomizationRecord).where(RandomizationRecord.enrollment_no == payload.enrollment_no))
+    if record is None:
+        raise HTTPException(status_code=404, detail="record_not_found")
+    if record.activation_status == "voided":
+        raise HTTPException(status_code=400, detail="voided_record_cannot_change_trial_status")
+    if payload.trial_status not in {TRIAL_STATUS_TRIAL, TRIAL_STATUS_NONTrial}:
+        raise HTTPException(status_code=400, detail="invalid_trial_status")
+    if payload.trial_status == TRIAL_STATUS_TRIAL and record.trial_status != TRIAL_STATUS_TRIAL:
+        setting = db.get(RandomizationSetting, 1)
+        if setting is not None:
+            trial_total, _, _ = _trial_enrollment_counts(db)
+            if _is_recruitment_closed(setting, trial_total):
+                raise HTTPException(status_code=409, detail="recruitment_target_reached")
+    old_status = record.trial_status
+    record.trial_status = payload.trial_status
+    db.commit()
+    add_audit(
+        db,
+        "admin_trial_status_updated",
+        {
+            "enrollment_no": payload.enrollment_no,
+            "old_trial_status": old_status,
+            "new_trial_status": payload.trial_status,
+            "changed_by": payload.changed_by,
+            "reason": payload.reason,
+        },
+    )
+    return {"ok": True, "enrollment_no": record.enrollment_no, "trial_status": record.trial_status}
+
+
 @app.post("/admin/randomization-records/delete")
 def admin_delete_record(payload: RecordVoidRequest, db: Session = Depends(get_db)):
     """
@@ -1573,10 +1926,26 @@ def admin_delete_record(payload: RecordVoidRequest, db: Session = Depends(get_db
         raise HTTPException(status_code=404, detail="record_not_found")
     now = utc_now()
     is_voided = record.activation_status == "voided"
-    record.activation_status = "pending" if is_voided else "voided"
-    record.activation_timestamp = now
-    db.commit()
     if is_voided:
+        original_phone = _display_phone(record.phone_number, record.enrollment_no)
+        duplicate = db.scalar(
+            select(RandomizationRecord).where(
+                RandomizationRecord.phone_number == original_phone,
+                _active_record_filter(),
+            )
+        )
+        if duplicate and duplicate.enrollment_no != record.enrollment_no:
+            raise HTTPException(status_code=409, detail="phone_already_exists")
+        if record.trial_status == TRIAL_STATUS_TRIAL:
+            setting = db.get(RandomizationSetting, 1)
+            if setting is not None:
+                trial_total, _, _ = _trial_enrollment_counts(db)
+                if _is_recruitment_closed(setting, trial_total):
+                    raise HTTPException(status_code=409, detail="recruitment_target_reached")
+        record.activation_status = "pending"
+        record.phone_number = original_phone
+        record.activation_timestamp = now
+        db.commit()
         add_audit(
             db,
             "admin_record_restored",
@@ -1590,6 +1959,12 @@ def admin_delete_record(payload: RecordVoidRequest, db: Session = Depends(get_db
             },
         )
         return {"ok": True, "restored_enrollment_no": payload.enrollment_no, "activation_status": record.activation_status}
+
+    original_phone = _display_phone(record.phone_number, record.enrollment_no)
+    record.activation_status = "voided"
+    record.phone_number = _void_phone_storage(record.enrollment_no, original_phone)
+    record.activation_timestamp = now
+    db.commit()
     add_audit(
         db,
         "admin_record_voided",
@@ -1597,7 +1972,7 @@ def admin_delete_record(payload: RecordVoidRequest, db: Session = Depends(get_db
             "voided_by": payload.voided_by,
             "reason": payload.reason,
             "enrollment_no": record.enrollment_no,
-            "phone_number": record.phone_number,
+            "phone_number": original_phone,
             "site_id": record.site_id,
             "allocation_group": record.allocation_group,
         },
@@ -1631,7 +2006,17 @@ def dev_reset():
             )
         )
         db.add(EnrollmentCounter(id=1, seq=0))
-        db.add(RandomizationSetting(id=1, max_enrollment=None, block_sizes_csv="4,8,12", updated_by="system"))
+        db.add(
+            RandomizationSetting(
+                id=1,
+                max_enrollment=998,
+                recruitment_start_date=DEFAULT_RECRUITMENT_START_DATE,
+                weekly_plan_weeks=DEFAULT_WEEKLY_PLAN_WEEKS,
+                weekly_plan_per_week=DEFAULT_WEEKLY_PLAN_PER_WEEK,
+                block_sizes_csv="4,8,12",
+                updated_by="system",
+            )
+        )
         ensure_preset_sites(db)
         db.commit()
     app_state.failed_attempts = {}
