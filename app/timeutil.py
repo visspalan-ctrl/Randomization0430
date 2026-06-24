@@ -66,3 +66,15 @@ def recruitment_week_bounds(start_date: date, week_no: int) -> tuple[date, date]
 def recruitment_week_range_label(start_date: date, week_no: int) -> str:
     week_start, week_end = recruitment_week_bounds(start_date, week_no)
     return f"{week_start.month}/{week_start.day}–{week_end.month}/{week_end.day}"
+
+
+def recruitment_plan_end_date(start_date: date, plan_weeks: int) -> date:
+    """計劃跟踪最後一週的結束日（含當日）。"""
+    if plan_weeks < 1:
+        return start_date
+    return recruitment_week_bounds(start_date, plan_weeks)[1]
+
+
+def recruitment_plan_weeks_from_end_date(start_date: date, end_date: date) -> int | None:
+    """由招募結束日反推計劃跟踪週數（與 recruitment_week_no 規則一致）。"""
+    return recruitment_week_no(start_date, end_date)

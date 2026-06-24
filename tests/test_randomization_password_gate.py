@@ -86,6 +86,23 @@ def set_site_password(client: TestClient, site_id: str, raw_password: str = "123
     assert r.status_code == 200, r.text
 
 
+def configure_deterministic_trial_sequence(client: TestClient, seed: int = 999) -> None:
+    updated = admin_put(
+        client,
+        "/admin/randomization-settings",
+        json={"block_sizes": [4], "updated_by": "admin"},
+    )
+    assert updated.status_code == 200, updated.text
+    from app.db import SessionLocal
+    from app.models import RandomizationSetting
+
+    with SessionLocal() as db:
+        setting = db.get(RandomizationSetting, 1)
+        assert setting is not None
+        setting.randomization_seed = seed
+        db.commit()
+
+
 def test_phone_and_password_allows_randomization():
     client = TestClient(app)
     open_batch(client, ["SITE_01"])
@@ -454,7 +471,8 @@ def test_admin_can_update_randomization_settings():
         client,
         "/admin/randomization-settings",
         json={
-            "max_enrollment": 5000,
+            "min_per_group": 499,
+            "recruitment_end_date": "2026-11-01",
             "block_sizes": [4, 8],
             "updated_by": "super_admin",
         },
@@ -462,9 +480,29 @@ def test_admin_can_update_randomization_settings():
     assert updated.status_code == 200
     current = admin_get(client, "/admin/randomization-settings")
     assert current.status_code == 200
-    assert current.json()["max_enrollment"] == 5000
+    assert current.json()["min_per_group"] == 499
+    assert current.json()["recruitment_end_date"] == "2026-11-01"
     assert current.json()["block_sizes"] == [4, 8]
     assert current.json()["recruitment_start_date"] == "2026-06-20"
+
+
+def test_settings_sync_weekly_plan_weeks_from_recruitment_dates():
+    client = TestClient(app)
+    updated = admin_put(
+        client,
+        "/admin/randomization-settings",
+        json={
+            "recruitment_start_date": "2026-06-20",
+            "recruitment_end_date": "2026-10-31",
+            "block_sizes": [4, 8, 12],
+            "updated_by": "admin",
+        },
+    )
+    assert updated.status_code == 200
+    settings = admin_get(client, "/admin/randomization-settings").json()
+    assert settings["weekly_plan_weeks"] == 20
+    overview = admin_get(client, "/admin/randomization-records").json()["overview"]
+    assert overview["weekly_plan"]["weeks"] == 20
 
 
 def test_overview_weekly_tracking_by_recruitment_week():
@@ -478,7 +516,6 @@ def test_overview_weekly_tracking_by_recruitment_week():
         client,
         "/admin/randomization-settings",
         json={
-            "max_enrollment": 998,
             "recruitment_start_date": "2026-06-20",
             "block_sizes": [4, 8, 12],
             "updated_by": "admin",
@@ -551,16 +588,17 @@ def test_overview_weekly_plan_is_configurable():
     assert len(overview["weekly_tracking"]) == 10
 
 
-def test_max_enrollment_blocks_new_randomization():
+def test_min_per_group_blocks_new_randomization():
     client = TestClient(app)
     open_batch(client, ["SITE_01"])
     set_site_password(client, "SITE_01")
+    configure_deterministic_trial_sequence(client, seed=999)
     admin_put(
         client,
         "/admin/randomization-settings",
         json={
-            "max_enrollment": 1,
-            "block_sizes": [4, 8, 12],
+            "min_per_group": 1,
+            "block_sizes": [4],
             "updated_by": "super_admin",
         },
     )
@@ -582,12 +620,22 @@ def test_max_enrollment_blocks_new_randomization():
             "recruiter_password": "123456",
         },
     )
+    third = client.post(
+        "/randomization/trigger",
+        json={
+            "phone_number": "+85263333333",
+            "recruiter_id": "r1",
+            "site_id": "SITE_01",
+            "recruiter_password": "123456",
+        },
+    )
     assert first.status_code == 200
-    assert second.status_code == 409
-    assert second.json()["detail"] == "recruitment_target_reached"
+    assert second.status_code == 200
+    assert third.status_code == 409
+    assert third.json()["detail"] == "recruitment_target_reached"
 
 
-def test_voided_record_does_not_block_enrollment_cap_and_allows_rerandomize():
+def test_recruitment_end_date_blocks_new_randomization():
     client = TestClient(app)
     open_batch(client, ["SITE_01"])
     set_site_password(client, "SITE_01")
@@ -595,8 +643,39 @@ def test_voided_record_does_not_block_enrollment_cap_and_allows_rerandomize():
         client,
         "/admin/randomization-settings",
         json={
-            "max_enrollment": 1,
+            "min_per_group": None,
+            "recruitment_start_date": "2026-01-01",
+            "recruitment_end_date": "2026-06-18",
             "block_sizes": [4, 8, 12],
+            "updated_by": "super_admin",
+        },
+    )
+    blocked = client.post(
+        "/randomization/trigger",
+        json={
+            "phone_number": "+85269999999",
+            "recruiter_id": "r1",
+            "site_id": "SITE_01",
+            "recruiter_password": "123456",
+        },
+    )
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"] == "recruitment_target_reached"
+    overview = admin_get(client, "/admin/randomization-records").json()["overview"]
+    assert overview["recruitment_open"] is False
+
+
+def test_voided_record_does_not_block_min_per_group_and_allows_rerandomize():
+    client = TestClient(app)
+    open_batch(client, ["SITE_01"])
+    set_site_password(client, "SITE_01")
+    configure_deterministic_trial_sequence(client, seed=999)
+    admin_put(
+        client,
+        "/admin/randomization-settings",
+        json={
+            "min_per_group": 1,
+            "block_sizes": [4],
             "updated_by": "super_admin",
         },
     )
@@ -640,7 +719,7 @@ def test_records_overview_uses_valid_group_counts():
         client,
         "/admin/randomization-settings",
         json={
-            "max_enrollment": 998,
+            "min_per_group": 499,
             "block_sizes": [4, 8, 12],
             "updated_by": "super_admin",
         },
@@ -662,7 +741,7 @@ def test_records_overview_uses_valid_group_counts():
     assert overview["voided_control_count"] == 0
     assert overview["valid_intervention_count"] + overview["valid_control_count"] == 1
     assert overview["recruitment_open"] is True
-    assert overview["max_enrollment"] == 998
+    assert overview["min_per_group"] == 499
 
 
 def test_admin_can_void_randomization_record():
@@ -871,14 +950,15 @@ def test_new_record_defaults_to_trial():
     assert target.get("subject_code") in (None, "")
 
 
-def test_nontrial_does_not_count_toward_enrollment_cap():
+def test_nontrial_does_not_count_toward_min_per_group():
     client = TestClient(app)
     open_batch(client, ["SITE_01"])
     set_site_password(client, "SITE_01")
+    configure_deterministic_trial_sequence(client, seed=999)
     admin_put(
         client,
         "/admin/randomization-settings",
-        json={"max_enrollment": 1, "block_sizes": [4, 8, 12], "updated_by": "super_admin"},
+        json={"min_per_group": 1, "block_sizes": [4], "updated_by": "super_admin"},
     )
     first = _trigger_randomization(client, "+85261111002")
     marked = admin_patch(
@@ -901,20 +981,22 @@ def test_nontrial_does_not_count_toward_enrollment_cap():
     assert second["idempotent"] is False
 
 
-def test_mark_trial_as_nontrial_frees_trial_cap_slot():
+def test_mark_trial_as_nontrial_frees_min_per_group_slot():
     client = TestClient(app)
     open_batch(client, ["SITE_01"])
     set_site_password(client, "SITE_01")
+    configure_deterministic_trial_sequence(client, seed=999)
     admin_put(
         client,
         "/admin/randomization-settings",
-        json={"max_enrollment": 1, "block_sizes": [4, 8, 12], "updated_by": "super_admin"},
+        json={"min_per_group": 1, "block_sizes": [4], "updated_by": "super_admin"},
     )
     first = _trigger_randomization(client, "+85261111004")
+    _trigger_randomization(client, "+85261111005")
     blocked = client.post(
         "/randomization/trigger",
         json={
-            "phone_number": "+85261111005",
+            "phone_number": "+85261111006",
             "recruiter_id": "r1",
             "site_id": "SITE_01",
             "recruiter_password": "123456",
@@ -932,8 +1014,8 @@ def test_mark_trial_as_nontrial_frees_trial_cap_slot():
         },
     )
     assert marked.status_code == 200
-    second = _trigger_randomization(client, "+85261111005")
-    assert second["idempotent"] is False
+    third = _trigger_randomization(client, "+85261111006")
+    assert third["idempotent"] is False
 
 
 def test_subject_code_must_be_unique():
@@ -989,40 +1071,19 @@ def test_nontrial_phone_still_blocks_rerandomize():
     assert again["enrollment_no"] == first["enrollment_no"]
 
 
-def test_mark_nontrial_to_trial_respects_cap():
+def test_mark_nontrial_to_trial_respects_min_per_group():
     client = TestClient(app)
     open_batch(client, ["SITE_01"])
     set_site_password(client, "SITE_01")
+    configure_deterministic_trial_sequence(client, seed=999)
     admin_put(
         client,
         "/admin/randomization-settings",
-        json={"max_enrollment": 1, "block_sizes": [4, 8, 12], "updated_by": "super_admin"},
+        json={"min_per_group": 1, "block_sizes": [4], "updated_by": "super_admin"},
     )
     first = _trigger_randomization(client, "+85261111009")
-    admin_patch(
-        client,
-        "/admin/randomization-records/trial-status",
-        json={
-            "enrollment_no": first["enrollment_no"],
-            "trial_status": "nontrial",
-            "changed_by": "admin",
-            "reason": "free slot",
-        },
-    )
     second = _trigger_randomization(client, "+85261111010")
-    blocked = admin_patch(
-        client,
-        "/admin/randomization-records/trial-status",
-        json={
-            "enrollment_no": first["enrollment_no"],
-            "trial_status": "trial",
-            "changed_by": "admin",
-            "reason": "cap full",
-        },
-    )
-    assert blocked.status_code == 409
-    assert blocked.json()["detail"] == "recruitment_target_reached"
-    admin_patch(
+    mark_second_nontrial = admin_patch(
         client,
         "/admin/randomization-records/trial-status",
         json={
@@ -1032,14 +1093,99 @@ def test_mark_nontrial_to_trial_respects_cap():
             "reason": "free slot",
         },
     )
+    assert mark_second_nontrial.status_code == 200
+    third = _trigger_randomization(client, "+85261111011")
+    blocked = admin_patch(
+        client,
+        "/admin/randomization-records/trial-status",
+        json={
+            "enrollment_no": second["enrollment_no"],
+            "trial_status": "trial",
+            "changed_by": "admin",
+            "reason": "min per group reached",
+        },
+    )
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"] == "recruitment_target_reached"
+    admin_patch(
+        client,
+        "/admin/randomization-records/trial-status",
+        json={
+            "enrollment_no": third["enrollment_no"],
+            "trial_status": "nontrial",
+            "changed_by": "admin",
+            "reason": "free slot",
+        },
+    )
     allowed = admin_patch(
         client,
         "/admin/randomization-records/trial-status",
         json={
-            "enrollment_no": first["enrollment_no"],
+            "enrollment_no": second["enrollment_no"],
             "trial_status": "trial",
             "changed_by": "admin",
             "reason": "now has slot",
         },
     )
     assert allowed.status_code == 200
+
+
+def test_nontrial_does_not_advance_trial_sequence_slot():
+    from app.state import trial_group_at_index
+
+    client = TestClient(app)
+    configure_deterministic_trial_sequence(client, seed=999)
+    open_batch(client, ["SITE_01"])
+    set_site_password(client, "SITE_01")
+
+    expected = [trial_group_at_index(i, (4,), 999) for i in range(4)]
+
+    first = _trigger_randomization(client, "+85270000001")
+    second = _trigger_randomization(client, "+85270000002")
+    assert first["allocation_group"] == expected[0]
+    assert second["allocation_group"] == expected[1]
+
+    marked = admin_patch(
+        client,
+        "/admin/randomization-records/trial-status",
+        json={
+            "enrollment_no": second["enrollment_no"],
+            "trial_status": "nontrial",
+            "changed_by": "admin",
+            "reason": "ineligible",
+        },
+    )
+    assert marked.status_code == 200
+
+    third = _trigger_randomization(client, "+85270000003")
+    assert third["allocation_group"] == expected[1]
+
+    fourth = _trigger_randomization(client, "+85270000004")
+    assert fourth["allocation_group"] == expected[2]
+
+
+def test_voided_record_does_not_advance_trial_sequence_slot():
+    from app.state import trial_group_at_index
+
+    client = TestClient(app)
+    configure_deterministic_trial_sequence(client, seed=999)
+    open_batch(client, ["SITE_01"])
+    set_site_password(client, "SITE_01")
+
+    expected = [trial_group_at_index(i, (4,), 999) for i in range(4)]
+
+    first = _trigger_randomization(client, "+85270000011")
+    assert first["allocation_group"] == expected[0]
+
+    voided = admin_post(
+        client,
+        "/admin/randomization-records/delete",
+        json={"enrollment_no": first["enrollment_no"], "voided_by": "admin", "reason": "mistake"},
+    )
+    assert voided.status_code == 200
+
+    second = _trigger_randomization(client, "+85270000012")
+    assert second["allocation_group"] == expected[0]
+
+    third = _trigger_randomization(client, "+85270000013")
+    assert third["allocation_group"] == expected[1]

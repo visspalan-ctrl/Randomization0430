@@ -255,6 +255,33 @@ button.danger:hover { background: #b91c1c; }
   border-top: 1px dashed var(--border);
   line-height: 1.6;
 }
+.records-weekly-section h4 {
+  font-size: 13px;
+  margin: 0 0 6px;
+  color: #64748b;
+  font-weight: 600;
+}
+.records-weekly-caption {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.55;
+  margin: 0 0 10px;
+}
+.records-weekly-chart-wrap {
+  width: 100%;
+  max-width: 680px;
+  height: 300px;
+  padding: 10px 12px 8px;
+  background: linear-gradient(180deg, #fafbfc 0%, #ffffff 100%);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.records-weekly-chart-wrap canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
 pre#result {
   background: #1e293b;
   color: #e2e8f0;
@@ -714,13 +741,17 @@ def panel_settings() -> str:
     </div>
     <div class="card">
       <h3>參數</h3>
-      <label>有效入組總人數上限（留空表示不限制；達標後停招）</label>
-      <input id="maxEnrollment" placeholder="例如 998" />
+      <label>每組有效入組下限（干預、對照各不少於此數；達標後停招；留空表示不限制）</label>
+      <input id="minPerGroup" type="number" min="1" placeholder="例如 499" />
+      <p class="muted" style="font-size:12px;margin:-4px 0 10px;">無總人數上限；干預與對照均達下限後停止新隨機（例如各 499 人）。</p>
       <label>招募起始日（香港時間，用於入組概覽每週跟踪）</label>
       <input id="recruitmentStartDate" type="date" />
+      <label>招募結束日（香港時間，當日仍可隨機；翌日起停止；留空表示不限制）</label>
+      <input id="recruitmentEndDate" type="date" />
       <h4 style="font-size:13px;margin:18px 0 8px;color:#64748b;">入組概覽與每週跟踪</h4>
       <label>計劃跟踪週數</label>
       <input id="weeklyPlanWeeks" type="number" min="1" placeholder="例如 20" />
+      <p class="muted" style="font-size:12px;margin:-4px 0 10px;">填寫招募起止日後將依香港招募周規則自動計算（第1周僅起始日當天）。</p>
       <label>每週預計入組人數</label>
       <input id="weeklyPlanPerWeek" type="number" min="1" placeholder="例如 60" />
       <p id="weeklyPlanTargetHint" class="muted" style="font-size:12px;margin-top:4px;">累計計劃目標 = 週數 × 每週人數</p>
@@ -946,11 +977,11 @@ def panel_records() -> str:
     <div class="card">
       <h3>入組概覽</h3>
       <div id="recordsOverview" class="records-overview">載入中…</div>
-      <div id="recordsWeeklySection" style="margin-top:16px;">
-        <h4 style="font-size:13px;margin:0 0 8px;color:#64748b;">每週招募跟踪（Trial 有效入組）</h4>
-        <p id="recordsWeeklyCaption" class="muted" style="font-size:12px;margin-bottom:8px;">載入中…</p>
-        <div style="max-width:560px;">
-          <canvas id="recordsWeeklyChart" height="150"></canvas>
+      <div id="recordsWeeklySection" class="records-weekly-section" style="margin-top:16px;">
+        <h4>每週招募跟蹤（Trial 有效入組）</h4>
+        <p id="recordsWeeklyCaption" class="records-weekly-caption">載入中…</p>
+        <div class="records-weekly-chart-wrap">
+          <canvas id="recordsWeeklyChart"></canvas>
         </div>
       </div>
     </div>
@@ -980,8 +1011,13 @@ def panel_records() -> str:
           </select>
         </div>
         <div style="flex:1 1 0;min-width:0;">
-          <label>招募員姓名</label>
-          <input id="recordsFilterRecruiter" placeholder="輸入招募員姓名關鍵字" />
+          <label>狀態</label>
+          <select id="recordsFilterStatus">
+            <option value="">全部狀態</option>
+            <option value="trial">Trial</option>
+            <option value="nontrial">Non-trial</option>
+            <option value="voided">作廢</option>
+          </select>
         </div>
       </div>
       <div class="table-wrap" style="margin-top:12px;">
@@ -1108,13 +1144,44 @@ ADMIN_SCRIPTS = """
     return raw.split(",").map(x => Number(x.trim())).filter(x => !Number.isNaN(x));
   }
 
+  function parseDateOnlyUtc(iso) {
+    const parts = String(iso || "").split("-").map(Number);
+    if (parts.length !== 3 || parts.some(function(n) { return Number.isNaN(n); })) return null;
+    return Date.UTC(parts[0], parts[1] - 1, parts[2]);
+  }
+
+  function recruitmentWeekNo(startIso, endIso) {
+    const startMs = parseDateOnlyUtc(startIso);
+    const endMs = parseDateOnlyUtc(endIso);
+    if (startMs == null || endMs == null) return null;
+    const days = Math.round((endMs - startMs) / 86400000);
+    if (days < 0) return null;
+    if (days === 0) return 1;
+    return Math.floor((days - 1) / 7) + 2;
+  }
+
+  function syncWeeklyPlanWeeksFromDates() {
+    const startRaw = (document.getElementById("recruitmentStartDate")?.value || "").trim();
+    const endRaw = (document.getElementById("recruitmentEndDate")?.value || "").trim();
+    const weeksEl = document.getElementById("weeklyPlanWeeks");
+    if (!weeksEl || !startRaw || !endRaw) return;
+    const weeks = recruitmentWeekNo(startRaw, endRaw);
+    if (weeks == null || weeks <= 0) return;
+    weeksEl.value = String(weeks);
+    updateWeeklyPlanTargetHint();
+  }
+
   function updateWeeklyPlanTargetHint() {
     const hint = document.getElementById("weeklyPlanTargetHint");
     if (!hint) return;
     const weeks = Number(document.getElementById("weeklyPlanWeeks")?.value || 0);
     const perWeek = Number(document.getElementById("weeklyPlanPerWeek")?.value || 0);
+    const startRaw = (document.getElementById("recruitmentStartDate")?.value || "").trim();
+    const endRaw = (document.getElementById("recruitmentEndDate")?.value || "").trim();
     if (weeks > 0 && perWeek > 0) {
-      hint.textContent = "累計計劃目標 = " + weeks + " 週 × " + perWeek + " 人/週 = " + (weeks * perWeek) + " 人";
+      let text = "累計計劃目標 = " + weeks + " 週 × " + perWeek + " 人/週 = " + (weeks * perWeek) + " 人";
+      if (startRaw && endRaw) text += "（依招募期 " + startRaw + " – " + endRaw + " 自動計算週數）";
+      hint.textContent = text;
     } else {
       hint.textContent = "累計計劃目標 = 週數 × 每週人數";
     }
@@ -1123,44 +1190,52 @@ ADMIN_SCRIPTS = """
   function renderSettingsOverview(data) {
     const el = document.getElementById("settingsOverview");
     if (!el) return;
-    const maxE = data.max_enrollment;
-    const maxLabel = maxE == null || maxE === "" ? "不限制" : String(maxE);
+    const minG = data.min_per_group;
+    const minLabel = minG == null || minG === "" ? "不限制" : String(minG);
     const blocks = (data.block_sizes || []).length ? (data.block_sizes || []).join("、") : "—";
     const startDate = data.recruitment_start_date ? escapeHtml(String(data.recruitment_start_date)) : "—";
+    const endDate = data.recruitment_end_date ? escapeHtml(String(data.recruitment_end_date)) : "不限制";
     const planWeeks = Number(data.weekly_plan_weeks) || 20;
     const planPerWeek = Number(data.weekly_plan_per_week) || 60;
     const by = data.updated_by ? escapeHtml(String(data.updated_by)) : "—";
     const at = data.updated_at ? escapeHtml(formatHkTime(data.updated_at)) : "—";
     el.innerHTML =
-      "有效入組總上限 <strong>" + escapeHtml(maxLabel)
-      + "</strong>（達標後停招）；招募起始日 <strong>" + startDate
-      + "</strong>；每週跟踪 <strong>" + planWeeks + " 週 × " + planPerWeek + " 人/週 = " + (planWeeks * planPerWeek) + " 人</strong>"
+      "每組有效入組下限 <strong>" + escapeHtml(minLabel)
+      + "</strong>（干預、對照均達標後停招；無總人數上限）"
+      + "；招募期 <strong>" + startDate + " – " + endDate + "</strong>"
+      + "；每週跟踪 <strong>" + planWeeks + " 週 × " + planPerWeek + " 人/週 = " + (planWeeks * planPerWeek) + " 人</strong>"
       + "；區組大小 <strong>" + escapeHtml(blocks)
       + "</strong>。<br/>最近更新人 <strong>" + by + "</strong>；更新時間 <code style='font-size:12px'>" + at + "</code>。";
   }
 
   async function loadSettings() {
-    if (!document.getElementById("maxEnrollment")) return;
+    if (!document.getElementById("minPerGroup")) return;
     const data = await api("/admin/randomization-settings", "GET");
     renderSettingsOverview(data);
-    document.getElementById("maxEnrollment").value = data.max_enrollment ?? "";
+    const minEl = document.getElementById("minPerGroup");
+    if (minEl) minEl.value = data.min_per_group ?? "";
     const startEl = document.getElementById("recruitmentStartDate");
     if (startEl) startEl.value = data.recruitment_start_date ?? "";
+    const endEl = document.getElementById("recruitmentEndDate");
+    if (endEl) endEl.value = data.recruitment_end_date ?? "";
     const weeksEl = document.getElementById("weeklyPlanWeeks");
     if (weeksEl) weeksEl.value = data.weekly_plan_weeks ?? "";
     const perWeekEl = document.getElementById("weeklyPlanPerWeek");
     if (perWeekEl) perWeekEl.value = data.weekly_plan_per_week ?? "";
+    syncWeeklyPlanWeeksFromDates();
     updateWeeklyPlanTargetHint();
     document.getElementById("blockSizes").value = (data.block_sizes || []).join(",");
   }
   async function saveSettings() {
-    const maxRaw = document.getElementById("maxEnrollment").value.trim();
+    const minRaw = (document.getElementById("minPerGroup")?.value || "").trim();
     const startRaw = (document.getElementById("recruitmentStartDate")?.value || "").trim();
+    const endRaw = (document.getElementById("recruitmentEndDate")?.value || "").trim();
     const weeksRaw = (document.getElementById("weeklyPlanWeeks")?.value || "").trim();
     const perWeekRaw = (document.getElementById("weeklyPlanPerWeek")?.value || "").trim();
     await api("/admin/randomization-settings", "PUT", {
-      max_enrollment: maxRaw === "" ? null : Number(maxRaw),
+      min_per_group: minRaw === "" ? null : Number(minRaw),
       recruitment_start_date: startRaw === "" ? null : startRaw,
+      recruitment_end_date: endRaw === "" ? null : endRaw,
       weekly_plan_weeks: weeksRaw === "" ? null : Number(weeksRaw),
       weekly_plan_per_week: perWeekRaw === "" ? null : Number(perWeekRaw),
       block_sizes: csvToInts(document.getElementById("blockSizes").value),
@@ -1815,8 +1890,6 @@ ADMIN_SCRIPTS = """
         const ctx = chart.ctx;
         const datasets = chart.data.datasets || [];
         ctx.save();
-        ctx.font = "600 11px system-ui, -apple-system, sans-serif";
-        ctx.textAlign = "center";
 
         function drawBarLabels(datasetIndex, textColor) {
           const meta = chart.getDatasetMeta(datasetIndex);
@@ -1825,10 +1898,16 @@ ADMIN_SCRIPTS = """
           meta.data.forEach(function(bar, index) {
             const value = Number(dataset.data[index]) || 0;
             if (value <= 0) return;
+            const interVal = Number(datasets[0].data[index]) || 0;
+            const ctrlVal = Number(datasets[1].data[index]) || 0;
             const props = bar.getProps(["x", "y", "base"], true);
+            const segHeight = Math.abs(props.base - props.y);
+            if (segHeight < 16) return;
             const midY = (props.y + props.base) / 2;
             ctx.fillStyle = textColor;
+            ctx.textAlign = "center";
             ctx.textBaseline = "middle";
+            ctx.font = "600 10px system-ui, -apple-system, sans-serif";
             ctx.fillText(String(value), props.x, midY);
           });
         }
@@ -1846,15 +1925,22 @@ ADMIN_SCRIPTS = """
             if (total <= 0) return;
             const topBar = ctrlVal > 0 ? metaCtrl.data[index] : bar;
             const props = topBar.getProps(["x", "y"], true);
-            ctx.fillStyle = "#334155";
+            const topY = props.y - 5;
+            ctx.textAlign = "center";
             ctx.textBaseline = "bottom";
+            ctx.fillStyle = "#334155";
             ctx.font = "700 11px system-ui, -apple-system, sans-serif";
-            ctx.fillText(String(total), props.x, props.y - 4);
+            ctx.fillText(String(total), props.x, topY);
+            if (interVal > 0 || ctrlVal > 0) {
+              ctx.fillStyle = "#64748b";
+              ctx.font = "600 10px system-ui, -apple-system, sans-serif";
+              ctx.fillText(interVal + "/" + ctrlVal, props.x, topY - 13);
+            }
           });
         }
 
         const lineIndex = datasets.findIndex(function(ds) {
-          return ds.label && String(ds.label).indexOf("累計實際") >= 0;
+          return ds.label && String(ds.label).indexOf("實際") >= 0;
         });
         if (lineIndex >= 0) {
           const lineMeta = chart.getDatasetMeta(lineIndex);
@@ -1868,15 +1954,16 @@ ADMIN_SCRIPTS = """
               if (!(index === 0 || value !== prev || isLast)) return;
               const props = point.getProps(["x", "y"], true);
               ctx.fillStyle = "#15803d";
+              ctx.textAlign = "center";
               ctx.textBaseline = "bottom";
-              ctx.font = "700 11px system-ui, -apple-system, sans-serif";
-              ctx.fillText(String(value), props.x, props.y - 6);
+              ctx.font = "700 10px system-ui, -apple-system, sans-serif";
+              ctx.fillText(String(value), props.x, props.y - 5);
             });
           }
         }
 
         const planIndex = datasets.findIndex(function(ds) {
-          return ds.label && String(ds.label).indexOf("累計計劃") >= 0;
+          return ds.label && String(ds.label).indexOf("計劃") >= 0;
         });
         if (planIndex >= 0) {
           const planMeta = chart.getDatasetMeta(planIndex);
@@ -1888,9 +1975,10 @@ ADMIN_SCRIPTS = """
               const point = planMeta.data[lastIdx];
               const props = point.getProps(["x", "y"], true);
               ctx.fillStyle = "#b45309";
+              ctx.textAlign = "center";
               ctx.textBaseline = "bottom";
-              ctx.font = "700 11px system-ui, -apple-system, sans-serif";
-              ctx.fillText(String(value), props.x, props.y - 6);
+              ctx.font = "700 10px system-ui, -apple-system, sans-serif";
+              ctx.fillText(String(value), props.x, props.y - 5);
             }
           }
         }
@@ -1907,14 +1995,21 @@ ADMIN_SCRIPTS = """
     try {
     const weeks = (ov && ov.weekly_tracking) || [];
     const start = ov && ov.recruitment_start_date;
+    const end = ov && ov.recruitment_end_date;
     const planWeeks = (ov && ov.weekly_plan && ov.weekly_plan.weeks) || 20;
     const planPerWeek = (ov && ov.weekly_plan && ov.weekly_plan.per_week) || 60;
     const planTotal = (ov && ov.weekly_plan && ov.weekly_plan.total_target) || (planWeeks * planPerWeek);
     if (caption) {
-      caption.textContent = start
-        ? "招募起始：" + start + "（香港時間）· 柱狀為每週 Trial 有效入組（柱頂數字=該週合計，段內數字=干預/對照）· 虛線為累計計劃（第"
-          + planWeeks + "周達 " + planTotal + " 人，" + planPerWeek + " 人/周）· 實線為 Trial 累計實際（旁邊數字標註；右軸刻度含計劃目標，勿與左軸柱高直接比對）"
-        : "請在隨機化設定中配置招募起始日";
+      if (!start) {
+        caption.textContent = "請在隨機化設定中配置招募起始日";
+      } else {
+        caption.innerHTML = "招募期 <strong>" + escapeHtml(String(start)) + "</strong>"
+          + (end ? " – <strong>" + escapeHtml(String(end)) + "</strong>" : "")
+          + "（香港時間）"
+          + " · 柱狀＝每週 Trial 入組（<span style='color:#dc2626'>干預</span>/<span style='color:#2563eb'>對照</span>）"
+          + " · 虛線＝累計計劃（" + planWeeks + " 週 " + planTotal + " 人）"
+          + " · 實線＝累計實際";
+      }
     }
     if (typeof Chart === "undefined") {
       if (caption) caption.textContent += "（圖表庫載入中，請重新整理）";
@@ -1942,15 +2037,35 @@ ADMIN_SCRIPTS = """
       data: {
         labels: labels,
         datasets: [
-          { label: "干預組（每週）", data: inter, backgroundColor: "#dc2626", stack: "recruitment", order: 3, yAxisID: "y" },
-          { label: "對照組（每週）", data: ctrl, backgroundColor: "#2563eb", stack: "recruitment", order: 3, yAxisID: "y" },
+          {
+            label: "干預",
+            data: inter,
+            backgroundColor: "#dc2626",
+            hoverBackgroundColor: "#b91c1c",
+            borderRadius: { topLeft: 0, topRight: 0, bottomLeft: 4, bottomRight: 4 },
+            borderSkipped: false,
+            stack: "recruitment",
+            order: 3,
+            yAxisID: "y",
+          },
+          {
+            label: "對照",
+            data: ctrl,
+            backgroundColor: "#2563eb",
+            hoverBackgroundColor: "#1d4ed8",
+            borderRadius: { topLeft: 4, topRight: 4, bottomLeft: 0, bottomRight: 0 },
+            borderSkipped: false,
+            stack: "recruitment",
+            order: 3,
+            yAxisID: "y",
+          },
           {
             type: "line",
-            label: "累計計劃（第" + planWeeks + "周 " + planTotal + " 人）",
+            label: "計劃",
             data: planCumulative,
-            borderColor: "#b45309",
-            backgroundColor: "#b45309",
-            borderDash: [6, 4],
+            borderColor: "#d97706",
+            backgroundColor: "#d97706",
+            borderDash: [5, 4],
             borderWidth: 2,
             pointRadius: 0,
             pointHoverRadius: 4,
@@ -1961,13 +2076,14 @@ ADMIN_SCRIPTS = """
           },
           {
             type: "line",
-            label: "累計實際（Trial）",
+            label: "實際",
             data: actualCumulative,
             borderColor: "#15803d",
             backgroundColor: "#15803d",
-            borderWidth: 2,
+            borderWidth: 2.5,
             pointRadius: 2,
             pointHoverRadius: 5,
+            pointBackgroundColor: "#15803d",
             fill: false,
             order: 2,
             yAxisID: "y1",
@@ -1976,10 +2092,29 @@ ADMIN_SCRIPTS = """
       },
       options: {
         responsive: true,
-        maintainAspectRatio: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        layout: { padding: { top: 20, right: 8, left: 4, bottom: 4 } },
         plugins: {
-          legend: { position: "top" },
+          legend: {
+            position: "top",
+            align: "center",
+            labels: {
+              boxWidth: 10,
+              boxHeight: 10,
+              padding: 16,
+              color: "#475569",
+              font: { size: 11, weight: "500", family: "system-ui, -apple-system, sans-serif" },
+              usePointStyle: true,
+              pointStyle: "rectRounded",
+            },
+          },
           tooltip: {
+            backgroundColor: "rgba(15, 23, 42, 0.92)",
+            titleFont: { size: 12, weight: "600" },
+            bodyFont: { size: 12 },
+            padding: 10,
+            cornerRadius: 8,
             callbacks: {
               afterTitle: function(items) {
                 const idx = items[0] && items[0].dataIndex;
@@ -1989,9 +2124,10 @@ ADMIN_SCRIPTS = """
               label: function(ctx) {
                 const label = ctx.dataset.label || "";
                 const value = Number(ctx.parsed.y) || 0;
-                if (ctx.dataset.type === "line") {
-                  return label + "：" + value;
-                }
+                if (label === "干預") return "干預組（每週）：" + value;
+                if (label === "對照") return "對照組（每週）：" + value;
+                if (label === "計劃") return "累計計劃：" + value;
+                if (label === "實際") return "累計實際（Trial）：" + value;
                 return label + "：" + value;
               },
               footer: function(items) {
@@ -2015,23 +2151,29 @@ ADMIN_SCRIPTS = """
         scales: {
           x: {
             stacked: true,
-            title: { display: true, text: "招募週次" },
+            grid: { display: false },
+            border: { color: "#e2e8f0" },
+            ticks: { color: "#64748b", font: { size: 10 } },
+            title: { display: true, text: "招募週次", color: "#64748b", font: { size: 11, weight: "500" } },
           },
           y: {
             stacked: true,
             beginAtZero: true,
-            suggestedMax: Math.max(weeklyMax * 1.25, 4),
-            ticks: { precision: 0 },
-            title: { display: true, text: "每週入組人數（左軸）" },
+            suggestedMax: Math.max(weeklyMax * 1.3, 4),
+            grid: { color: "rgba(226, 232, 240, 0.7)" },
+            border: { display: false },
+            ticks: { precision: 0, color: "#64748b", font: { size: 10 }, padding: 4 },
+            title: { display: true, text: "每週入組", color: "#64748b", font: { size: 11, weight: "500" } },
             position: "left",
           },
           y1: {
             beginAtZero: true,
             suggestedMax: Math.max(planMax, actualMax) * 1.08,
-            ticks: { precision: 0 },
-            title: { display: true, text: "累計入組人數（右軸）" },
-            position: "right",
             grid: { drawOnChartArea: false },
+            border: { display: false },
+            ticks: { precision: 0, color: "#94a3b8", font: { size: 10 }, padding: 4 },
+            title: { display: true, text: "累計", color: "#94a3b8", font: { size: 11, weight: "500" } },
+            position: "right",
           },
         },
       },
@@ -2082,10 +2224,10 @@ ADMIN_SCRIPTS = """
     const nontrialCtrl = Number(ov.nontrial_control_count) || 0;
     const voidInter = Number(ov.voided_intervention_count) || 0;
     const voidCtrl = Number(ov.voided_control_count) || 0;
-    const maxTotal = ov.max_enrollment;
-    const maxNum = maxTotal == null || maxTotal === "" ? null : Number(maxTotal);
-    const trialGroupCap = maxNum && maxNum > 0 ? Math.floor(maxNum / 2) : null;
-    const trialTotalCap = maxNum && maxNum > 0 ? maxNum : null;
+    const minPerGroup = ov.min_per_group;
+    const minNum = minPerGroup == null || minPerGroup === "" ? null : Number(minPerGroup);
+    const trialGroupCap = minNum && minNum > 0 ? minNum : null;
+    const trialTotalCap = null;
     const statusText = ov.recruitment_open === false
       ? "<span style='color:#b45309;font-weight:600;'>已停招</span>"
       : "<span style='color:#15803d;font-weight:600;'>招募中</span>";
@@ -2175,15 +2317,15 @@ ADMIN_SCRIPTS = """
     const site = (document.getElementById("recordsFilterSite")?.value || "").trim();
     const date = (document.getElementById("recordsFilterDate")?.value || "").trim();
     const group = (document.getElementById("recordsFilterGroup")?.value || "").trim();
-    const recruiter = (document.getElementById("recordsFilterRecruiter")?.value || "").trim().toLowerCase();
+    const status = (document.getElementById("recordsFilterStatus")?.value || "").trim();
     const filtered = all.filter(row => {
       if (site && String(row.site_id || "") !== site) return false;
       if (group && String(row.allocation_group || "") !== group) return false;
+      if (status && recordEffectiveStatus(row) !== status) return false;
       if (date) {
         const d = hkDateFromIso(row.randomized_at);
         if (d !== date) return false;
       }
-      if (recruiter && !String(row.recruiter_id || "").toLowerCase().includes(recruiter)) return false;
       return true;
     });
     window.__recordsFilteredItems = filtered;
@@ -2198,7 +2340,7 @@ ADMIN_SCRIPTS = """
   }
 
   function resetRecordsFilter() {
-    const ids = ["recordsFilterSite", "recordsFilterDate", "recordsFilterGroup", "recordsFilterRecruiter"];
+    const ids = ["recordsFilterSite", "recordsFilterDate", "recordsFilterGroup", "recordsFilterStatus"];
     ids.forEach(id => {
       const el = document.getElementById(id);
       if (!el) return;
@@ -2273,8 +2415,8 @@ ADMIN_SCRIPTS = """
     }
     let statusLabel = newStatus === "voided" ? "作廢" : (newStatus === "trial" ? "Trial" : "Non-trial");
     let tip = "確認將入組編號 " + enrollmentNo + " 的狀態改為「" + statusLabel + "」？";
-    if (newStatus === "trial") tip += "（計入 998 上限）";
-    if (newStatus === "nontrial") tip += "（不計 998 上限，手機號仍不可重複隨機）";
+    if (newStatus === "trial") tip += "（計入 Trial 有效入組）";
+    if (newStatus === "nontrial") tip += "（不計 Trial 有效入組，手機號仍不可重複隨機）";
     if (newStatus === "voided") tip += "（作廢會保留歷史記錄並釋放手機號）";
     if (!confirm(tip)) return;
 
@@ -2322,21 +2464,17 @@ ADMIN_SCRIPTS = """
     const siteSel = document.getElementById("recordsFilterSite");
     const dateInp = document.getElementById("recordsFilterDate");
     const groupSel = document.getElementById("recordsFilterGroup");
-    const recruiterInp = document.getElementById("recordsFilterRecruiter");
+    const statusSel = document.getElementById("recordsFilterStatus");
     const pageSizeSel = document.getElementById("recordsPageSize");
     const prevBtn = document.getElementById("recordsPrevBtn");
     const nextBtn = document.getElementById("recordsNextBtn");
     window.__recordsCurrentPage = 1;
-    [siteSel, dateInp, groupSel].forEach(el => {
+    [siteSel, dateInp, groupSel, statusSel].forEach(el => {
       if (!el) return;
       el.addEventListener("change", function() {
         window.__recordsCurrentPage = 1;
         applyRecordsFilter();
       });
-    });
-    if (recruiterInp) recruiterInp.addEventListener("input", function() {
-      window.__recordsCurrentPage = 1;
-      applyRecordsFilter();
     });
     if (pageSizeSel) pageSizeSel.addEventListener("change", function() {
       window.__recordsCurrentPage = 1;
@@ -2358,8 +2496,12 @@ ADMIN_SCRIPTS = """
     if (PAGE === "settings") {
       const weeksEl = document.getElementById("weeklyPlanWeeks");
       const perWeekEl = document.getElementById("weeklyPlanPerWeek");
+      const startEl = document.getElementById("recruitmentStartDate");
+      const endEl = document.getElementById("recruitmentEndDate");
       if (weeksEl) weeksEl.addEventListener("input", updateWeeklyPlanTargetHint);
       if (perWeekEl) perWeekEl.addEventListener("input", updateWeeklyPlanTargetHint);
+      if (startEl) startEl.addEventListener("change", syncWeeklyPlanWeeksFromDates);
+      if (endEl) endEl.addEventListener("change", syncWeeklyPlanWeeksFromDates);
       loadSettings();
     }
     if (PAGE === "sites") {

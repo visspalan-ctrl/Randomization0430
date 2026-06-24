@@ -39,7 +39,14 @@ from app.models import (
 from app.admin_ui import PageId, render_admin_page
 
 from app.seed import ensure_preset_sites
-from app.state import FailedAttemptWindow, app_state, hash_password, utc_now
+from app.state import (
+    DEFAULT_RANDOMIZATION_SEED,
+    FailedAttemptWindow,
+    app_state,
+    hash_password,
+    trial_group_at_index,
+    utc_now,
+)
 from app.timeutil import (
     DEFAULT_RECRUITMENT_START_DATE,
     DEFAULT_WEEKLY_PLAN_PER_WEEK,
@@ -53,6 +60,8 @@ from app.timeutil import (
     recruitment_week_no,
     recruitment_week_bounds,
     recruitment_week_range_label,
+    recruitment_plan_end_date,
+    recruitment_plan_weeks_from_end_date,
 )
 
 try:
@@ -289,6 +298,9 @@ def ensure_schema_migrations() -> None:
                 )
             )
         rs_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_settings')")).fetchall()]
+        if rs_cols and "recruitment_end_date" not in rs_cols:
+            conn.execute(text("ALTER TABLE randomization_settings ADD COLUMN recruitment_end_date DATE"))
+        rs_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_settings')")).fetchall()]
         if rs_cols and "weekly_plan_weeks" not in rs_cols:
             conn.execute(text("ALTER TABLE randomization_settings ADD COLUMN weekly_plan_weeks INTEGER"))
             conn.execute(
@@ -321,6 +333,15 @@ def ensure_schema_migrations() -> None:
         rr_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_records')")).fetchall()]
         if rr_cols and "subject_code" not in rr_cols:
             conn.execute(text("ALTER TABLE randomization_records ADD COLUMN subject_code VARCHAR(64)"))
+        rs_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_settings')")).fetchall()]
+        if rs_cols and "randomization_seed" not in rs_cols:
+            conn.execute(text("ALTER TABLE randomization_settings ADD COLUMN randomization_seed INTEGER"))
+            conn.execute(
+                text(
+                    f"UPDATE randomization_settings SET randomization_seed = {DEFAULT_RANDOMIZATION_SEED} "
+                    "WHERE randomization_seed IS NULL"
+                )
+            )
 
 
 @app.on_event("startup")
@@ -353,14 +374,22 @@ def startup() -> None:
             db.add(
                 RandomizationSetting(
                     id=1,
-                    max_enrollment=998,
+                    min_per_group=499,
                     recruitment_start_date=DEFAULT_RECRUITMENT_START_DATE,
+                    recruitment_end_date=recruitment_plan_end_date(
+                        DEFAULT_RECRUITMENT_START_DATE, DEFAULT_WEEKLY_PLAN_WEEKS
+                    ),
                     weekly_plan_weeks=DEFAULT_WEEKLY_PLAN_WEEKS,
                     weekly_plan_per_week=DEFAULT_WEEKLY_PLAN_PER_WEEK,
                     block_sizes_csv="4,8,12",
+                    randomization_seed=DEFAULT_RANDOMIZATION_SEED,
                     updated_by="system",
                 )
             )
+        else:
+            setting = db.get(RandomizationSetting, 1)
+            if setting is not None and setting.randomization_seed is None:
+                setting.randomization_seed = DEFAULT_RANDOMIZATION_SEED
         ensure_preset_sites(db)
         db.commit()
 
@@ -541,7 +570,9 @@ class RecordVoidRequest(BaseModel):
 
 class RandomizationSettingUpdateRequest(BaseModel):
     max_enrollment: int | None = None
+    min_per_group: int | None = None
     recruitment_start_date: date | None = None
+    recruitment_end_date: date | None = None
     weekly_plan_weeks: int | None = None
     weekly_plan_per_week: int | None = None
     block_sizes: list[int]
@@ -616,16 +647,43 @@ def _normalize_subject_code(raw: str) -> str | None:
     return code if code else None
 
 
-def _is_recruitment_closed(setting: RandomizationSetting, valid_total: int) -> bool:
-    if setting.max_enrollment is None:
+def _is_recruitment_period_ended(setting: RandomizationSetting) -> bool:
+    end = getattr(setting, "recruitment_end_date", None)
+    if end is None:
         return False
-    return valid_total >= setting.max_enrollment
+    if isinstance(end, str):
+        end = date.fromisoformat(end)
+    today_hk = hk_calendar_date(datetime.now(timezone.utc))
+    return today_hk > end
+
+
+def _is_recruitment_closed(
+    setting: RandomizationSetting,
+    trial_total: int,
+    trial_genai: int,
+    trial_human: int,
+) -> bool:
+    if _is_recruitment_period_ended(setting):
+        return True
+    min_per = getattr(setting, "min_per_group", None)
+    if min_per is None or min_per <= 0:
+        return False
+    return trial_genai >= min_per and trial_human >= min_per
 
 
 def _recruitment_start_date(setting: RandomizationSetting) -> date:
     raw = getattr(setting, "recruitment_start_date", None)
     if raw is None:
         return DEFAULT_RECRUITMENT_START_DATE
+    if isinstance(raw, date):
+        return raw
+    return date.fromisoformat(str(raw))
+
+
+def _recruitment_end_date(setting: RandomizationSetting) -> date | None:
+    raw = getattr(setting, "recruitment_end_date", None)
+    if raw is None:
+        return None
     if isinstance(raw, date):
         return raw
     return date.fromisoformat(str(raw))
@@ -702,8 +760,9 @@ def _recruitment_overview(setting: RandomizationSetting, db: Session) -> dict:
     nontrial_total, nontrial_genai, nontrial_human = _nontrial_enrollment_counts(db)
     voided_total, voided_genai, voided_human = _voided_enrollment_counts(db)
     total = db.scalar(select(func.count()).select_from(RandomizationRecord)) or 0
-    closed = _is_recruitment_closed(setting, trial_total)
+    closed = _is_recruitment_closed(setting, trial_total, trial_genai, trial_human)
     start_date = _recruitment_start_date(setting)
+    end_date = _recruitment_end_date(setting)
     plan_weeks = _weekly_plan_weeks(setting)
     plan_per_week = _weekly_plan_per_week(setting)
     return {
@@ -725,8 +784,10 @@ def _recruitment_overview(setting: RandomizationSetting, db: Session) -> dict:
         "control_count": trial_human,
         "other_group_count": max(0, trial_total - trial_genai - trial_human),
         "max_enrollment": setting.max_enrollment,
+        "min_per_group": getattr(setting, "min_per_group", None),
         "recruitment_open": not closed,
         "recruitment_start_date": start_date.isoformat(),
+        "recruitment_end_date": end_date.isoformat() if end_date is not None else None,
         "weekly_tracking": _weekly_recruitment_tracking(db, start_date, plan_weeks),
         "weekly_plan": {
             "weeks": plan_weeks,
@@ -761,6 +822,20 @@ def site_in_open_batch(db: Session, site_id: str) -> bool:
         )
     )
     return bid is not None
+
+
+def _randomization_seed(setting: RandomizationSetting) -> int:
+    raw = getattr(setting, "randomization_seed", None)
+    if raw is None:
+        return DEFAULT_RANDOMIZATION_SEED
+    return int(raw)
+
+
+def _next_trial_allocation_group(db: Session, setting: RandomizationSetting) -> str:
+    trial_total, _, _ = _trial_enrollment_counts(db)
+    block_sizes = parse_block_sizes(setting.block_sizes_csv)
+    seed = _randomization_seed(setting)
+    return trial_group_at_index(trial_total, block_sizes, seed)
 
 
 def parse_block_sizes(block_sizes_csv: str) -> tuple[int, ...]:
@@ -1339,8 +1414,6 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
         db.add(setting)
         db.commit()
         db.refresh(setting)
-    app_state.randomizer.set_block_sizes(parse_block_sizes(setting.block_sizes_csv))
-
     at = normalize_utc(payload.at) if payload.at else utc_now()
 
     lock_key = (payload.site_id, payload.recruiter_id)
@@ -1397,12 +1470,12 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
         }
 
     trial_total, trial_genai, trial_human = _trial_enrollment_counts(db)
-    if _is_recruitment_closed(setting, trial_total):
+    if _is_recruitment_closed(setting, trial_total, trial_genai, trial_human):
         add_audit(
             db,
             "randomization_blocked_recruitment_target_reached",
             {
-                "max_enrollment": setting.max_enrollment,
+                "min_per_group": getattr(setting, "min_per_group", None),
                 "trial_total": trial_total,
                 "trial_genai": trial_genai,
                 "trial_human": trial_human,
@@ -1412,7 +1485,7 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
 
     site = db.get(Site, payload.site_id)
     site_name = site.site_name if site else payload.site_id
-    group = app_state.randomizer.next_group()
+    group = _next_trial_allocation_group(db, setting)
     record = RandomizationRecord(
         enrollment_no=next_enrollment_no(db),
         phone_number=payload.phone_number,
@@ -1641,7 +1714,7 @@ def get_password_configs(db: Session = Depends(get_db)):
 def get_randomization_records(db: Session = Depends(get_db)):
     setting = db.get(RandomizationSetting, 1)
     if setting is None:
-        setting = RandomizationSetting(id=1, max_enrollment=998, block_sizes_csv="4,8,12", updated_by="system")
+        setting = RandomizationSetting(id=1, min_per_group=499, block_sizes_csv="4,8,12", updated_by="system")
         db.add(setting)
         db.commit()
         db.refresh(setting)
@@ -1717,9 +1790,12 @@ def get_randomization_settings(db: Session = Depends(get_db)):
         db.add(setting)
         db.commit()
         db.refresh(setting)
+    end_date = _recruitment_end_date(setting)
     out = {
         "max_enrollment": setting.max_enrollment,
+        "min_per_group": getattr(setting, "min_per_group", None),
         "recruitment_start_date": _recruitment_start_date(setting).isoformat(),
+        "recruitment_end_date": end_date.isoformat() if end_date is not None else None,
         "weekly_plan_weeks": _weekly_plan_weeks(setting),
         "weekly_plan_per_week": _weekly_plan_per_week(setting),
         "block_sizes": list(parse_block_sizes(setting.block_sizes_csv)),
@@ -1777,6 +1853,8 @@ def update_randomization_settings(payload: RandomizationSettingUpdateRequest, db
         raise HTTPException(status_code=400, detail="invalid_block_sizes")
     if payload.max_enrollment is not None and payload.max_enrollment <= 0:
         raise HTTPException(status_code=400, detail="invalid_max_enrollment")
+    if payload.min_per_group is not None and payload.min_per_group <= 0:
+        raise HTTPException(status_code=400, detail="invalid_min_per_group")
     if payload.weekly_plan_weeks is not None and payload.weekly_plan_weeks <= 0:
         raise HTTPException(status_code=400, detail="invalid_weekly_plan_weeks")
     if payload.weekly_plan_per_week is not None and payload.weekly_plan_per_week <= 0:
@@ -1788,23 +1866,40 @@ def update_randomization_settings(payload: RandomizationSettingUpdateRequest, db
         db.add(setting)
     if "max_enrollment" in payload.model_fields_set:
         setting.max_enrollment = payload.max_enrollment
+    if "min_per_group" in payload.model_fields_set:
+        setting.min_per_group = payload.min_per_group
     if "recruitment_start_date" in payload.model_fields_set:
         setting.recruitment_start_date = payload.recruitment_start_date
+    if "recruitment_end_date" in payload.model_fields_set:
+        setting.recruitment_end_date = payload.recruitment_end_date
     if "weekly_plan_weeks" in payload.model_fields_set:
         setting.weekly_plan_weeks = payload.weekly_plan_weeks
     if "weekly_plan_per_week" in payload.model_fields_set:
         setting.weekly_plan_per_week = payload.weekly_plan_per_week
+    end_candidate = _recruitment_end_date(setting)
+    if end_candidate is not None and end_candidate < _recruitment_start_date(setting):
+        raise HTTPException(status_code=400, detail="invalid_recruitment_end_date")
+    dates_updated = (
+        "recruitment_start_date" in payload.model_fields_set
+        or "recruitment_end_date" in payload.model_fields_set
+    )
+    if dates_updated and end_candidate is not None:
+        synced_weeks = recruitment_plan_weeks_from_end_date(_recruitment_start_date(setting), end_candidate)
+        if synced_weeks is not None and synced_weeks > 0:
+            setting.weekly_plan_weeks = synced_weeks
     setting.block_sizes_csv = ",".join(str(x) for x in payload.block_sizes)
     setting.updated_by = payload.updated_by
     db.commit()
     db.refresh(setting)
-    app_state.randomizer.set_block_sizes(tuple(payload.block_sizes))
+    end_date = _recruitment_end_date(setting)
     add_audit(
         db,
         "randomization_settings_updated",
         {
             "max_enrollment": setting.max_enrollment,
+            "min_per_group": getattr(setting, "min_per_group", None),
             "recruitment_start_date": _recruitment_start_date(setting).isoformat(),
+            "recruitment_end_date": end_date.isoformat() if end_date is not None else None,
             "weekly_plan_weeks": _weekly_plan_weeks(setting),
             "weekly_plan_per_week": _weekly_plan_per_week(setting),
             "block_sizes": payload.block_sizes,
@@ -1814,7 +1909,9 @@ def update_randomization_settings(payload: RandomizationSettingUpdateRequest, db
     return {
         "ok": True,
         "max_enrollment": setting.max_enrollment,
+        "min_per_group": getattr(setting, "min_per_group", None),
         "recruitment_start_date": _recruitment_start_date(setting).isoformat(),
+        "recruitment_end_date": end_date.isoformat() if end_date is not None else None,
         "weekly_plan_weeks": _weekly_plan_weeks(setting),
         "weekly_plan_per_week": _weekly_plan_per_week(setting),
         "block_sizes": payload.block_sizes,
@@ -1895,8 +1992,8 @@ def admin_update_trial_status(payload: TrialStatusUpdateRequest, db: Session = D
     if payload.trial_status == TRIAL_STATUS_TRIAL and record.trial_status != TRIAL_STATUS_TRIAL:
         setting = db.get(RandomizationSetting, 1)
         if setting is not None:
-            trial_total, _, _ = _trial_enrollment_counts(db)
-            if _is_recruitment_closed(setting, trial_total):
+            trial_total, trial_genai, trial_human = _trial_enrollment_counts(db)
+            if _is_recruitment_closed(setting, trial_total, trial_genai, trial_human):
                 raise HTTPException(status_code=409, detail="recruitment_target_reached")
     old_status = record.trial_status
     record.trial_status = payload.trial_status
@@ -1939,8 +2036,8 @@ def admin_delete_record(payload: RecordVoidRequest, db: Session = Depends(get_db
         if record.trial_status == TRIAL_STATUS_TRIAL:
             setting = db.get(RandomizationSetting, 1)
             if setting is not None:
-                trial_total, _, _ = _trial_enrollment_counts(db)
-                if _is_recruitment_closed(setting, trial_total):
+                trial_total, trial_genai, trial_human = _trial_enrollment_counts(db)
+                if _is_recruitment_closed(setting, trial_total, trial_genai, trial_human):
                     raise HTTPException(status_code=409, detail="recruitment_target_reached")
         record.activation_status = "pending"
         record.phone_number = original_phone
@@ -2009,17 +2106,19 @@ def dev_reset():
         db.add(
             RandomizationSetting(
                 id=1,
-                max_enrollment=998,
+                min_per_group=499,
                 recruitment_start_date=DEFAULT_RECRUITMENT_START_DATE,
+                recruitment_end_date=recruitment_plan_end_date(
+                    DEFAULT_RECRUITMENT_START_DATE, DEFAULT_WEEKLY_PLAN_WEEKS
+                ),
                 weekly_plan_weeks=DEFAULT_WEEKLY_PLAN_WEEKS,
                 weekly_plan_per_week=DEFAULT_WEEKLY_PLAN_PER_WEEK,
                 block_sizes_csv="4,8,12",
+                randomization_seed=DEFAULT_RANDOMIZATION_SEED,
                 updated_by="system",
             )
         )
         ensure_preset_sites(db)
         db.commit()
     app_state.failed_attempts = {}
-    app_state.randomizer.current_block = []
-    app_state.randomizer.assigned = {"GENAI": 0, "HUMAN": 0}
     return {"ok": True}
