@@ -565,6 +565,80 @@ def test_overview_weekly_tracking_by_recruitment_week():
     assert w3["valid_cumulative"] == 2
     assert len(weeks) >= 20
     assert weeks[19]["week_no"] == 20
+    assert w2["nontrial_total"] == 0
+    assert w2["voided_total"] == 0
+    assert w2["week_total_all"] == 1
+
+
+def test_overview_weekly_tracking_includes_nontrial_and_voided():
+    from sqlalchemy import select
+
+    from app.db import SessionLocal
+    from app.models import RandomizationRecord
+
+    client = TestClient(app)
+    admin_put(
+        client,
+        "/admin/randomization-settings",
+        json={
+            "recruitment_start_date": "2026-06-20",
+            "block_sizes": [4, 8, 12],
+            "updated_by": "admin",
+        },
+    )
+    open_batch(client, ["SITE_01"])
+    set_site_password(client, "SITE_01")
+    phones = ("+85261112001", "+85261112002", "+85261112003")
+    enrollment_nos = []
+    for phone in phones:
+        created = client.post(
+            "/randomization/trigger",
+            json={
+                "phone_number": phone,
+                "recruiter_id": "r1",
+                "site_id": "SITE_01",
+                "recruiter_password": "123456",
+            },
+        )
+        assert created.status_code == 200
+        enrollment_nos.append(created.json()["enrollment_no"])
+
+    admin_patch(
+        client,
+        "/admin/randomization-records/trial-status",
+        json={
+            "enrollment_no": enrollment_nos[1],
+            "trial_status": "nontrial",
+            "changed_by": "admin",
+            "reason": "weekly chart test",
+        },
+    )
+    admin_post(
+        client,
+        "/admin/randomization-records/delete",
+        json={
+            "enrollment_no": enrollment_nos[2],
+            "voided_by": "admin",
+            "reason": "weekly chart test",
+        },
+    )
+
+    hk = ZoneInfo("Asia/Hong_Kong")
+    day_week2 = datetime(2026, 6, 21, 10, 0, tzinfo=hk).astimezone(timezone.utc)
+    with SessionLocal() as db:
+        records = db.scalars(select(RandomizationRecord).order_by(RandomizationRecord.id.asc())).all()
+        targets = [r for r in records if r.enrollment_no in enrollment_nos]
+        assert len(targets) == 3
+        for record in targets:
+            record.randomized_at = day_week2
+        db.commit()
+
+    overview = admin_get(client, "/admin/randomization-records").json()["overview"]
+    w2 = next(item for item in overview["weekly_tracking"] if item["week_no"] == 2)
+    assert w2["valid_total"] == 1
+    assert w2["nontrial_total"] == 1
+    assert w2["voided_total"] == 1
+    assert w2["week_total_all"] == 3
 
 
 def test_overview_weekly_plan_is_configurable():

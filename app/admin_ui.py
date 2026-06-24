@@ -24,6 +24,16 @@ ADMIN_CSS = """
   --accent: #4f46e5;
   --accent-hover: #4338ca;
   --danger: #dc2626;
+  --status-trial: #059669;
+  --status-trial-bg: #ecfdf5;
+  --status-nontrial: #94a3b8;
+  --status-nontrial-bg: #f1f5f9;
+  --status-voided: #be123c;
+  --status-voided-bg: #fff1f2;
+  --group-intervention: #ea580c;
+  --group-control: #0d9488;
+  --overview-total: #334155;
+  --chart-plan: #d97706;
   --radius: 12px;
   --shadow: 0 1px 3px rgba(15,23,42,0.08), 0 4px 16px rgba(15,23,42,0.06);
 }
@@ -206,15 +216,26 @@ button.danger:hover { background: #b91c1c; }
   border: 1px solid var(--border);
   background: #f8fafc;
 }
-.overview-stat-row.overview-stat-trial { border-left: 4px solid #15803d; }
-.overview-stat-row.overview-stat-nontrial { border-left: 4px solid #2563eb; }
-.overview-stat-row.overview-stat-voided { border-left: 4px solid #dc2626; }
+.overview-stat-row.overview-stat-trial {
+  border-left: 4px solid var(--status-trial);
+  background: var(--status-trial-bg);
+}
+.overview-stat-row.overview-stat-nontrial {
+  border-left: 4px solid var(--status-nontrial);
+  background: var(--status-nontrial-bg);
+}
+.overview-stat-row.overview-stat-voided {
+  border-left: 4px solid var(--status-voided);
+  background: var(--status-voided-bg);
+}
 .overview-stat-label {
   flex: 0 0 88px;
   font-weight: 700;
   font-size: 14px;
-  color: var(--text);
 }
+.overview-stat-label.overview-stat-label-trial { color: var(--status-trial); }
+.overview-stat-label.overview-stat-label-nontrial { color: var(--status-nontrial); }
+.overview-stat-label.overview-stat-label-voided { color: var(--status-voided); }
 .overview-stat-metrics {
   display: flex;
   flex-wrap: wrap;
@@ -239,9 +260,9 @@ button.danger:hover { background: #b91c1c; }
 }
 .overview-num-md { font-size: 18px; }
 .overview-num-lg { font-size: 26px; }
-.overview-num.valid { color: #15803d; }
-.overview-num.invalid { color: #dc2626; }
-.overview-num.neutral { color: #2563eb; }
+.overview-num.intervention { color: var(--group-intervention); }
+.overview-num.control { color: var(--group-control); }
+.overview-num.total { color: var(--overview-total); }
 .overview-cap {
   font-size: 15px;
   color: var(--muted);
@@ -266,6 +287,45 @@ button.danger:hover { background: #b91c1c; }
   color: var(--muted);
   line-height: 1.55;
   margin: 0 0 10px;
+}
+.overview-color-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 20px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px dashed var(--border);
+}
+.overview-color-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.overview-color-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.group-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.group-badge.genai {
+  color: var(--group-intervention);
+  background: rgba(234, 88, 12, 0.12);
+}
+.group-badge.human {
+  color: var(--group-control);
+  background: rgba(13, 148, 136, 0.12);
 }
 .records-weekly-chart-wrap {
   width: 100%;
@@ -977,8 +1037,9 @@ def panel_records() -> str:
     <div class="card">
       <h3>入組概覽</h3>
       <div id="recordsOverview" class="records-overview">載入中…</div>
+      <div id="recordsColorLegend" class="overview-color-legend" style="display:none;"></div>
       <div id="recordsWeeklySection" class="records-weekly-section" style="margin-top:16px;">
-        <h4>每週招募跟蹤（Trial 有效入組）</h4>
+        <h4>每週招募跟蹤（全部隨機）</h4>
         <p id="recordsWeeklyCaption" class="records-weekly-caption">載入中…</p>
         <div class="records-weekly-chart-wrap">
           <canvas id="recordsWeeklyChart"></canvas>
@@ -1057,6 +1118,22 @@ def panel_records() -> str:
 ADMIN_SCRIPTS = """
 <script>
   const PAGE = "__PAGE__";
+  const UI_COLORS = {
+    statusTrial: "#059669",
+    statusNontrial: "#94a3b8",
+    statusVoided: "#be123c",
+    chartTrialIntervention: "#059669",
+    chartTrialControl: "#6ee7b7",
+    chartTrialCumulative: "#0d9488",
+    chartNontrial: "#94a3b8",
+    groupIntervention: "#ea580c",
+    groupControl: "#0d9488",
+    overviewTotal: "#334155",
+    chartPlan: "#d97706",
+    chartPlanLabel: "#b45309",
+    recruitmentOpen: "#059669",
+    recruitmentClosed: "#b45309"
+  };
   const BATCH_MAX = __BATCH_MAX__;
   window.__batchPickSiteIds = [];
   const resultBox = document.getElementById("result");
@@ -1859,7 +1936,7 @@ ADMIN_SCRIPTS = """
   }
 
   function overviewStatNum(n, kind, size) {
-    const colorClass = kind === "invalid" ? "invalid" : (kind === "neutral" ? "neutral" : "valid");
+    const colorClass = kind === "intervention" ? "intervention" : (kind === "control" ? "control" : "total");
     const sizeClass = size === "lg" ? "overview-num-lg" : "overview-num-md";
     return "<span class='overview-num " + sizeClass + " " + colorClass + "'>" + (Number(n) || 0) + "</span>";
   }
@@ -1870,15 +1947,54 @@ ADMIN_SCRIPTS = """
     return num + "<span class='overview-cap'>/" + escapeHtml(String(cap)) + "</span>";
   }
 
-  function overviewStatRow(label, rowClass, inter, ctrl, total, numKind, groupCap, totalCap) {
+  function overviewStatLabelClass(rowClass) {
+    if (rowClass === "overview-stat-trial") return "overview-stat-label-trial";
+    if (rowClass === "overview-stat-nontrial") return "overview-stat-label-nontrial";
+    if (rowClass === "overview-stat-voided") return "overview-stat-label-voided";
+    return "";
+  }
+
+  function overviewStatRow(label, rowClass, inter, ctrl, total, groupCap, totalCap) {
+    const labelClass = overviewStatLabelClass(rowClass);
     return "<div class='overview-stat-row " + rowClass + "'>"
-      + "<div class='overview-stat-label'>" + escapeHtml(label) + "</div>"
+      + "<div class='overview-stat-label " + labelClass + "'>" + escapeHtml(label) + "</div>"
       + "<div class='overview-stat-metrics'>"
-      + "<span class='overview-metric'><span class='overview-metric-label'>干預</span>" + overviewStatFraction(inter, groupCap, numKind, "md") + "</span>"
-      + "<span class='overview-metric'><span class='overview-metric-label'>對照</span>" + overviewStatFraction(ctrl, groupCap, numKind, "md") + "</span>"
+      + "<span class='overview-metric'><span class='overview-metric-label'>干預</span>" + overviewStatFraction(inter, groupCap, "intervention", "md") + "</span>"
+      + "<span class='overview-metric'><span class='overview-metric-label'>對照</span>" + overviewStatFraction(ctrl, groupCap, "control", "md") + "</span>"
       + "<span class='overview-metric overview-metric-total'><span class='overview-metric-label'>小計</span>"
-      + overviewStatFraction(total, totalCap, numKind, "lg") + "</span>"
+      + overviewStatFraction(total, totalCap, "total", "lg") + "</span>"
       + "</div></div>";
+  }
+
+  function renderOverviewColorLegend() {
+    const el = document.getElementById("recordsColorLegend");
+    if (!el) return;
+    const c = UI_COLORS;
+    el.style.display = "flex";
+    el.innerHTML =
+      "<span><strong style='color:#475569;font-weight:600;'>狀態</strong></span>"
+      + "<span><i class='overview-color-swatch' style='background:" + c.statusTrial + "'></i>Trial</span>"
+      + "<span><i class='overview-color-swatch' style='background:" + c.statusNontrial + "'></i>Non-trial</span>"
+      + "<span><i class='overview-color-swatch' style='background:" + c.statusVoided + "'></i>作廢</span>"
+      + "<span style='margin-left:8px;'><strong style='color:#475569;font-weight:600;'>柱狀</strong></span>"
+      + "<span><i class='overview-color-swatch' style='background:" + c.chartTrialIntervention + "'></i>Trial 干預</span>"
+      + "<span><i class='overview-color-swatch' style='background:" + c.chartTrialControl + "'></i>Trial 對照</span>"
+      + "<span><i class='overview-color-swatch' style='background:" + c.chartNontrial + "'></i>Non-trial</span>"
+      + "<span><i class='overview-color-swatch' style='background:" + c.statusVoided + "'></i>作廢</span>"
+      + "<span style='margin-left:8px;'><strong style='color:#475569;font-weight:600;'>折線</strong></span>"
+      + "<span><i class='overview-color-swatch' style='background:" + c.chartPlan + "'></i>計劃累計</span>"
+      + "<span><i class='overview-color-swatch' style='background:" + c.chartTrialCumulative + "'></i>Trial 累計</span>";
+  }
+
+  function renderGroupBadge(group) {
+    const g = String(group || "").toUpperCase();
+    if (g === "GENAI") {
+      return "<span class='group-badge genai'>" + escapeHtml(group) + "</span>";
+    }
+    if (g === "HUMAN") {
+      return "<span class='group-badge human'>" + escapeHtml(group) + "</span>";
+    }
+    return escapeHtml(group || "");
   }
 
   let recordsWeeklyChartInstance = null;
@@ -1898,8 +2014,6 @@ ADMIN_SCRIPTS = """
           meta.data.forEach(function(bar, index) {
             const value = Number(dataset.data[index]) || 0;
             if (value <= 0) return;
-            const interVal = Number(datasets[0].data[index]) || 0;
-            const ctrlVal = Number(datasets[1].data[index]) || 0;
             const props = bar.getProps(["x", "y", "base"], true);
             const segHeight = Math.abs(props.base - props.y);
             if (segHeight < 16) return;
@@ -1913,34 +2027,12 @@ ADMIN_SCRIPTS = """
         }
 
         drawBarLabels(0, "#ffffff");
-        drawBarLabels(1, "#ffffff");
-
-        const metaInter = chart.getDatasetMeta(0);
-        const metaCtrl = chart.getDatasetMeta(1);
-        if (metaInter && metaCtrl && !metaInter.hidden) {
-          metaInter.data.forEach(function(bar, index) {
-            const interVal = Number(datasets[0].data[index]) || 0;
-            const ctrlVal = Number(datasets[1].data[index]) || 0;
-            const total = interVal + ctrlVal;
-            if (total <= 0) return;
-            const topBar = ctrlVal > 0 ? metaCtrl.data[index] : bar;
-            const props = topBar.getProps(["x", "y"], true);
-            const topY = props.y - 5;
-            ctx.textAlign = "center";
-            ctx.textBaseline = "bottom";
-            ctx.fillStyle = "#334155";
-            ctx.font = "700 11px system-ui, -apple-system, sans-serif";
-            ctx.fillText(String(total), props.x, topY);
-            if (interVal > 0 || ctrlVal > 0) {
-              ctx.fillStyle = "#64748b";
-              ctx.font = "600 10px system-ui, -apple-system, sans-serif";
-              ctx.fillText(interVal + "/" + ctrlVal, props.x, topY - 13);
-            }
-          });
-        }
+        drawBarLabels(1, "#334155");
+        drawBarLabels(2, "#ffffff");
+        drawBarLabels(3, "#ffffff");
 
         const lineIndex = datasets.findIndex(function(ds) {
-          return ds.label && String(ds.label).indexOf("實際") >= 0;
+          return ds.label && String(ds.label).indexOf("Trial") >= 0 && String(ds.label).indexOf("累計") >= 0;
         });
         if (lineIndex >= 0) {
           const lineMeta = chart.getDatasetMeta(lineIndex);
@@ -1953,7 +2045,7 @@ ADMIN_SCRIPTS = """
               if (value <= 0) return;
               if (!(index === 0 || value !== prev || isLast)) return;
               const props = point.getProps(["x", "y"], true);
-              ctx.fillStyle = "#15803d";
+              ctx.fillStyle = UI_COLORS.chartTrialCumulative;
               ctx.textAlign = "center";
               ctx.textBaseline = "bottom";
               ctx.font = "700 10px system-ui, -apple-system, sans-serif";
@@ -1974,7 +2066,7 @@ ADMIN_SCRIPTS = """
             if (value > 0) {
               const point = planMeta.data[lastIdx];
               const props = point.getProps(["x", "y"], true);
-              ctx.fillStyle = "#b45309";
+              ctx.fillStyle = UI_COLORS.chartPlanLabel;
               ctx.textAlign = "center";
               ctx.textBaseline = "bottom";
               ctx.font = "700 10px system-ui, -apple-system, sans-serif";
@@ -2006,9 +2098,9 @@ ADMIN_SCRIPTS = """
         caption.innerHTML = "招募期 <strong>" + escapeHtml(String(start)) + "</strong>"
           + (end ? " – <strong>" + escapeHtml(String(end)) + "</strong>" : "")
           + "（香港時間）"
-          + " · 柱狀＝每週 Trial 入組（<span style='color:#dc2626'>干預</span>/<span style='color:#2563eb'>對照</span>）"
+          + " · 柱狀＝每週入組（<span style='color:" + UI_COLORS.chartTrialIntervention + "'>Trial 干預</span>/<span style='color:" + UI_COLORS.chartTrialControl + "'>Trial 對照</span>/<span style='color:" + UI_COLORS.chartNontrial + "'>Non-trial</span>/<span style='color:" + UI_COLORS.statusVoided + "'>作廢</span>）"
           + " · 虛線＝累計計劃（" + planWeeks + " 週 " + planTotal + " 人）"
-          + " · 實線＝累計實際";
+          + " · 實線＝<span style='color:" + UI_COLORS.chartTrialCumulative + "'>Trial 累計</span>";
       }
     }
     if (typeof Chart === "undefined") {
@@ -2022,6 +2114,8 @@ ADMIN_SCRIPTS = """
     const labels = weeks.map(function(w) { return String(w.week_no); });
     const inter = weeks.map(function(w) { return Number(w.valid_intervention) || 0; });
     const ctrl = weeks.map(function(w) { return Number(w.valid_control) || 0; });
+    const nontrial = weeks.map(function(w) { return Number(w.nontrial_total) || 0; });
+    const voided = weeks.map(function(w) { return Number(w.voided_total) || 0; });
     const actualCumulative = weeks.map(function(w) { return Number(w.valid_cumulative) || 0; });
     const planCumulative = weeks.map(function(w) {
       return w.week_no <= planWeeks ? w.week_no * planPerWeek : null;
@@ -2029,7 +2123,7 @@ ADMIN_SCRIPTS = """
     const actualMax = actualCumulative.reduce(function(m, v) { return Math.max(m, Number(v) || 0); }, 0);
     const planMax = planCumulative.reduce(function(m, v) { return Math.max(m, Number(v) || 0); }, 0);
     const weeklyMax = weeks.reduce(function(m, w) {
-      return Math.max(m, (Number(w.valid_intervention) || 0) + (Number(w.valid_control) || 0));
+      return Math.max(m, Number(w.week_total_all != null ? w.week_total_all : w.valid_total) || 0);
     }, 0);
     recordsWeeklyChartInstance = new Chart(canvas, {
       type: "bar",
@@ -2038,21 +2132,43 @@ ADMIN_SCRIPTS = """
         labels: labels,
         datasets: [
           {
-            label: "干預",
+            label: "Trial 干預",
             data: inter,
-            backgroundColor: "#dc2626",
-            hoverBackgroundColor: "#b91c1c",
-            borderRadius: { topLeft: 0, topRight: 0, bottomLeft: 4, bottomRight: 4 },
+            backgroundColor: UI_COLORS.chartTrialIntervention,
+            hoverBackgroundColor: "#047857",
+            borderRadius: 0,
             borderSkipped: false,
             stack: "recruitment",
             order: 3,
             yAxisID: "y",
           },
           {
-            label: "對照",
+            label: "Trial 對照",
             data: ctrl,
-            backgroundColor: "#2563eb",
-            hoverBackgroundColor: "#1d4ed8",
+            backgroundColor: UI_COLORS.chartTrialControl,
+            hoverBackgroundColor: "#34d399",
+            borderRadius: 0,
+            borderSkipped: false,
+            stack: "recruitment",
+            order: 3,
+            yAxisID: "y",
+          },
+          {
+            label: "Non-trial",
+            data: nontrial,
+            backgroundColor: UI_COLORS.chartNontrial,
+            hoverBackgroundColor: "#64748b",
+            borderRadius: 0,
+            borderSkipped: false,
+            stack: "recruitment",
+            order: 3,
+            yAxisID: "y",
+          },
+          {
+            label: "作廢",
+            data: voided,
+            backgroundColor: UI_COLORS.statusVoided,
+            hoverBackgroundColor: "#9f1239",
             borderRadius: { topLeft: 4, topRight: 4, bottomLeft: 0, bottomRight: 0 },
             borderSkipped: false,
             stack: "recruitment",
@@ -2063,8 +2179,8 @@ ADMIN_SCRIPTS = """
             type: "line",
             label: "計劃",
             data: planCumulative,
-            borderColor: "#d97706",
-            backgroundColor: "#d97706",
+            borderColor: UI_COLORS.chartPlan,
+            backgroundColor: UI_COLORS.chartPlan,
             borderDash: [5, 4],
             borderWidth: 2,
             pointRadius: 0,
@@ -2076,14 +2192,14 @@ ADMIN_SCRIPTS = """
           },
           {
             type: "line",
-            label: "實際",
+            label: "Trial 累計",
             data: actualCumulative,
-            borderColor: "#15803d",
-            backgroundColor: "#15803d",
+            borderColor: UI_COLORS.chartTrialCumulative,
+            backgroundColor: UI_COLORS.chartTrialCumulative,
             borderWidth: 2.5,
             pointRadius: 2,
             pointHoverRadius: 5,
-            pointBackgroundColor: "#15803d",
+            pointBackgroundColor: UI_COLORS.chartTrialCumulative,
             fill: false,
             order: 2,
             yAxisID: "y1",
@@ -2124,10 +2240,12 @@ ADMIN_SCRIPTS = """
               label: function(ctx) {
                 const label = ctx.dataset.label || "";
                 const value = Number(ctx.parsed.y) || 0;
-                if (label === "干預") return "干預組（每週）：" + value;
-                if (label === "對照") return "對照組（每週）：" + value;
+                if (label === "Trial 干預") return "Trial 干預（每週）：" + value;
+                if (label === "Trial 對照") return "Trial 對照（每週）：" + value;
+                if (label === "Non-trial") return "Non-trial（每週）：" + value;
+                if (label === "作廢") return "作廢（每週）：" + value;
                 if (label === "計劃") return "累計計劃：" + value;
-                if (label === "實際") return "累計實際（Trial）：" + value;
+                if (label === "Trial 累計") return "Trial 累計：" + value;
                 return label + "：" + value;
               },
               footer: function(items) {
@@ -2136,13 +2254,21 @@ ADMIN_SCRIPTS = """
                 const w = weeks[idx];
                 const interN = Number(w.valid_intervention) || 0;
                 const ctrlN = Number(w.valid_control) || 0;
-                const totalN = Number(w.valid_total) || 0;
+                const trialN = Number(w.valid_total) || 0;
+                const nontrialN = Number(w.nontrial_total) || 0;
+                const voidedN = Number(w.voided_total) || 0;
+                const weekAll = Number(w.week_total_all != null ? w.week_total_all : (trialN + nontrialN + voidedN)) || 0;
                 const cumN = Number(w.valid_cumulative) || 0;
-                const lines = ["本週合計 " + totalN + " 人（干預 " + interN + " + 對照 " + ctrlN + "）"];
-                if (totalN !== interN + ctrlN) {
-                  lines.push("另有 " + (totalN - interN - ctrlN) + " 人未歸入干預/對照");
+                const lines = [
+                  "本週合計 " + weekAll + " 人（Trial " + trialN + " · Non-trial " + nontrialN + " · 作廢 " + voidedN + "）",
+                ];
+                if (trialN > 0) {
+                  lines.push("Trial 干預/對照 " + interN + "/" + ctrlN);
                 }
-                lines.push("累計實際 " + cumN + " 人");
+                if (trialN !== interN + ctrlN) {
+                  lines.push("另有 " + (trialN - interN - ctrlN) + " 人 Trial 未歸入干預/對照");
+                }
+                lines.push("Trial 累計 " + cumN + " 人");
                 return lines;
               },
             },
@@ -2229,21 +2355,22 @@ ADMIN_SCRIPTS = """
     const trialGroupCap = minNum && minNum > 0 ? minNum : null;
     const trialTotalCap = null;
     const statusText = ov.recruitment_open === false
-      ? "<span style='color:#b45309;font-weight:600;'>已停招</span>"
-      : "<span style='color:#15803d;font-weight:600;'>招募中</span>";
+      ? "<span style='color:" + UI_COLORS.recruitmentClosed + ";font-weight:600;'>已停招</span>"
+      : "<span style='color:" + UI_COLORS.recruitmentOpen + ";font-weight:600;'>招募中</span>";
     const planWeeks = Number(ov.weekly_plan && ov.weekly_plan.weeks) || 20;
     const planPerWeek = Number(ov.weekly_plan && ov.weekly_plan.per_week) || 60;
     const planTotal = Number(ov.weekly_plan && ov.weekly_plan.total_target) || (planWeeks * planPerWeek);
     const planText = "計劃 " + planWeeks + " 週 × " + planPerWeek + " 人/週 = " + planTotal + " 人";
     el.innerHTML =
-      overviewStatRow("Trial", "overview-stat-trial", trialInter, trialCtrl, trialTotal, "valid", trialGroupCap, trialTotalCap)
-      + overviewStatRow("Non-trial", "overview-stat-nontrial", nontrialInter, nontrialCtrl, nontrialTotal, "neutral", null, null)
-      + overviewStatRow("作廢", "overview-stat-voided", voidInter, voidCtrl, voided, "invalid", null, null)
+      overviewStatRow("Trial", "overview-stat-trial", trialInter, trialCtrl, trialTotal, trialGroupCap, trialTotalCap)
+      + overviewStatRow("Non-trial", "overview-stat-nontrial", nontrialInter, nontrialCtrl, nontrialTotal, null, null)
+      + overviewStatRow("作廢", "overview-stat-voided", voidInter, voidCtrl, voided, null, null)
       + "<div class='overview-stat-footer'>"
-      + "隨機總計 " + overviewStatNum(totalAll, "valid", "md")
+      + "隨機總計 " + overviewStatNum(totalAll, "total", "md")
       + " · " + escapeHtml(planText)
       + " · 停招狀態 " + statusText
       + "</div>";
+    renderOverviewColorLegend();
     renderWeeklyChart(ov);
   }
 
@@ -2266,7 +2393,7 @@ ADMIN_SCRIPTS = """
         + "<td><input type='text' class='rec-subject-code-input' value='" + codeVal + "' placeholder='可選' /></td>"
         + "<td><input type='text' class='rec-phone-input' value='" + phoneVal + "' /></td><td>"
         + escapeHtml(row.site_id) + "</td><td>"
-        + escapeHtml(row.recruiter_id || "") + "</td><td>" + escapeHtml(row.allocation_group) + "</td><td>"
+        + escapeHtml(row.recruiter_id || "") + "</td><td>" + renderGroupBadge(row.allocation_group) + "</td><td>"
         + renderStatusSelect(row) + "</td><td>"
         + escapeHtml(formatHkTime(row.randomized_at)) + "</td><td><div class='table-actions'>"
         + "<button type='button' class='secondary' style='margin:0;padding:6px 10px;font-size:12px' onclick='saveRecordSubjectCode(" + enc + ", this)'>保存編碼</button>"

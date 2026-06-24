@@ -703,8 +703,18 @@ def _weekly_plan_per_week(setting: RandomizationSetting) -> int:
     return int(raw)
 
 
+def _empty_week_bucket() -> dict[str, int]:
+    return {
+        "valid_total": 0,
+        "valid_intervention": 0,
+        "valid_control": 0,
+        "nontrial_total": 0,
+        "voided_total": 0,
+    }
+
+
 def _weekly_recruitment_tracking(db: Session, start_date: date, plan_weeks: int) -> list[dict]:
-    records = db.scalars(select(RandomizationRecord).where(_trial_record_filter())).all()
+    records = db.scalars(select(RandomizationRecord)).all()
     buckets: dict[int, dict[str, int]] = {}
     max_data_week = 0
     for record in records:
@@ -714,12 +724,17 @@ def _weekly_recruitment_tracking(db: Session, start_date: date, plan_weeks: int)
         week_no = recruitment_week_no(start_date, event_date)
         if week_no is None:
             continue
-        bucket = buckets.setdefault(week_no, {"valid_total": 0, "valid_intervention": 0, "valid_control": 0})
-        bucket["valid_total"] += 1
-        if record.allocation_group == "GENAI":
-            bucket["valid_intervention"] += 1
-        elif record.allocation_group == "HUMAN":
-            bucket["valid_control"] += 1
+        bucket = buckets.setdefault(week_no, _empty_week_bucket())
+        if record.activation_status == "voided":
+            bucket["voided_total"] += 1
+        elif record.trial_status == TRIAL_STATUS_NONTrial:
+            bucket["nontrial_total"] += 1
+        elif record.trial_status == TRIAL_STATUS_TRIAL:
+            bucket["valid_total"] += 1
+            if record.allocation_group == "GENAI":
+                bucket["valid_intervention"] += 1
+            elif record.allocation_group == "HUMAN":
+                bucket["valid_control"] += 1
         max_data_week = max(max_data_week, week_no)
 
     today_hk = hk_calendar_date(datetime.now(timezone.utc))
@@ -730,14 +745,16 @@ def _weekly_recruitment_tracking(db: Session, start_date: date, plan_weeks: int)
         end_week = max(max_data_week, current_week, plan_weeks)
 
     items: list[dict] = []
-    running_total = 0
+    running_trial_total = 0
     for week_no in range(1, end_week + 1):
-        bucket = buckets.get(week_no, {"valid_total": 0, "valid_intervention": 0, "valid_control": 0})
-        running_total += bucket["valid_total"]
+        bucket = buckets.get(week_no, _empty_week_bucket())
+        running_trial_total += bucket["valid_total"]
         week_start, week_end = recruitment_week_bounds(start_date, week_no)
         inter = bucket["valid_intervention"]
         ctrl = bucket["valid_control"]
-        total = bucket["valid_total"]
+        trial_total = bucket["valid_total"]
+        nontrial_total = bucket["nontrial_total"]
+        voided_total = bucket["voided_total"]
         items.append(
             {
                 "week_no": week_no,
@@ -745,11 +762,14 @@ def _weekly_recruitment_tracking(db: Session, start_date: date, plan_weeks: int)
                 "range_start": week_start.isoformat(),
                 "range_end": week_end.isoformat(),
                 "range_label": recruitment_week_range_label(start_date, week_no),
-                "valid_total": total,
+                "valid_total": trial_total,
                 "valid_intervention": inter,
                 "valid_control": ctrl,
-                "valid_other": max(0, total - inter - ctrl),
-                "valid_cumulative": running_total,
+                "valid_other": max(0, trial_total - inter - ctrl),
+                "nontrial_total": nontrial_total,
+                "voided_total": voided_total,
+                "week_total_all": trial_total + nontrial_total + voided_total,
+                "valid_cumulative": running_trial_total,
             }
         )
     return items
