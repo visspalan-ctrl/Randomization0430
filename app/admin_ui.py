@@ -359,6 +359,17 @@ table.data {
   font-size: 12px;
   margin-top: 10px;
 }
+table.data th.sortable-th {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+table.data th.sortable-th:hover { background: #f1f5f9; }
+.sort-indicator {
+  font-size: 11px;
+  color: var(--accent);
+  margin-left: 2px;
+}
 table.data th {
   text-align: left;
   padding: 10px 8px;
@@ -803,7 +814,6 @@ def panel_settings() -> str:
       <h3>參數</h3>
       <label>每組有效入組下限（干預、對照各不少於此數；達標後停招；留空表示不限制）</label>
       <input id="minPerGroup" type="number" min="1" placeholder="例如 499" />
-      <p class="muted" style="font-size:12px;margin:-4px 0 10px;">無總人數上限；干預與對照均達下限後停止新隨機（例如各 499 人）。</p>
       <label>招募起始日（香港時間，用於入組概覽每週跟踪）</label>
       <input id="recruitmentStartDate" type="date" />
       <label>招募結束日（香港時間，當日仍可隨機；翌日起停止；留空表示不限制）</label>
@@ -811,7 +821,7 @@ def panel_settings() -> str:
       <h4 style="font-size:13px;margin:18px 0 8px;color:#64748b;">入組概覽與每週跟踪</h4>
       <label>計劃跟踪週數</label>
       <input id="weeklyPlanWeeks" type="number" min="1" placeholder="例如 20" />
-      <p class="muted" style="font-size:12px;margin:-4px 0 10px;">填寫招募起止日後將依香港招募周規則自動計算（第1周僅起始日當天）。</p>
+      <p class="muted" style="font-size:12px;margin:10px 0 16px;line-height:1.5;">填寫招募起止日後將依香港招募周規則自動計算（第1周僅起始日當天）。</p>
       <label>每週預計入組人數</label>
       <input id="weeklyPlanPerWeek" type="number" min="1" placeholder="例如 60" />
       <p id="weeklyPlanTargetHint" class="muted" style="font-size:12px;margin-top:4px;">累計計劃目標 = 週數 × 每週人數</p>
@@ -1032,7 +1042,7 @@ def panel_records() -> str:
     return """
     <div class="page-header">
       <h2>隨機化分組記錄</h2>
-      <p class="lead">查詢入組記錄；可編輯受試者編碼、手機號與狀態（Trial / Non-trial / 作廢），修改後分別點「保存編碼」「修改手機號」「保存狀態」。新隨機默認為 Trial。</p>
+      <p class="lead">查詢入組記錄；可編輯受試者編碼、手機號與狀態，修改後點「全部保存」一次提交（或分別點行內按鈕）。新隨機默認為 Trial。</p>
     </div>
     <div class="card">
       <h3>入組概覽</h3>
@@ -1050,11 +1060,12 @@ def panel_records() -> str:
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
         <h3 style="margin:0;">記錄列表</h3>
         <div style="display:flex;gap:8px;">
+          <button type="button" class="secondary" onclick="saveAllRecordChanges()">全部保存</button>
           <button type="button" class="secondary" onclick="loadRecords()">重新整理</button>
           <button type="button" class="secondary" onclick="exportRecordsCsv()">匯出 CSV</button>
         </div>
       </div>
-      <div class="row" style="margin-top:10px;max-width:none;flex-wrap:nowrap;">
+      <div class="row" style="margin-top:10px;max-width:none;flex-wrap:wrap;">
         <div style="flex:1 1 0;min-width:0;">
           <label>站點</label>
           <select id="recordsFilterSite">
@@ -1080,10 +1091,14 @@ def panel_records() -> str:
             <option value="voided">作廢</option>
           </select>
         </div>
+        <div style="flex:1 1 0;min-width:0;">
+          <label>受試者編碼</label>
+          <input id="recordsFilterSubjectCode" type="search" placeholder="搜尋編碼（部分匹配）" autocomplete="off" />
+        </div>
       </div>
       <div class="table-wrap" style="margin-top:12px;">
         <table class="data" id="recordsTable">
-          <thead><tr><th>頁內序號</th><th>入組編號</th><th>受試者編碼</th><th>手機號</th><th>站點</th><th>招募員姓名</th><th>分組</th><th>狀態</th><th>時間（香港時間）</th><th>操作</th></tr></thead>
+          <thead><tr><th>頁內序號</th><th class="sortable-th" id="recordsSortEnrollmentNo" title="點擊按入組編號排序">入組編號<span id="recordsSortEnrollmentNoIcon" class="sort-indicator"></span></th><th class="sortable-th" id="recordsSortSubjectCode" title="點擊按受試者編碼排序">受試者編碼<span id="recordsSortSubjectCodeIcon" class="sort-indicator"></span></th><th>手機號</th><th>站點</th><th>招募員姓名</th><th>分組</th><th>狀態</th><th>時間（香港時間）</th><th>操作</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -2316,8 +2331,8 @@ ADMIN_SCRIPTS = """
     return ts === "nontrial" ? "nontrial" : "trial";
   }
 
-  function renderStatusSelect(row) {
-    const current = recordEffectiveStatus(row);
+  function renderStatusSelect(row, draftStatus) {
+    const current = draftStatus != null ? draftStatus : recordEffectiveStatus(row);
     const options = [
       ["trial", "Trial"],
       ["nontrial", "Non-trial"],
@@ -2340,16 +2355,19 @@ ADMIN_SCRIPTS = """
       el.textContent = "暫無統計數據。";
       return;
     }
-    const trialTotal = Number(ov.trial_enrolled != null ? ov.trial_enrolled : ov.valid_enrolled) || 0;
-    const nontrialTotal = Number(ov.nontrial_enrolled) || 0;
-    const voided = Number(ov.voided_count) || 0;
-    const totalAll = Number(ov.total_enrolled != null ? ov.total_enrolled : ov.total_randomized) || 0;
-    const trialInter = Number(ov.trial_intervention_count != null ? ov.trial_intervention_count : ov.valid_intervention_count) || 0;
-    const trialCtrl = Number(ov.trial_control_count != null ? ov.trial_control_count : ov.valid_control_count) || 0;
-    const nontrialInter = Number(ov.nontrial_intervention_count) || 0;
-    const nontrialCtrl = Number(ov.nontrial_control_count) || 0;
-    const voidInter = Number(ov.voided_intervention_count) || 0;
-    const voidCtrl = Number(ov.voided_control_count) || 0;
+    const trial = ov.trial || {};
+    const nontrial = ov.nontrial || {};
+    const voidedBucket = ov.voided || {};
+    const trialTotal = Number(trial.total) || 0;
+    const nontrialTotal = Number(nontrial.total) || 0;
+    const voided = Number(voidedBucket.total) || 0;
+    const totalAll = Number(ov.total_randomized) || 0;
+    const trialInter = Number(trial.intervention) || 0;
+    const trialCtrl = Number(trial.control) || 0;
+    const nontrialInter = Number(nontrial.intervention) || 0;
+    const nontrialCtrl = Number(nontrial.control) || 0;
+    const voidInter = Number(voidedBucket.intervention) || 0;
+    const voidCtrl = Number(voidedBucket.control) || 0;
     const minPerGroup = ov.min_per_group;
     const minNum = minPerGroup == null || minPerGroup === "" ? null : Number(minPerGroup);
     const trialGroupCap = minNum && minNum > 0 ? minNum : null;
@@ -2374,18 +2392,136 @@ ADMIN_SCRIPTS = """
     renderWeeklyChart(ov);
   }
 
+  function recordsFindItem(enrollmentNo) {
+    const items = window.__recordsItems || [];
+    return items.find(function(r) { return String(r.enrollment_no) === String(enrollmentNo); }) || null;
+  }
+
+  function syncVisibleRecordsDrafts() {
+    const tbody = document.querySelector("#recordsTable tbody");
+    if (!tbody) return;
+    window.__recordsDrafts = window.__recordsDrafts || {};
+    tbody.querySelectorAll("tr").forEach(function(tr) {
+      const enrollmentNo = tr.dataset.enrollmentNo;
+      if (!enrollmentNo) return;
+      const sel = tr.querySelector("select.rec-status-select");
+      const codeInp = tr.querySelector("input.rec-subject-code-input");
+      const phoneInp = tr.querySelector("input.rec-phone-input");
+      const draft = window.__recordsDrafts[enrollmentNo] || {};
+      if (sel) draft.status = sel.value;
+      if (codeInp) draft.subject_code = codeInp.value;
+      if (phoneInp) draft.phone = phoneInp.value;
+      window.__recordsDrafts[enrollmentNo] = draft;
+    });
+  }
+
+  function clearRecordDraft(enrollmentNo, fields) {
+    const draft = (window.__recordsDrafts || {})[enrollmentNo];
+    if (!draft) return;
+    (fields || []).forEach(function(f) { delete draft[f]; });
+    if (!Object.keys(draft).length) delete window.__recordsDrafts[enrollmentNo];
+  }
+
+  function collectAllPendingChanges() {
+    syncVisibleRecordsDrafts();
+    const items = window.__recordsFilteredItems || window.__recordsItems || [];
+    const drafts = window.__recordsDrafts || {};
+    const changes = [];
+    items.forEach(function(row) {
+      const en = String(row.enrollment_no || "");
+      if (!en) return;
+      const draft = drafts[en] || {};
+      const origStatus = recordEffectiveStatus(row);
+      const origCode = String(row.subject_code || "");
+      const origPhone = String(row.phone_number || "");
+      const change = { enrollment_no: en, row: row };
+      let has = false;
+      if (draft.status !== undefined && draft.status !== origStatus) {
+        change.status = draft.status;
+        has = true;
+      }
+      if (draft.subject_code !== undefined && draft.subject_code !== origCode) {
+        change.subject_code = draft.subject_code;
+        has = true;
+      }
+      if (draft.phone !== undefined && draft.phone !== origPhone) {
+        change.phone = draft.phone;
+        has = true;
+      }
+      if (has) changes.push(change);
+    });
+    return changes;
+  }
+
+  function hasPendingRecordDrafts() {
+    return collectAllPendingChanges().length > 0;
+  }
+
+  async function persistRecordStatusChange(enrollmentNo, newStatus, row) {
+    const wasVoided = String(row.activation_status || "") === "voided";
+    const wasTrial = String(row.trial_status || "trial");
+    const currentStatus = wasVoided ? "voided" : wasTrial;
+    if (newStatus === currentStatus) return false;
+    if (newStatus === "voided") {
+      await api("/admin/randomization-records/delete", "POST", {
+        enrollment_no: enrollmentNo,
+        voided_by: "admin",
+        reason: "manual void (list status)"
+      });
+      return true;
+    }
+    if (wasVoided) {
+      await api("/admin/randomization-records/delete", "POST", {
+        enrollment_no: enrollmentNo,
+        voided_by: "admin",
+        reason: "manual restore (list status)"
+      });
+    }
+    if (!wasVoided || newStatus !== wasTrial) {
+      await api("/admin/randomization-records/trial-status", "PATCH", {
+        enrollment_no: enrollmentNo,
+        trial_status: newStatus,
+        changed_by: "admin",
+        reason: "manual trial status (list status)"
+      });
+    }
+    return true;
+  }
+
+  function applyStatusChangeToCachedRow(row, newStatus) {
+    if (!row) return;
+    if (newStatus === "voided") {
+      row.activation_status = "voided";
+    } else {
+      row.activation_status = "pending";
+      row.trial_status = newStatus;
+    }
+  }
+
+  async function refreshRecordsDataPreserveDrafts() {
+    const data = await api("/admin/randomization-records", "GET");
+    if (!data || !data.overview) throw new Error("invalid_records_response");
+    renderRecordsOverview(data.overview);
+    window.__recordsItems = data.items || [];
+    refillRecordsFilterOptions(window.__recordsItems);
+    applyRecordsFilter();
+  }
+
   function renderRecordsRows(items, startIndex) {
     const tbody = document.querySelector("#recordsTable tbody");
     if (!tbody) return;
     tbody.innerHTML = "";
+    const drafts = window.__recordsDrafts || {};
     (items || []).forEach((row, idx) => {
       const tr = document.createElement("tr");
       const enc = JSON.stringify(row.enrollment_no);
-      const codeVal = escapeHtml(row.subject_code || "");
-      const phoneVal = escapeHtml(row.phone_number || "");
+      const draft = drafts[row.enrollment_no] || {};
+      const codeVal = escapeHtml(draft.subject_code !== undefined ? draft.subject_code : (row.subject_code || ""));
+      const phoneVal = escapeHtml(draft.phone !== undefined ? draft.phone : (row.phone_number || ""));
       const status = String(row.activation_status || "pending");
       const isVoided = status === "voided";
       const trialStatus = String(row.trial_status || "trial");
+      tr.dataset.enrollmentNo = row.enrollment_no;
       tr.dataset.voided = isVoided ? "1" : "0";
       tr.dataset.trialStatus = trialStatus;
       tr.innerHTML =
@@ -2394,11 +2530,33 @@ ADMIN_SCRIPTS = """
         + "<td><input type='text' class='rec-phone-input' value='" + phoneVal + "' /></td><td>"
         + escapeHtml(row.site_id) + "</td><td>"
         + escapeHtml(row.recruiter_id || "") + "</td><td>" + renderGroupBadge(row.allocation_group) + "</td><td>"
-        + renderStatusSelect(row) + "</td><td>"
+        + renderStatusSelect(row, draft.status) + "</td><td>"
         + escapeHtml(formatHkTime(row.randomized_at)) + "</td><td><div class='table-actions'>"
         + "<button type='button' class='secondary' style='margin:0;padding:6px 10px;font-size:12px' onclick='saveRecordSubjectCode(" + enc + ", this)'>保存編碼</button>"
         + "<button type='button' class='secondary' style='margin:0;padding:6px 10px;font-size:12px' onclick='saveRecordPhone(" + enc + ", this)'>修改手機號</button>"
         + "<button type='button' class='secondary' style='margin:0;padding:6px 10px;font-size:12px' onclick='saveRecordStatus(" + enc + ", this)'>保存狀態</button></div></td>";
+      const statusSel = tr.querySelector("select.rec-status-select");
+      const codeInp = tr.querySelector("input.rec-subject-code-input");
+      const phoneInp = tr.querySelector("input.rec-phone-input");
+      const en = row.enrollment_no;
+      if (statusSel) statusSel.addEventListener("change", function() {
+        window.__recordsDrafts = window.__recordsDrafts || {};
+        const d = window.__recordsDrafts[en] || {};
+        d.status = statusSel.value;
+        window.__recordsDrafts[en] = d;
+      });
+      if (codeInp) codeInp.addEventListener("input", function() {
+        window.__recordsDrafts = window.__recordsDrafts || {};
+        const d = window.__recordsDrafts[en] || {};
+        d.subject_code = codeInp.value;
+        window.__recordsDrafts[en] = d;
+      });
+      if (phoneInp) phoneInp.addEventListener("input", function() {
+        window.__recordsDrafts = window.__recordsDrafts || {};
+        const d = window.__recordsDrafts[en] || {};
+        d.phone = phoneInp.value;
+        window.__recordsDrafts[en] = d;
+      });
       tbody.appendChild(tr);
     });
   }
@@ -2439,22 +2597,103 @@ ADMIN_SCRIPTS = """
     if (prevGroup && [...groupSel.options].some(o => o.value === prevGroup)) groupSel.value = prevGroup;
   }
 
+  function recordSubjectCodeForFilter(row) {
+    const en = row.enrollment_no;
+    const draft = (window.__recordsDrafts || {})[en];
+    if (draft && draft.subject_code !== undefined) return String(draft.subject_code || "").trim();
+    return String(row.subject_code || "").trim();
+  }
+
+  function compareEnrollmentNoSort(a, b, dir) {
+    const ea = String(a.enrollment_no || "").trim();
+    const eb = String(b.enrollment_no || "").trim();
+    const cmp = ea.localeCompare(eb, "zh-Hant", { numeric: true, sensitivity: "base" });
+    return dir === "desc" ? -cmp : cmp;
+  }
+
+  function compareSubjectCodeSort(a, b, dir) {
+    const ca = recordSubjectCodeForFilter(a);
+    const cb = recordSubjectCodeForFilter(b);
+    const emptyA = !ca;
+    const emptyB = !cb;
+    if (emptyA && emptyB) return 0;
+    if (emptyA) return 1;
+    if (emptyB) return -1;
+    const cmp = ca.localeCompare(cb, "zh-Hant", { numeric: true, sensitivity: "base" });
+    return dir === "desc" ? -cmp : cmp;
+  }
+
+  function updateEnrollmentNoSortHeader() {
+    const icon = document.getElementById("recordsSortEnrollmentNoIcon");
+    const th = document.getElementById("recordsSortEnrollmentNo");
+    if (!icon || !th) return;
+    const sort = window.__recordsEnrollmentNoSort || "none";
+    icon.textContent = sort === "asc" ? "↑" : (sort === "desc" ? "↓" : "");
+    th.setAttribute("aria-sort", sort === "asc" ? "ascending" : (sort === "desc" ? "descending" : "none"));
+  }
+
+  function updateSubjectCodeSortHeader() {
+    const icon = document.getElementById("recordsSortSubjectCodeIcon");
+    const th = document.getElementById("recordsSortSubjectCode");
+    if (!icon || !th) return;
+    const sort = window.__recordsSubjectCodeSort || "none";
+    icon.textContent = sort === "asc" ? "↑" : (sort === "desc" ? "↓" : "");
+    th.setAttribute("aria-sort", sort === "asc" ? "ascending" : (sort === "desc" ? "descending" : "none"));
+  }
+
+  function updateRecordsSortHeaders() {
+    updateEnrollmentNoSortHeader();
+    updateSubjectCodeSortHeader();
+  }
+
+  function toggleEnrollmentNoSort() {
+    const cur = window.__recordsEnrollmentNoSort || "none";
+    window.__recordsEnrollmentNoSort = cur === "none" ? "asc" : (cur === "asc" ? "desc" : "none");
+    window.__recordsSubjectCodeSort = "none";
+    window.__recordsCurrentPage = 1;
+    updateRecordsSortHeaders();
+    applyRecordsFilter();
+  }
+
+  function toggleSubjectCodeSort() {
+    const cur = window.__recordsSubjectCodeSort || "none";
+    window.__recordsSubjectCodeSort = cur === "none" ? "asc" : (cur === "asc" ? "desc" : "none");
+    window.__recordsEnrollmentNoSort = "none";
+    window.__recordsCurrentPage = 1;
+    updateRecordsSortHeaders();
+    applyRecordsFilter();
+  }
+
   function applyRecordsFilter() {
+    syncVisibleRecordsDrafts();
     const all = window.__recordsItems || [];
     const site = (document.getElementById("recordsFilterSite")?.value || "").trim();
     const date = (document.getElementById("recordsFilterDate")?.value || "").trim();
     const group = (document.getElementById("recordsFilterGroup")?.value || "").trim();
     const status = (document.getElementById("recordsFilterStatus")?.value || "").trim();
+    const codeQ = (document.getElementById("recordsFilterSubjectCode")?.value || "").trim().toLowerCase();
     const filtered = all.filter(row => {
       if (site && String(row.site_id || "") !== site) return false;
       if (group && String(row.allocation_group || "") !== group) return false;
       if (status && recordEffectiveStatus(row) !== status) return false;
+      if (codeQ) {
+        const code = recordSubjectCodeForFilter(row).toLowerCase();
+        if (!code.includes(codeQ)) return false;
+      }
       if (date) {
         const d = hkDateFromIso(row.randomized_at);
         if (d !== date) return false;
       }
       return true;
     });
+    const enrollmentSortDir = window.__recordsEnrollmentNoSort || "none";
+    const subjectCodeSortDir = window.__recordsSubjectCodeSort || "none";
+    if (enrollmentSortDir === "asc" || enrollmentSortDir === "desc") {
+      filtered.sort(function(a, b) { return compareEnrollmentNoSort(a, b, enrollmentSortDir); });
+    } else if (subjectCodeSortDir === "asc" || subjectCodeSortDir === "desc") {
+      filtered.sort(function(a, b) { return compareSubjectCodeSort(a, b, subjectCodeSortDir); });
+    }
+    updateRecordsSortHeaders();
     window.__recordsFilteredItems = filtered;
     const pageSize = Number(document.getElementById("recordsPageSize")?.value || 20);
     const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
@@ -2467,21 +2706,28 @@ ADMIN_SCRIPTS = """
   }
 
   function resetRecordsFilter() {
-    const ids = ["recordsFilterSite", "recordsFilterDate", "recordsFilterGroup", "recordsFilterStatus"];
+    const ids = ["recordsFilterSite", "recordsFilterDate", "recordsFilterGroup", "recordsFilterStatus", "recordsFilterSubjectCode"];
     ids.forEach(id => {
       const el = document.getElementById(id);
       if (!el) return;
       el.value = "";
     });
+    window.__recordsSubjectCodeSort = "none";
+    window.__recordsEnrollmentNoSort = "none";
     window.__recordsCurrentPage = 1;
+    updateRecordsSortHeaders();
     applyRecordsFilter();
   }
 
-  async function loadRecords() {
+  async function loadRecords(force) {
     const tbody = document.querySelector("#recordsTable tbody");
     const overviewEl = document.getElementById("recordsOverview");
     if (!tbody) return;
+    if (!force && hasPendingRecordDrafts()) {
+      if (!confirm("有未保存的修改，重新整理將丟棄。繼續？")) return;
+    }
     try {
+      window.__recordsDrafts = {};
       const data = await api("/admin/randomization-records", "GET");
       if (!data || !data.overview) throw new Error("invalid_records_response");
       renderRecordsOverview(data.overview);
@@ -2510,7 +2756,8 @@ ADMIN_SCRIPTS = """
       changed_by: "admin",
       reason: "manual subject code (list)"
     });
-    await loadRecords();
+    clearRecordDraft(enrollmentNo, ["subject_code"]);
+    await refreshRecordsDataPreserveDrafts();
   }
 
   async function saveRecordPhone(enrollmentNo, btn) {
@@ -2525,7 +2772,8 @@ ADMIN_SCRIPTS = """
       changed_by: "admin",
       reason: "manual correction (list)"
     });
-    await loadRecords();
+    clearRecordDraft(enrollmentNo, ["phone"]);
+    await refreshRecordsDataPreserveDrafts();
   }
 
   async function saveRecordStatus(enrollmentNo, btn) {
@@ -2533,8 +2781,10 @@ ADMIN_SCRIPTS = """
     const sel = tr ? tr.querySelector("select.rec-status-select") : null;
     if (!sel) { resultBox.textContent = "[ERROR] 未找到該行狀態選擇框"; return; }
     const newStatus = sel.value;
-    const wasVoided = tr.dataset.voided === "1";
-    const wasTrial = tr.dataset.trialStatus || "trial";
+    const row = recordsFindItem(enrollmentNo);
+    if (!row) { resultBox.textContent = "[ERROR] 未找到該條記錄"; return; }
+    const wasVoided = String(row.activation_status || "") === "voided";
+    const wasTrial = String(row.trial_status || "trial");
     const currentStatus = wasVoided ? "voided" : wasTrial;
     if (newStatus === currentStatus) {
       resultBox.textContent = "[OK] 狀態未變更";
@@ -2546,33 +2796,69 @@ ADMIN_SCRIPTS = """
     if (newStatus === "nontrial") tip += "（不計 Trial 有效入組，手機號仍不可重複隨機）";
     if (newStatus === "voided") tip += "（作廢會保留歷史記錄並釋放手機號）";
     if (!confirm(tip)) return;
+    await persistRecordStatusChange(enrollmentNo, newStatus, row);
+    clearRecordDraft(enrollmentNo, ["status"]);
+    await refreshRecordsDataPreserveDrafts();
+    resultBox.textContent = "[OK] 狀態已保存";
+  }
 
-    if (newStatus === "voided") {
-      await api("/admin/randomization-records/delete", "POST", {
-        enrollment_no: enrollmentNo,
-        voided_by: "admin",
-        reason: "manual void (list status)"
-      });
-      await loadRecords();
+  async function saveAllRecordChanges() {
+    const pending = collectAllPendingChanges();
+    if (!pending.length) {
+      resultBox.textContent = "[OK] 沒有待保存的修改";
       return;
     }
-
-    if (wasVoided) {
-      await api("/admin/randomization-records/delete", "POST", {
-        enrollment_no: enrollmentNo,
-        voided_by: "admin",
-        reason: "manual restore (list status)"
-      });
+    const statusN = pending.filter(function(c) { return c.status !== undefined; }).length;
+    const codeN = pending.filter(function(c) { return c.subject_code !== undefined; }).length;
+    const phoneN = pending.filter(function(c) { return c.phone !== undefined; }).length;
+    let summary = "確認保存當前篩選結果中的 " + pending.length + " 條變更？";
+    const parts = [];
+    if (statusN) parts.push("狀態 " + statusN + " 條");
+    if (codeN) parts.push("編碼 " + codeN + " 條");
+    if (phoneN) parts.push("手機號 " + phoneN + " 條");
+    if (parts.length) summary += "（" + parts.join("、") + "）";
+    if (!confirm(summary)) return;
+    try {
+      let saved = 0;
+      for (let i = 0; i < pending.length; i++) {
+        const change = pending[i];
+        const en = change.enrollment_no;
+        let row = recordsFindItem(en);
+        if (!row) continue;
+        if (change.status !== undefined) {
+          await persistRecordStatusChange(en, change.status, row);
+          applyStatusChangeToCachedRow(row, change.status);
+        }
+        if (change.subject_code !== undefined) {
+          await api("/admin/randomization-records/subject-code", "PATCH", {
+            enrollment_no: en,
+            subject_code: change.subject_code.trim(),
+            changed_by: "admin",
+            reason: "batch save subject code (list)"
+          });
+        }
+        if (change.phone !== undefined) {
+          const phone = change.phone.trim();
+          if (!phone) throw new Error("入組編號 " + en + " 的手機號不能為空");
+          await api("/admin/randomization-records/phone", "PATCH", {
+            enrollment_no: en,
+            new_phone_number: phone,
+            changed_by: "admin",
+            reason: "batch save phone (list)"
+          });
+        }
+        clearRecordDraft(en, ["status", "subject_code", "phone"]);
+        saved += 1;
+        if (resultBox) resultBox.textContent = "[...] 正在保存 " + (i + 1) + "/" + pending.length;
+      }
+      window.__recordsDrafts = {};
+      await refreshRecordsDataPreserveDrafts();
+      resultBox.textContent = "[OK] 已全部保存 " + saved + " 條變更";
+    } catch (err) {
+      const msg = err && err.message ? String(err.message) : String(err);
+      resultBox.textContent = "[ERROR] 全部保存失敗\\n" + msg;
+      await refreshRecordsDataPreserveDrafts();
     }
-    if (!wasVoided || newStatus !== wasTrial) {
-      await api("/admin/randomization-records/trial-status", "PATCH", {
-        enrollment_no: enrollmentNo,
-        trial_status: newStatus,
-        changed_by: "admin",
-        reason: "manual trial status (list status)"
-      });
-    }
-    await loadRecords();
   }
 
   async function loadAudits() {
@@ -2592,10 +2878,17 @@ ADMIN_SCRIPTS = """
     const dateInp = document.getElementById("recordsFilterDate");
     const groupSel = document.getElementById("recordsFilterGroup");
     const statusSel = document.getElementById("recordsFilterStatus");
+    const subjectCodeInp = document.getElementById("recordsFilterSubjectCode");
+    const sortSubjectTh = document.getElementById("recordsSortSubjectCode");
+    const sortEnrollmentTh = document.getElementById("recordsSortEnrollmentNo");
     const pageSizeSel = document.getElementById("recordsPageSize");
     const prevBtn = document.getElementById("recordsPrevBtn");
     const nextBtn = document.getElementById("recordsNextBtn");
     window.__recordsCurrentPage = 1;
+    window.__recordsDrafts = {};
+    window.__recordsSubjectCodeSort = "none";
+    window.__recordsEnrollmentNoSort = "none";
+    updateRecordsSortHeaders();
     [siteSel, dateInp, groupSel, statusSel].forEach(el => {
       if (!el) return;
       el.addEventListener("change", function() {
@@ -2603,6 +2896,12 @@ ADMIN_SCRIPTS = """
         applyRecordsFilter();
       });
     });
+    if (subjectCodeInp) subjectCodeInp.addEventListener("input", function() {
+      window.__recordsCurrentPage = 1;
+      applyRecordsFilter();
+    });
+    if (sortSubjectTh) sortSubjectTh.addEventListener("click", toggleSubjectCodeSort);
+    if (sortEnrollmentTh) sortEnrollmentTh.addEventListener("click", toggleEnrollmentNoSort);
     if (pageSizeSel) pageSizeSel.addEventListener("change", function() {
       window.__recordsCurrentPage = 1;
       applyRecordsFilter();

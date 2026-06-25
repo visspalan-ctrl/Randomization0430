@@ -121,8 +121,11 @@ def test_phone_and_password_allows_randomization():
     assert randomized.json()["enrollment_no"].startswith("R")
     listing = admin_get(client, "/admin/randomization-records").json()
     ov = listing["overview"]
-    assert ov["total_enrolled"] >= 1
-    assert ov["intervention_count"] + ov["control_count"] + ov["other_group_count"] == ov["total_enrolled"]
+    assert ov["total_randomized"] >= 1
+    assert (
+        ov["trial"]["total"] + ov["nontrial"]["total"] + ov["voided"]["total"]
+        == ov["total_randomized"]
+    )
 
 
 def test_participant_active_sites_public_no_admin_session():
@@ -809,11 +812,11 @@ def test_records_overview_uses_valid_group_counts():
     )
     assert created.status_code == 200
     overview = admin_get(client, "/admin/randomization-records").json()["overview"]
-    assert overview["valid_enrolled"] == 1
-    assert overview["voided_count"] == 0
-    assert overview["voided_intervention_count"] == 0
-    assert overview["voided_control_count"] == 0
-    assert overview["valid_intervention_count"] + overview["valid_control_count"] == 1
+    assert overview["trial"]["total"] == 1
+    assert overview["voided"]["total"] == 0
+    assert overview["voided"]["intervention"] == 0
+    assert overview["voided"]["control"] == 0
+    assert overview["trial"]["intervention"] + overview["trial"]["control"] == 1
     assert overview["recruitment_open"] is True
     assert overview["min_per_group"] == 499
 
@@ -848,9 +851,9 @@ def test_admin_can_void_randomization_record():
     assert target["activation_status"] == "voided"
     assert target["phone_number"] == "+85263333333"
     overview = admin_get(client, "/admin/randomization-records").json()["overview"]
-    assert overview["valid_enrolled"] == 0
-    assert overview["voided_count"] == 1
-    assert overview["voided_intervention_count"] + overview["voided_control_count"] == 1
+    assert overview["trial"]["total"] == 0
+    assert overview["voided"]["total"] == 1
+    assert overview["voided"]["intervention"] + overview["voided"]["control"] == 1
 
 
 def test_admin_can_restore_voided_record():
@@ -1047,8 +1050,8 @@ def test_nontrial_does_not_count_toward_min_per_group():
     )
     assert marked.status_code == 200
     overview = admin_get(client, "/admin/randomization-records").json()["overview"]
-    assert overview["trial_enrolled"] == 0
-    assert overview["nontrial_enrolled"] == 1
+    assert overview["trial"]["total"] == 0
+    assert overview["nontrial"]["total"] == 1
     assert overview["recruitment_open"] is True
     second = _trigger_randomization(client, "+85261111003")
     assert second["enrollment_no"] != first["enrollment_no"]

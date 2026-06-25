@@ -775,6 +775,15 @@ def _weekly_recruitment_tracking(db: Session, start_date: date, plan_weeks: int)
     return items
 
 
+def _overview_status_bucket(total: int, intervention: int, control: int) -> dict[str, int]:
+    return {
+        "total": total,
+        "intervention": intervention,
+        "control": control,
+        "other": max(0, total - intervention - control),
+    }
+
+
 def _recruitment_overview(setting: RandomizationSetting, db: Session) -> dict:
     trial_total, trial_genai, trial_human = _trial_enrollment_counts(db)
     nontrial_total, nontrial_genai, nontrial_human = _nontrial_enrollment_counts(db)
@@ -786,23 +795,10 @@ def _recruitment_overview(setting: RandomizationSetting, db: Session) -> dict:
     plan_weeks = _weekly_plan_weeks(setting)
     plan_per_week = _weekly_plan_per_week(setting)
     return {
-        "total_enrolled": total,
         "total_randomized": total,
-        "trial_enrolled": trial_total,
-        "nontrial_enrolled": nontrial_total,
-        "valid_enrolled": trial_total,
-        "voided_count": voided_total,
-        "voided_intervention_count": voided_genai,
-        "voided_control_count": voided_human,
-        "trial_intervention_count": trial_genai,
-        "trial_control_count": trial_human,
-        "nontrial_intervention_count": nontrial_genai,
-        "nontrial_control_count": nontrial_human,
-        "valid_intervention_count": trial_genai,
-        "valid_control_count": trial_human,
-        "intervention_count": trial_genai,
-        "control_count": trial_human,
-        "other_group_count": max(0, trial_total - trial_genai - trial_human),
+        "trial": _overview_status_bucket(trial_total, trial_genai, trial_human),
+        "nontrial": _overview_status_bucket(nontrial_total, nontrial_genai, nontrial_human),
+        "voided": _overview_status_bucket(voided_total, voided_genai, voided_human),
         "max_enrollment": setting.max_enrollment,
         "min_per_group": getattr(setting, "min_per_group", None),
         "recruitment_open": not closed,

@@ -56,7 +56,7 @@ needs_terminal_mode() {
 start_background() {
   echo "後台啟動 http://${HOST}:${PORT} ..."
   : >"$LOG"
-  nohup "$VENV/bin/uvicorn" app.main:app --host "$HOST" --port "$PORT" >>"$LOG" 2>&1 &
+  nohup "$VENV/bin/uvicorn" app.main:app --host "$HOST" --port "$PORT" --reload >>"$LOG" 2>&1 &
   local pid=$!
   echo "$pid" >"$PIDFILE"
   local i
@@ -114,7 +114,7 @@ fi
 if [ "$CMD" = "run" ]; then
   echo "前台執行（關閉此終端機視窗即停止服務）..."
   echo "存取: http://127.0.0.1:${PORT}/"
-  exec "$VENV/bin/uvicorn" app.main:app --host "$HOST" --port "$PORT"
+  exec "$VENV/bin/uvicorn" app.main:app --host "$HOST" --port "$PORT" --reload
 fi
 
 if [ "$CMD" = "terminal" ]; then
