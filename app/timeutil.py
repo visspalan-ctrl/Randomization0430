@@ -15,6 +15,13 @@ def _aware_utc(dt: datetime) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+def utc_iso(dt: datetime | None) -> str | None:
+    """Serialize naive or aware datetimes as explicit UTC ISO-8601 for API clients."""
+    if dt is None:
+        return None
+    return _aware_utc(dt).isoformat()
+
+
 def hk_calendar_date(dt: datetime) -> datetime.date:
     return _aware_utc(dt).astimezone(HK).date()
 

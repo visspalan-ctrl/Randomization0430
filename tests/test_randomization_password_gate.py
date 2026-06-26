@@ -1,11 +1,11 @@
 import base64
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.models import PRESET_SITE_COUNT, RECRUITMENT_BATCH_MAX_ACTIVE_SITES
+from app.models import RECRUITMENT_BATCH_MAX_ACTIVE_SITES
 
 
 def _admin_headers() -> dict[str, str]:
@@ -909,7 +909,6 @@ def test_list_sites_and_recruitment_overview():
     assert overview.status_code == 200
     body = overview.json()
     assert body["max_parallel_sites_recommended"] == RECRUITMENT_BATCH_MAX_ACTIVE_SITES
-    assert body["preset_site_capacity"] == PRESET_SITE_COUNT
     assert "registered_site_count" in body
 
 
@@ -1000,6 +999,82 @@ def test_site_overview_includes_hk_password_window_defaults():
     assert start_hk.date() == end_hk.date()
     assert start_hk.hour == 0 and start_hk.minute == 0
     assert end_hk.hour == 23 and end_hk.minute == 59
+
+
+def test_site_table_window_iso_round_trips_hk_calendar_day():
+    client = TestClient(app)
+    open_batch(client, ["SITE_01"])
+    hk = ZoneInfo("Asia/Hong_Kong")
+    start_hk = datetime(2026, 6, 28, 0, 0, 0, tzinfo=hk)
+    end_hk = datetime(2026, 6, 28, 23, 59, 59, tzinfo=hk)
+    ws = start_hk.astimezone(timezone.utc).isoformat()
+    we = end_hk.astimezone(timezone.utc).isoformat()
+    saved = admin_post(
+        client,
+        "/admin/site-passwords",
+        json={
+            "site_id": "SITE_01",
+            "window_start": ws,
+            "window_end": we,
+            "raw_password": "654321",
+            "changed_by": "admin",
+        },
+    )
+    assert saved.status_code == 200, saved.text
+
+    table = admin_get(client, "/admin/sites/table").json()
+    row = next(item for item in table["items"] if item["site_id"] == "SITE_01")
+    for key in ("window_start", "window_end"):
+        val = row[key]
+        assert val is not None
+        assert val.endswith("+00:00") or val.endswith("Z"), val
+
+    start_read = datetime.fromisoformat(row["window_start"].replace("Z", "+00:00")).astimezone(hk)
+    end_read = datetime.fromisoformat(row["window_end"].replace("Z", "+00:00")).astimezone(hk)
+    assert start_read.year == 2026 and start_read.month == 6 and start_read.day == 28
+    assert start_read.hour == 0 and start_read.minute == 0
+    assert end_read.year == 2026 and end_read.month == 6 and end_read.day == 28
+    assert end_read.hour == 23 and end_read.minute == 59
+
+
+def _assert_utc_iso(value: str | None) -> None:
+    assert value is not None
+    assert value.endswith("+00:00") or value.endswith("Z"), value
+
+
+def test_api_datetime_fields_include_utc_timezone():
+    client = TestClient(app)
+    open_batch(client, ["SITE_01"])
+    set_site_password(client, "SITE_01")
+    created = client.post(
+        "/randomization/trigger",
+        json={
+            "phone_number": "+85261118877",
+            "recruiter_id": "r1",
+            "site_id": "SITE_01",
+            "recruiter_password": "123456",
+        },
+    )
+    assert created.status_code == 200, created.text
+    _assert_utc_iso(created.json()["randomized_at"])
+
+    records = admin_get(client, "/admin/randomization-records").json()
+    assert records["items"]
+    _assert_utc_iso(records["items"][0]["randomized_at"])
+
+    settings = admin_get(client, "/admin/randomization-settings").json()
+    _assert_utc_iso(settings["updated_at"])
+
+    qr = admin_get(client, "/admin/qr-configs").json()
+    assert qr["items"]
+    _assert_utc_iso(qr["items"][0]["changed_at"])
+
+    audit = admin_get(client, "/admin/audit-logs").json()
+    assert audit["items"]
+    _assert_utc_iso(audit["items"][0]["created_at"])
+
+    batch = admin_get(client, "/admin/recruitment-batches/current").json()
+    _assert_utc_iso(batch["batch"]["created_at"])
 
 
 def _trigger_randomization(client: TestClient, phone: str) -> dict:
@@ -1266,3 +1341,74 @@ def test_voided_record_does_not_advance_trial_sequence_slot():
 
     third = _trigger_randomization(client, "+85270000013")
     assert third["allocation_group"] == expected[1]
+
+
+def test_site_password_window_can_update_without_new_password():
+    client = TestClient(app)
+    open_batch(client, ["SITE_01"])
+    set_site_password(client, "SITE_01", "123456")
+
+    hk = ZoneInfo("Asia/Hong_Kong")
+    now_hk = datetime.now(hk)
+    start_hk = now_hk.replace(hour=8, minute=0, second=0, microsecond=0)
+    end_hk = now_hk.replace(hour=20, minute=0, second=0, microsecond=0)
+    at_hk = start_hk + timedelta(hours=1)
+    ws = start_hk.astimezone(timezone.utc).isoformat()
+    we = end_hk.astimezone(timezone.utc).isoformat()
+    at = at_hk.astimezone(timezone.utc).isoformat()
+
+    updated = admin_post(
+        client,
+        "/admin/site-passwords",
+        json={
+            "site_id": "SITE_01",
+            "window_start": ws,
+            "window_end": we,
+            "changed_by": "admin",
+            "reason": "window only",
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    body = updated.json()
+    assert body.get("updated") is True
+
+    table = admin_get(client, "/admin/sites/table").json()
+    row = next(item for item in table["items"] if item["site_id"] == "SITE_01")
+    assert row["window_start"] is not None
+    assert row["window_end"] is not None
+    assert row["password_plain"] == "123456"
+
+    randomized = client.post(
+        "/randomization/trigger",
+        json={
+            "phone_number": "+85261119901",
+            "recruiter_id": "r1",
+            "site_id": "SITE_01",
+            "recruiter_password": "123456",
+            "at": at,
+        },
+    )
+    assert randomized.status_code == 200
+
+
+def test_site_password_required_when_no_existing_config():
+    client = TestClient(app)
+    ws, we = hk_full_day_window_iso()
+    created = admin_post(
+        client,
+        "/admin/sites",
+        json={"site_id": "SITE_NEW", "site_name": "新站點"},
+    )
+    assert created.status_code == 200
+    rejected = admin_post(
+        client,
+        "/admin/site-passwords",
+        json={
+            "site_id": "SITE_NEW",
+            "window_start": ws,
+            "window_end": we,
+            "changed_by": "admin",
+        },
+    )
+    assert rejected.status_code == 400
+    assert rejected.json()["detail"] == "password_required_for_new_site"

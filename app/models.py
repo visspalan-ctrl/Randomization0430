@@ -8,8 +8,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db import Base
 
 
-# 最多可登記的站點數（含管理員後續新增）
-PRESET_SITE_COUNT = 50
 # 首次種子 / reset 時自動建立的站點數量；0 表示不預建，由管理員自行登記
 PRESET_SITE_INITIAL_COUNT = 0
 

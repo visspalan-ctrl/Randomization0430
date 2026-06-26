@@ -23,7 +23,6 @@ from sqlalchemy.orm import Session
 
 from app.db import Base, SessionLocal, engine
 from app.models import (
-    PRESET_SITE_COUNT,
     RECRUITMENT_BATCH_MAX_ACTIVE_SITES,
     AuditLog,
     EnrollmentCounter,
@@ -62,6 +61,7 @@ from app.timeutil import (
     recruitment_week_range_label,
     recruitment_plan_end_date,
     recruitment_plan_weeks_from_end_date,
+    utc_iso,
 )
 
 try:
@@ -409,7 +409,7 @@ class DailyPasswordConfigRequest(BaseModel):
     site_id: str
     window_start: datetime
     window_end: datetime
-    raw_password: str = Field(min_length=6, pattern=r"^\d{6,}$")
+    raw_password: str | None = None
     changed_by: str
     reason: str = "password window"
 
@@ -479,7 +479,7 @@ def _serialize_qr_config(cfg: QRConfig, request: Request | None = None) -> dict:
         "version": cfg.version,
         "changed_by": cfg.changed_by,
         "reason": cfg.reason,
-        "changed_at": cfg.changed_at.isoformat() if cfg.changed_at else None,
+        "changed_at": utc_iso(cfg.changed_at),
     }
     if mode == "dynamic":
         item["stable_qr_url"] = _stable_qr_url(cfg.group_type, request)
@@ -1183,10 +1183,7 @@ def admin_page(page: PageId = Query("settings")):
 @app.post("/admin/sites")
 def upsert_site(payload: SiteUpsertRequest, db: Session = Depends(get_db)):
     site = db.get(Site, payload.site_id)
-    cnt = db.query(Site).count()
     if site is None:
-        if cnt >= PRESET_SITE_COUNT:
-            raise HTTPException(status_code=409, detail="max_preset_sites_reached")
         site = Site(site_id=payload.site_id, site_name=payload.site_name)
         db.add(site)
     else:
@@ -1271,10 +1268,9 @@ def site_recruitment_overview(at: datetime | None = None, db: Session = Depends(
     start_hk, end_hk = hk_today_password_window()
     return {
         "max_parallel_sites_recommended": max_parallel,
-        "preset_site_capacity": PRESET_SITE_COUNT,
-        "reference_time_utc": ref.isoformat(),
-        "default_password_window_start": start_hk.astimezone(timezone.utc).isoformat(),
-        "default_password_window_end": end_hk.astimezone(timezone.utc).isoformat(),
+        "reference_time_utc": utc_iso(ref),
+        "default_password_window_start": utc_iso(start_hk.astimezone(timezone.utc)),
+        "default_password_window_end": utc_iso(end_hk.astimezone(timezone.utc)),
         "registered_site_count": len(sites),
         "sites_with_active_password_at_ref": len(pwd_site_ids),
         "sites_with_active_password_ids": pwd_site_ids,
@@ -1295,30 +1291,24 @@ def sites_admin_table(db: Session = Depends(get_db)):
         )
     items = []
     for s in sites:
-        pwd = db.scalar(
-            select(SiteDailyPassword)
-            .where(SiteDailyPassword.site_id == s.site_id)
-            .order_by(SiteDailyPassword.id.desc())
-            .limit(1)
-        )
+        pwd = _latest_site_password(db, s.site_id)
         items.append(
             {
                 "site_id": s.site_id,
                 "site_name": s.site_name,
                 "password_plain": pwd.password_plain if pwd else None,
-                "window_start": pwd.window_start.isoformat() if pwd else None,
-                "window_end": pwd.window_end.isoformat() if pwd else None,
+                "window_start": utc_iso(pwd.window_start) if pwd else None,
+                "window_end": utc_iso(pwd.window_end) if pwd else None,
                 "in_open_recruitment_batch": s.site_id in batch_site_ids,
             }
         )
     return {
-        "preset_site_capacity": PRESET_SITE_COUNT,
         "current_open_batch": (
             {
                 "id": batch.id,
                 "label": batch.label,
                 "created_by": batch.created_by,
-                "created_at": batch.created_at.isoformat() if batch.created_at else None,
+                "created_at": utc_iso(batch.created_at),
                 "site_ids": sorted(batch_site_ids),
             }
             if batch
@@ -1375,10 +1365,19 @@ def recruitment_batch_current(db: Session = Depends(get_db)):
             "id": batch.id,
             "label": batch.label,
             "created_by": batch.created_by,
-            "created_at": batch.created_at.isoformat() if batch.created_at else None,
+            "created_at": utc_iso(batch.created_at),
             "site_ids": sorted(site_ids),
         }
     }
+
+
+def _latest_site_password(db: Session, site_id: str) -> SiteDailyPassword | None:
+    return db.scalar(
+        select(SiteDailyPassword)
+        .where(SiteDailyPassword.site_id == site_id)
+        .order_by(SiteDailyPassword.id.desc())
+        .limit(1)
+    )
 
 
 @app.post("/admin/site-passwords")
@@ -1393,6 +1392,32 @@ def configure_site_daily_password(payload: DailyPasswordConfigRequest, db: Sessi
         raise HTTPException(status_code=400, detail="password_window_must_be_same_hk_calendar_day") from exc
     if db.get(Site, payload.site_id) is None:
         raise HTTPException(status_code=404, detail="site_not_found")
+
+    pwd_raw = (payload.raw_password or "").strip() or None
+    if pwd_raw is not None and (len(pwd_raw) < 6 or not pwd_raw.isdigit()):
+        raise HTTPException(status_code=400, detail="invalid_password_format")
+
+    latest = _latest_site_password(db, payload.site_id)
+    if pwd_raw is None:
+        if latest is None:
+            raise HTTPException(status_code=400, detail="password_required_for_new_site")
+        latest.window_start = ws
+        latest.window_end = we
+        latest.changed_by = payload.changed_by
+        latest.reason = payload.reason or latest.reason
+        db.commit()
+        add_audit(
+            db,
+            "site_daily_password_window_updated",
+            {
+                "site_id": payload.site_id,
+                "password_config_id": latest.id,
+                "window_start": utc_iso(ws),
+                "window_end": utc_iso(we),
+            },
+        )
+        return {"ok": True, "updated": True, "password_config_id": latest.id, "version": latest.version}
+
     existing = db.scalars(
         select(SiteDailyPassword).where(
             SiteDailyPassword.site_id == payload.site_id,
@@ -1405,8 +1430,8 @@ def configure_site_daily_password(payload: DailyPasswordConfigRequest, db: Sessi
             site_id=payload.site_id,
             window_start=ws,
             window_end=we,
-            password_hash=hash_password(payload.raw_password),
-            password_plain=payload.raw_password,
+            password_hash=hash_password(pwd_raw),
+            password_plain=pwd_raw,
             changed_by=payload.changed_by,
             reason=payload.reason,
             version=version,
@@ -1417,9 +1442,9 @@ def configure_site_daily_password(payload: DailyPasswordConfigRequest, db: Sessi
     add_audit(
         db,
         "site_daily_password_configured",
-        {"site_id": payload.site_id, "window_start": ws.isoformat(), "window_end": we.isoformat()},
+        {"site_id": payload.site_id, "window_start": utc_iso(ws), "window_end": utc_iso(we)},
     )
-    return {"ok": True, "version": version}
+    return {"ok": True, "updated": False, "version": version}
 
 
 @app.post("/randomization/trigger")
@@ -1481,7 +1506,7 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
             "site_name": existing.site_name,
             "allocation_group": existing.allocation_group,
             **_participant_qr_fields(qr, existing.allocation_group),
-            "randomized_at": existing.randomized_at.isoformat(),
+            "randomized_at": utc_iso(existing.randomized_at),
             "idempotent": True,
         }
 
@@ -1523,7 +1548,7 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
         "site_name": record.site_name,
         "allocation_group": group,
         **_participant_qr_fields(qr, group),
-        "randomized_at": record.randomized_at.isoformat(),
+        "randomized_at": utc_iso(record.randomized_at),
         "idempotent": False,
     }
 
@@ -1701,7 +1726,7 @@ def get_audit_logs(db: Session = Depends(get_db)):
                 "event_type": item.event_type,
                 "payload_json": item.payload_json,
                 "request_id": item.request_id,
-                "created_at": item.created_at.isoformat() if item.created_at else None,
+                "created_at": utc_iso(item.created_at),
             }
             for item in items
         ]
@@ -1715,8 +1740,8 @@ def get_password_configs(db: Session = Depends(get_db)):
         "items": [
             {
                 "site_id": c.site_id,
-                "window_start": c.window_start.isoformat() if c.window_start else None,
-                "window_end": c.window_end.isoformat() if c.window_end else None,
+                "window_start": utc_iso(c.window_start),
+                "window_end": utc_iso(c.window_end),
                 "active": c.active,
                 "version": c.version,
                 "changed_by": c.changed_by,
@@ -1746,7 +1771,7 @@ def get_randomization_records(db: Session = Depends(get_db)):
                 "site_id": r.site_id,
                 "site_name": r.site_name,
                 "allocation_group": r.allocation_group,
-                "randomized_at": r.randomized_at.isoformat() if r.randomized_at else None,
+                "randomized_at": utc_iso(r.randomized_at),
                 "activation_status": r.activation_status,
                 "trial_status": getattr(r, "trial_status", TRIAL_STATUS_TRIAL) or TRIAL_STATUS_TRIAL,
                 "subject_code": r.subject_code,
@@ -1817,7 +1842,7 @@ def get_randomization_settings(db: Session = Depends(get_db)):
         "block_sizes": list(parse_block_sizes(setting.block_sizes_csv)),
         "h5_show_allocation_group": bool(getattr(setting, "h5_show_allocation_group", True)),
         "updated_by": setting.updated_by,
-        "updated_at": setting.updated_at.isoformat() if setting.updated_at else None,
+        "updated_at": utc_iso(setting.updated_at),
     }
     return out
 

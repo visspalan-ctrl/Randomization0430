@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Literal
 
 from app.models import (
-    PRESET_SITE_COUNT,
     PRESET_SITE_INITIAL_COUNT,
     RECRUITMENT_BATCH_MAX_ACTIVE_SITES,
 )
@@ -783,7 +782,7 @@ def render_sidebar(active: PageId) -> str:
     <aside class="sidebar">
       <div class="sidebar-brand">
         <h1>隨機化管理台</h1>
-        <p>最多 {PRESET_SITE_COUNT} 站 · 首次預建 {PRESET_SITE_INITIAL_COUNT} 站 · 單批次 ≤{RECRUITMENT_BATCH_MAX_ACTIVE_SITES} 站 · 密碼按香港同日時間窗</p>
+        <p>首次預建 {PRESET_SITE_INITIAL_COUNT} 站 · 單批次 ≤{RECRUITMENT_BATCH_MAX_ACTIVE_SITES} 站 · 密碼按香港同日時間窗</p>
       </div>
       <nav class="nav">
         {_nav_link("settings", active, base + "settings", "⚙", "隨機化設定")}
@@ -886,7 +885,7 @@ def panel_sites() -> str:
           <span class="icon-eye-off" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg></span>
         </button>
       </div>
-      <p class="muted" style="margin:6px 0 0;font-size:12px;">要求：至少 6 位，且只能為數字（例如 123456）。</p>
+      <p class="muted" style="margin:6px 0 0;font-size:12px;">密碼：至少 6 位數字。已設密碼的站點可留空，僅更新生效時間。</p>
       <div class="row">
         <div>
           <label>生效開始（香港時間）</label>
@@ -902,7 +901,7 @@ def panel_sites() -> str:
           <label>變更人</label>
           <input id="pwdBy" value="admin" />
         </div>
-        <button type="button" class="btn-save-inline" onclick="savePassword()">儲存密碼</button>
+        <button type="button" class="btn-save-inline" onclick="savePassword()">儲存生效窗／密碼</button>
       </div>
 
       <h4 class="subhead">站點一覽</h4>
@@ -1172,10 +1171,23 @@ ADMIN_SCRIPTS = """
 
   const HK_TZ = "Asia/Hong_Kong";
 
+  function parseUtcIso(iso) {
+    if (!iso) return null;
+    const s = String(iso).trim();
+    if (!s) return null;
+    if (/[Zz]$/.test(s) || /[+-]\d{2}:\d{2}$/.test(s)) {
+      return new Date(s);
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+      return new Date(s + "T00:00:00Z");
+    }
+    return new Date(s.replace(" ", "T") + "Z");
+  }
+
   function formatHkTime(iso) {
     if (!iso) return "—";
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return String(iso);
+    const d = parseUtcIso(iso);
+    if (!d || Number.isNaN(d.getTime())) return String(iso);
     const parts = new Intl.DateTimeFormat("zh-HK", {
       timeZone: HK_TZ,
       year: "numeric",
@@ -1193,8 +1205,8 @@ ADMIN_SCRIPTS = """
 
   function hkDateFromIso(iso) {
     if (!iso) return "";
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return "";
+    const d = parseUtcIso(iso);
+    if (!d || Number.isNaN(d.getTime())) return "";
     return new Intl.DateTimeFormat("en-CA", {
       timeZone: HK_TZ,
       year: "numeric",
@@ -1205,8 +1217,8 @@ ADMIN_SCRIPTS = """
 
   function isoToHkDatetimeLocal(iso) {
     if (!iso) return "";
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return "";
+    const d = parseUtcIso(iso);
+    if (!d || Number.isNaN(d.getTime())) return "";
     const parts = new Intl.DateTimeFormat("en-CA", {
       timeZone: HK_TZ,
       year: "numeric",
@@ -1387,6 +1399,29 @@ ADMIN_SCRIPTS = """
     const selPwd = document.getElementById("pwdSiteSelect");
     if (!selEdit || !selPwd) return;
     selPwd.value = selEdit.value;
+    syncPasswordFormFromSite();
+  }
+
+  function siteHasConfiguredPassword(siteId) {
+    const row = siteId && (window.__sitesAdminRows || {})[siteId];
+    return !!(row && row.password_plain);
+  }
+
+  function syncPasswordFormFromSite() {
+    const sid = document.getElementById("pwdSiteSelect")?.value || document.getElementById("editSiteSelect")?.value || "";
+    const row = sid ? (window.__sitesAdminRows || {})[sid] : null;
+    const startEl = document.getElementById("pwdWinStart");
+    const endEl = document.getElementById("pwdWinEnd");
+    if (!startEl || !endEl) return;
+    if (row && row.window_start && row.window_end) {
+      startEl.value = isoToHkDatetimeLocal(row.window_start);
+      endEl.value = isoToHkDatetimeLocal(row.window_end);
+      return;
+    }
+    if (!sid) {
+      startEl.value = "";
+      endEl.value = "";
+    }
   }
 
   function syncEditNameFromSelect() {
@@ -1420,8 +1455,8 @@ ADMIN_SCRIPTS = """
       ? " <span style='color:#b45309'>（批次站點數超建議）</span>" : "";
     const warnPwd = data.sites_with_active_password_at_ref > data.max_parallel_sites_recommended
       ? " <span style='color:#b45309'>（有效密碼站點數超建議）</span>" : "";
-    el.innerHTML = "預設 <strong>" + data.preset_site_capacity + "</strong>；已登記 <strong>" + data.registered_site_count
-      + "</strong>。參考時間（香港時間）：<strong>" + escapeHtml(formatHkTime(data.reference_time_utc)) + "</strong>；密碼有效站點 <strong>"
+    el.innerHTML = "已登記 <strong>" + data.registered_site_count
+      + "</strong> 個站點。參考時間（香港時間）：<strong>" + escapeHtml(formatHkTime(data.reference_time_utc)) + "</strong>；密碼有效站點 <strong>"
       + data.sites_with_active_password_at_ref + "</strong>" + warnPwd
       + "。開放批次 ID <strong>" + (data.current_open_batch_id ?? "無") + "</strong>，本批次站點數 <strong>"
       + data.current_open_batch_site_count + "</strong>" + warnBatch + "。";
@@ -1559,8 +1594,10 @@ ADMIN_SCRIPTS = """
     if (!tbody) return;
     const data = await fetch("/admin/sites/table").then(r => r.json());
     tbody.innerHTML = "";
+    window.__sitesAdminRows = {};
     const picked = window.__batchPickSiteIds || [];
     (data.items || []).forEach(row => {
+      window.__sitesAdminRows[row.site_id] = row;
       const tr = document.createElement("tr");
       const pwd = row.password_plain ? row.password_plain : "—";
       const pwdCell =
@@ -1690,20 +1727,33 @@ ADMIN_SCRIPTS = """
     if (!sid) { resultBox.textContent = "[ERROR] 請先選擇密碼對應的站點"; return; }
     const ws = hkDatetimeLocalToIso(document.getElementById("pwdWinStart").value);
     const we = hkDatetimeLocalToIso(document.getElementById("pwdWinEnd").value);
-    const pwd = document.getElementById("pwdRaw").value;
+    const pwd = (document.getElementById("pwdRaw").value || "").trim();
     if (!ws || !we) { resultBox.textContent = "[ERROR] 請填寫密碼生效開始和結束時間"; return; }
-    if (!/^\d{6,}$/.test(pwd || "")) { resultBox.textContent = "[ERROR] 密碼要求：至少 6 位且只能為數字"; return; }
-    await api("/admin/site-passwords", "POST", {
+    const hasExisting = siteHasConfiguredPassword(sid);
+    if (pwd && !/^\d{6,}$/.test(pwd)) {
+      resultBox.textContent = "[ERROR] 密碼要求：至少 6 位且只能為數字";
+      return;
+    }
+    if (!pwd && !hasExisting) {
+      resultBox.textContent = "[ERROR] 新站點須設定密碼；已設密碼的站點可留空僅改生效時間";
+      return;
+    }
+    const body = {
       site_id: sid,
       window_start: ws,
       window_end: we,
-      raw_password: pwd,
       changed_by: document.getElementById("pwdBy").value
-    });
+    };
+    if (pwd) body.raw_password = pwd;
+    const res = await api("/admin/site-passwords", "POST", body);
     document.getElementById("pwdRaw").value = "";
     resetPwdFieldVisibility();
     await loadSiteOverview();
     await loadSitesAdminTable();
+    syncPasswordFormFromSite();
+    resultBox.textContent = res && res.updated
+      ? "[OK] 已更新生效時間（密碼未變）"
+      : "[OK] 已儲存密碼與生效時間";
   }
 
   function toAbsoluteUrl(raw) {

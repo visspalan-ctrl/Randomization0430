@@ -7,8 +7,7 @@ from app.models import PRESET_SITE_INITIAL_COUNT, Site
 
 def ensure_preset_sites(db: Session) -> None:
     """按 PRESET_SITE_INITIAL_COUNT 建立首批 SITE_01 …（為 0 時不建立任何列）。
-
-    登記總上限見 models.PRESET_SITE_COUNT；其餘站點由管理員 POST /admin/sites 新增。
+    其餘站點由管理員 POST /admin/sites 新增。
     """
     for i in range(1, PRESET_SITE_INITIAL_COUNT + 1):
         sid = f"SITE_{i:02d}"
