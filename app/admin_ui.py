@@ -1094,6 +1094,10 @@ def panel_records() -> str:
           <label>受試者編碼</label>
           <input id="recordsFilterSubjectCode" type="search" placeholder="搜尋編碼（部分匹配）" autocomplete="off" />
         </div>
+        <div style="flex:1 1 0;min-width:0;">
+          <label>手機號</label>
+          <input id="recordsFilterPhone" type="search" placeholder="搜尋手機號（部分匹配）" autocomplete="off" />
+        </div>
       </div>
       <div class="table-wrap" style="margin-top:12px;">
         <table class="data" id="recordsTable">
@@ -2654,6 +2658,13 @@ ADMIN_SCRIPTS = """
     return String(row.subject_code || "").trim();
   }
 
+  function recordPhoneForFilter(row) {
+    const en = row.enrollment_no;
+    const draft = (window.__recordsDrafts || {})[en];
+    const raw = draft && draft.phone !== undefined ? draft.phone : (row.phone_number || "");
+    return String(raw).replace(/\s+/g, "").toLowerCase();
+  }
+
   function compareEnrollmentNoSort(a, b, dir) {
     const ea = String(a.enrollment_no || "").trim();
     const eb = String(b.enrollment_no || "").trim();
@@ -2722,6 +2733,7 @@ ADMIN_SCRIPTS = """
     const group = (document.getElementById("recordsFilterGroup")?.value || "").trim();
     const status = (document.getElementById("recordsFilterStatus")?.value || "").trim();
     const codeQ = (document.getElementById("recordsFilterSubjectCode")?.value || "").trim().toLowerCase();
+    const phoneQ = (document.getElementById("recordsFilterPhone")?.value || "").trim().replace(/\s+/g, "").toLowerCase();
     const filtered = all.filter(row => {
       if (site && String(row.site_id || "") !== site) return false;
       if (group && String(row.allocation_group || "") !== group) return false;
@@ -2729,6 +2741,10 @@ ADMIN_SCRIPTS = """
       if (codeQ) {
         const code = recordSubjectCodeForFilter(row).toLowerCase();
         if (!code.includes(codeQ)) return false;
+      }
+      if (phoneQ) {
+        const phone = recordPhoneForFilter(row);
+        if (!phone.includes(phoneQ)) return false;
       }
       if (date) {
         const d = hkDateFromIso(row.randomized_at);
@@ -2756,7 +2772,7 @@ ADMIN_SCRIPTS = """
   }
 
   function resetRecordsFilter() {
-    const ids = ["recordsFilterSite", "recordsFilterDate", "recordsFilterGroup", "recordsFilterStatus", "recordsFilterSubjectCode"];
+    const ids = ["recordsFilterSite", "recordsFilterDate", "recordsFilterGroup", "recordsFilterStatus", "recordsFilterSubjectCode", "recordsFilterPhone"];
     ids.forEach(id => {
       const el = document.getElementById(id);
       if (!el) return;
@@ -2929,6 +2945,7 @@ ADMIN_SCRIPTS = """
     const groupSel = document.getElementById("recordsFilterGroup");
     const statusSel = document.getElementById("recordsFilterStatus");
     const subjectCodeInp = document.getElementById("recordsFilterSubjectCode");
+    const phoneInp = document.getElementById("recordsFilterPhone");
     const sortSubjectTh = document.getElementById("recordsSortSubjectCode");
     const sortEnrollmentTh = document.getElementById("recordsSortEnrollmentNo");
     const pageSizeSel = document.getElementById("recordsPageSize");
@@ -2947,6 +2964,10 @@ ADMIN_SCRIPTS = """
       });
     });
     if (subjectCodeInp) subjectCodeInp.addEventListener("input", function() {
+      window.__recordsCurrentPage = 1;
+      applyRecordsFilter();
+    });
+    if (phoneInp) phoneInp.addEventListener("input", function() {
       window.__recordsCurrentPage = 1;
       applyRecordsFilter();
     });
