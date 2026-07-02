@@ -1,4 +1,4 @@
-# Randomization0430
+# RandomizationAPP
 > 輕量隨機化分組系統（FastAPI + SQLite）
 > 用於研究專案中的受試者隨機分配、站點管理與審計追蹤。
 
