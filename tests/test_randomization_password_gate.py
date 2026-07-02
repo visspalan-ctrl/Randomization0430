@@ -1,4 +1,5 @@
 import base64
+import json
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -1075,6 +1076,129 @@ def test_api_datetime_fields_include_utc_timezone():
 
     batch = admin_get(client, "/admin/recruitment-batches/current").json()
     _assert_utc_iso(batch["batch"]["created_at"])
+
+
+def test_randomization_audit_logs_include_trigger_input():
+    client = TestClient(app)
+    open_batch(client, ["SITE_01"])
+    set_site_password(client, "SITE_01")
+    phone = "+85261118899"
+    created = client.post(
+        "/randomization/trigger",
+        json={
+            "phone_number": phone,
+            "recruiter_id": "r_audit",
+            "site_id": "SITE_01",
+            "recruiter_password": "123456",
+        },
+    )
+    assert created.status_code == 200, created.text
+    enrollment_no = created.json()["enrollment_no"]
+
+    audit = admin_get(client, "/admin/audit-logs").json()
+    randomized = next(
+        item for item in audit["items"] if item["event_type"] == "participant_randomized"
+    )
+    payload = json.loads(randomized["payload_json"])
+    assert payload["phone_number"] == phone
+    assert payload["site_id"] == "SITE_01"
+    assert payload["recruiter_id"] == "r_audit"
+    assert payload["enrollment_no"] == enrollment_no
+    assert payload["allocation_group"] in ("GENAI", "HUMAN")
+    assert payload["idempotent"] is False
+    assert "recruiter_password" not in payload
+    assert payload["at"].endswith("+00:00") or payload["at"].endswith("Z")
+
+    again = client.post(
+        "/randomization/trigger",
+        json={
+            "phone_number": phone,
+            "recruiter_id": "r_audit",
+            "site_id": "SITE_01",
+            "recruiter_password": "123456",
+        },
+    )
+    assert again.status_code == 200
+    idem = next(
+        item for item in admin_get(client, "/admin/audit-logs").json()["items"]
+        if item["event_type"] == "participant_randomized_idempotent"
+    )
+    idem_payload = json.loads(idem["payload_json"])
+    assert idem_payload["phone_number"] == phone
+    assert idem_payload["enrollment_no"] == enrollment_no
+    assert idem_payload["idempotent"] is True
+
+
+def test_admin_record_change_audit_includes_snapshot():
+    client = TestClient(app)
+    open_batch(client, ["SITE_01"])
+    set_site_password(client, "SITE_01")
+    created = client.post(
+        "/randomization/trigger",
+        json={
+            "phone_number": "+85260007777",
+            "recruiter_id": "recruiter_a",
+            "site_id": "SITE_01",
+            "recruiter_password": "123456",
+        },
+    )
+    assert created.status_code == 200
+    enrollment_no = created.json()["enrollment_no"]
+
+    phone_patch = admin_patch(
+        client,
+        "/admin/randomization-records/phone",
+        json={
+            "enrollment_no": enrollment_no,
+            "new_phone_number": "+85260008888",
+            "changed_by": "admin_audit",
+            "reason": "fix typo",
+        },
+    )
+    assert phone_patch.status_code == 200
+
+    trial_patch = admin_patch(
+        client,
+        "/admin/randomization-records/trial-status",
+        json={
+            "enrollment_no": enrollment_no,
+            "trial_status": "nontrial",
+            "changed_by": "admin_audit",
+            "reason": "mark nontrial",
+        },
+    )
+    assert trial_patch.status_code == 200
+
+    voided = admin_post(
+        client,
+        "/admin/randomization-records/delete",
+        json={"enrollment_no": enrollment_no, "voided_by": "admin_audit", "reason": "void test"},
+    )
+    assert voided.status_code == 200
+
+    items = admin_get(client, "/admin/audit-logs").json()["items"]
+    phone_audit = next(i for i in items if i["event_type"] == "admin_phone_corrected")
+    phone_payload = json.loads(phone_audit["payload_json"])
+    assert phone_payload["enrollment_no"] == enrollment_no
+    assert phone_payload["site_id"] == "SITE_01"
+    assert phone_payload["recruiter_id"] == "recruiter_a"
+    assert phone_payload["old_phone_number"] == "+85260007777"
+    assert phone_payload["new_phone_number"] == "+85260008888"
+    assert phone_payload["changed_by"] == "admin_audit"
+    assert phone_payload["reason"] == "fix typo"
+
+    trial_audit = next(i for i in items if i["event_type"] == "admin_trial_status_updated")
+    trial_payload = json.loads(trial_audit["payload_json"])
+    assert trial_payload["old_trial_status"] == "trial"
+    assert trial_payload["new_trial_status"] == "nontrial"
+    assert trial_payload["phone_number"] == "+85260008888"
+
+    void_audit = next(i for i in items if i["event_type"] == "admin_record_voided")
+    void_payload = json.loads(void_audit["payload_json"])
+    assert void_payload["old_activation_status"] != "voided"
+    assert void_payload["new_activation_status"] == "voided"
+    assert void_payload["phone_number"] == "+85260008888"
+    assert void_payload["changed_by"] == "admin_audit"
 
 
 def _trigger_randomization(client: TestClient, phone: str) -> dict:

@@ -262,6 +262,22 @@ def add_audit(db: Session, event_type: str, payload: dict) -> None:
     db.commit()
 
 
+def _randomization_trigger_audit_payload(
+    payload: RandomizationTriggerRequest,
+    at: datetime,
+    **extra: object,
+) -> dict:
+    """入組請求審計欄位（不含招募員密碼）。"""
+    out: dict[str, object] = {
+        "phone_number": payload.phone_number,
+        "site_id": payload.site_id,
+        "recruiter_id": payload.recruiter_id,
+        "at": utc_iso(at),
+    }
+    out.update(extra)
+    return out
+
+
 def next_enrollment_no(db: Session) -> str:
     counter = db.get(EnrollmentCounter, 1)
     if counter is None:
@@ -588,6 +604,21 @@ def _display_phone(stored: str, enrollment_no: str) -> str:
     if stored.startswith(prefix):
         return stored[len(prefix) :]
     return stored
+
+
+def _record_audit_snapshot(record: RandomizationRecord) -> dict[str, object]:
+    """管理端變更審計：記錄當前入組記錄快照（不含密碼）。"""
+    return {
+        "enrollment_no": record.enrollment_no,
+        "phone_number": _display_phone(record.phone_number, record.enrollment_no),
+        "site_id": record.site_id,
+        "site_name": record.site_name,
+        "recruiter_id": record.recruiter_id,
+        "allocation_group": record.allocation_group,
+        "activation_status": record.activation_status,
+        "trial_status": getattr(record, "trial_status", TRIAL_STATUS_TRIAL) or TRIAL_STATUS_TRIAL,
+        "subject_code": record.subject_code,
+    }
 
 
 def _active_record_filter():
@@ -1460,11 +1491,19 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
     lock_key = (payload.site_id, payload.recruiter_id)
     window = app_state.failed_attempts.setdefault(lock_key, FailedAttemptWindow())
     if window.is_locked(utc_now()):
-        add_audit(db, "randomization_blocked_locked", payload.model_dump(exclude={"recruiter_password"}))
+        add_audit(
+            db,
+            "randomization_blocked_locked",
+            _randomization_trigger_audit_payload(payload, at),
+        )
         raise HTTPException(status_code=429, detail="password_attempt_locked")
 
     if not site_in_open_batch(db, payload.site_id):
-        add_audit(db, "randomization_blocked_site_not_in_batch", {"site_id": payload.site_id})
+        add_audit(
+            db,
+            "randomization_blocked_site_not_in_batch",
+            _randomization_trigger_audit_payload(payload, at),
+        )
         raise HTTPException(status_code=403, detail="site_not_in_active_recruitment_batch")
 
     active_pwd = db.scalar(
@@ -1478,12 +1517,20 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
         .order_by(SiteDailyPassword.version.desc())
     )
     if active_pwd is None:
-        add_audit(db, "randomization_failed_no_password_config", payload.model_dump(exclude={"recruiter_password"}))
+        add_audit(
+            db,
+            "randomization_failed_no_password_config",
+            _randomization_trigger_audit_payload(payload, at),
+        )
         raise HTTPException(status_code=403, detail="password_not_configured")
 
     if active_pwd.password_hash != hash_password(payload.recruiter_password):
         window.register_failure(utc_now())
-        add_audit(db, "randomization_failed_invalid_password", payload.model_dump(exclude={"recruiter_password"}))
+        add_audit(
+            db,
+            "randomization_failed_invalid_password",
+            _randomization_trigger_audit_payload(payload, at),
+        )
         if window.is_locked(utc_now()):
             raise HTTPException(status_code=429, detail="password_attempt_locked")
         raise HTTPException(status_code=403, detail="invalid_password")
@@ -1497,8 +1544,29 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
     )
     if existing:
         if existing.site_id != payload.site_id:
+            add_audit(
+                db,
+                "randomization_failed_site_mismatch",
+                _randomization_trigger_audit_payload(
+                    payload,
+                    at,
+                    existing_enrollment_no=existing.enrollment_no,
+                    existing_site_id=existing.site_id,
+                ),
+            )
             raise HTTPException(status_code=403, detail="site_mismatch")
         qr = db.scalar(select(QRConfig).where(QRConfig.group_type == existing.allocation_group))
+        add_audit(
+            db,
+            "participant_randomized_idempotent",
+            _randomization_trigger_audit_payload(
+                payload,
+                at,
+                enrollment_no=existing.enrollment_no,
+                allocation_group=existing.allocation_group,
+                idempotent=True,
+            ),
+        )
         return {
             "enrollment_no": existing.enrollment_no,
             "phone_number": _display_phone(existing.phone_number, existing.enrollment_no),
@@ -1515,12 +1583,14 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
         add_audit(
             db,
             "randomization_blocked_recruitment_target_reached",
-            {
-                "min_per_group": getattr(setting, "min_per_group", None),
-                "trial_total": trial_total,
-                "trial_genai": trial_genai,
-                "trial_human": trial_human,
-            },
+            _randomization_trigger_audit_payload(
+                payload,
+                at,
+                min_per_group=getattr(setting, "min_per_group", None),
+                trial_total=trial_total,
+                trial_genai=trial_genai,
+                trial_human=trial_human,
+            ),
         )
         raise HTTPException(status_code=409, detail="recruitment_target_reached")
 
@@ -1540,7 +1610,17 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
     db.commit()
     db.refresh(record)
     qr = db.scalar(select(QRConfig).where(QRConfig.group_type == group))
-    add_audit(db, "participant_randomized", {"enrollment_no": record.enrollment_no, "group": group})
+    add_audit(
+        db,
+        "participant_randomized",
+        _randomization_trigger_audit_payload(
+            payload,
+            at,
+            enrollment_no=record.enrollment_no,
+            allocation_group=group,
+            idempotent=False,
+        ),
+    )
     return {
         "enrollment_no": record.enrollment_no,
         "phone_number": record.phone_number,
@@ -1972,16 +2052,18 @@ def admin_correct_phone(payload: PhoneCorrectionRequest, db: Session = Depends(g
     )
     if duplicate and duplicate.enrollment_no != payload.enrollment_no:
         raise HTTPException(status_code=409, detail="phone_already_exists")
-    old_phone = record.phone_number
+    snapshot = _record_audit_snapshot(record)
+    old_phone = snapshot["phone_number"]
     record.phone_number = payload.new_phone_number
     db.commit()
     add_audit(
         db,
         "admin_phone_corrected",
         {
-            "enrollment_no": payload.enrollment_no,
-            "old_phone": old_phone,
-            "new_phone": payload.new_phone_number,
+            **snapshot,
+            "old_phone_number": old_phone,
+            "new_phone_number": payload.new_phone_number,
+            "phone_number": payload.new_phone_number,
             "changed_by": payload.changed_by,
             "reason": payload.reason,
         },
@@ -2004,6 +2086,7 @@ def admin_update_subject_code(payload: SubjectCodeUpdateRequest, db: Session = D
         )
         if duplicate:
             raise HTTPException(status_code=409, detail="subject_code_already_exists")
+    snapshot = _record_audit_snapshot(record)
     old_code = record.subject_code
     record.subject_code = new_code
     db.commit()
@@ -2011,9 +2094,10 @@ def admin_update_subject_code(payload: SubjectCodeUpdateRequest, db: Session = D
         db,
         "admin_subject_code_updated",
         {
-            "enrollment_no": payload.enrollment_no,
+            **snapshot,
             "old_subject_code": old_code,
             "new_subject_code": new_code,
+            "subject_code": new_code,
             "changed_by": payload.changed_by,
             "reason": payload.reason,
         },
@@ -2036,6 +2120,7 @@ def admin_update_trial_status(payload: TrialStatusUpdateRequest, db: Session = D
             trial_total, trial_genai, trial_human = _trial_enrollment_counts(db)
             if _is_recruitment_closed(setting, trial_total, trial_genai, trial_human):
                 raise HTTPException(status_code=409, detail="recruitment_target_reached")
+    snapshot = _record_audit_snapshot(record)
     old_status = record.trial_status
     record.trial_status = payload.trial_status
     db.commit()
@@ -2043,7 +2128,7 @@ def admin_update_trial_status(payload: TrialStatusUpdateRequest, db: Session = D
         db,
         "admin_trial_status_updated",
         {
-            "enrollment_no": payload.enrollment_no,
+            **snapshot,
             "old_trial_status": old_status,
             "new_trial_status": payload.trial_status,
             "changed_by": payload.changed_by,
@@ -2065,6 +2150,7 @@ def admin_delete_record(payload: RecordVoidRequest, db: Session = Depends(get_db
     now = utc_now()
     is_voided = record.activation_status == "voided"
     if is_voided:
+        snapshot = _record_audit_snapshot(record)
         original_phone = _display_phone(record.phone_number, record.enrollment_no)
         duplicate = db.scalar(
             select(RandomizationRecord).where(
@@ -2084,20 +2170,23 @@ def admin_delete_record(payload: RecordVoidRequest, db: Session = Depends(get_db
         record.phone_number = original_phone
         record.activation_timestamp = now
         db.commit()
+        restored = _record_audit_snapshot(record)
         add_audit(
             db,
             "admin_record_restored",
             {
-                "restored_by": payload.voided_by,
+                **restored,
+                "old_activation_status": snapshot["activation_status"],
+                "new_activation_status": record.activation_status,
+                "old_phone_number": original_phone,
+                "new_phone_number": restored["phone_number"],
+                "changed_by": payload.voided_by,
                 "reason": payload.reason,
-                "enrollment_no": record.enrollment_no,
-                "phone_number": record.phone_number,
-                "site_id": record.site_id,
-                "allocation_group": record.allocation_group,
             },
         )
         return {"ok": True, "restored_enrollment_no": payload.enrollment_no, "activation_status": record.activation_status}
 
+    snapshot = _record_audit_snapshot(record)
     original_phone = _display_phone(record.phone_number, record.enrollment_no)
     record.activation_status = "voided"
     record.phone_number = _void_phone_storage(record.enrollment_no, original_phone)
@@ -2107,12 +2196,12 @@ def admin_delete_record(payload: RecordVoidRequest, db: Session = Depends(get_db
         db,
         "admin_record_voided",
         {
-            "voided_by": payload.voided_by,
-            "reason": payload.reason,
-            "enrollment_no": record.enrollment_no,
+            **snapshot,
             "phone_number": original_phone,
-            "site_id": record.site_id,
-            "allocation_group": record.allocation_group,
+            "old_activation_status": snapshot["activation_status"],
+            "new_activation_status": "voided",
+            "changed_by": payload.voided_by,
+            "reason": payload.reason,
         },
     )
     return {"ok": True, "voided_enrollment_no": payload.enrollment_no, "activation_status": record.activation_status}

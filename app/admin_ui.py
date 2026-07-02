@@ -896,6 +896,7 @@ def panel_sites() -> str:
           <input id="pwdWinEnd" type="datetime-local" />
         </div>
       </div>
+      <p class="muted" style="margin:6px 0 0;font-size:12px;">預設為當日 00:00–23:59（香港時間）；新站點或未設密碼的站點選取後會自動帶入今日時段。</p>
       <div class="site-name-row" style="margin-top:10px;">
         <div class="field-name">
           <label>變更人</label>
@@ -1125,7 +1126,7 @@ def panel_records() -> str:
       <button type="button" class="secondary" onclick="loadAudits()">重新整理日誌</button>
       <div class="scroll-box" style="margin-top:12px;">
         <table class="data" id="auditTable">
-          <thead><tr><th>ID</th><th>事件</th><th>請求ID</th><th>時間（香港時間）</th></tr></thead>
+          <thead><tr><th>ID</th><th>事件</th><th>手機號</th><th>站點</th><th>招募員</th><th>狀態</th><th>受試者編碼</th><th>入組編號</th><th>分組</th><th>變更人</th><th>原因</th><th>時間（香港時間）</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -1352,21 +1353,29 @@ ADMIN_SCRIPTS = """
     await loadSettings();
   }
 
+  function fillTodayHkPasswordWindow(data) {
+    const startEl = document.getElementById("pwdWinStart");
+    const endEl = document.getElementById("pwdWinEnd");
+    if (!startEl || !endEl) return;
+    const overview = data || window.__siteOverviewData || {};
+    const ws = overview.default_password_window_start;
+    const we = overview.default_password_window_end;
+    if (ws && we) {
+      startEl.value = isoToHkDatetimeLocal(ws);
+      endEl.value = isoToHkDatetimeLocal(we);
+      return;
+    }
+    const today = hkDateFromIso(new Date().toISOString());
+    startEl.value = today + "T00:00";
+    endEl.value = today + "T23:59";
+  }
+
   function applyPasswordWindowDefaults(data) {
     const startEl = document.getElementById("pwdWinStart");
     const endEl = document.getElementById("pwdWinEnd");
     if (!startEl || !endEl) return;
     if (startEl.value && endEl.value) return;
-    const ws = data && data.default_password_window_start;
-    const we = data && data.default_password_window_end;
-    if (ws && we) {
-      if (!startEl.value) startEl.value = isoToHkDatetimeLocal(ws);
-      if (!endEl.value) endEl.value = isoToHkDatetimeLocal(we);
-      return;
-    }
-    const today = hkDateFromIso(new Date().toISOString());
-    if (!startEl.value) startEl.value = today + "T00:00";
-    if (!endEl.value) endEl.value = today + "T23:59";
+    fillTodayHkPasswordWindow(data);
   }
 
   function fillSiteIdSelects(items) {
@@ -1425,7 +1434,9 @@ ADMIN_SCRIPTS = """
     if (!sid) {
       startEl.value = "";
       endEl.value = "";
+      return;
     }
+    fillTodayHkPasswordWindow();
   }
 
   function syncEditNameFromSelect() {
@@ -1455,6 +1466,7 @@ ADMIN_SCRIPTS = """
     const res = await fetch("/admin/site-recruitment-overview");
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { el.textContent = "概覽載入失敗"; return; }
+    window.__siteOverviewData = data;
     const warnBatch = data.current_open_batch_site_count > data.max_parallel_sites_recommended
       ? " <span style='color:#b45309'>（批次站點數超建議）</span>" : "";
     const warnPwd = data.sites_with_active_password_at_ref > data.max_parallel_sites_recommended
@@ -2927,14 +2939,79 @@ ADMIN_SCRIPTS = """
     }
   }
 
+  function parseAuditPayload(row) {
+    try {
+      return JSON.parse(row.payload_json || "{}");
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function auditCell(value) {
+    if (value == null || value === "") return "—";
+    return escapeHtml(String(value));
+  }
+
+  function auditChangedBy(p) {
+    return p.changed_by || p.voided_by || p.restored_by || "";
+  }
+
+  function auditPhoneDisplay(p) {
+    const oldP = p.old_phone_number || p.old_phone || "";
+    const newP = p.new_phone_number || p.new_phone || "";
+    if (oldP && newP && oldP !== newP) return oldP + " → " + newP;
+    return p.phone_number || newP || oldP || "";
+  }
+
+  function auditStatusDisplay(p, eventType) {
+    if (p.new_activation_status != null && String(p.new_activation_status) !== String(p.old_activation_status || "")) {
+      return String(p.old_activation_status || "—") + " → " + p.new_activation_status;
+    }
+    if (p.new_trial_status != null && String(p.new_trial_status) !== String(p.old_trial_status || "")) {
+      return String(p.old_trial_status || "—") + " → " + p.new_trial_status;
+    }
+    if (p.idempotent === true) return "重複入組";
+    if (p.idempotent === false) return "新入組";
+    if (String(eventType || "").indexOf("voided") >= 0) return "作廢";
+    if (String(eventType || "").indexOf("restored") >= 0) return "恢復";
+    const act = p.activation_status;
+    const trial = p.trial_status;
+    if (act === "voided") return "作廢";
+    if (trial) return trial;
+    return "";
+  }
+
+  function auditSubjectCodeDisplay(p) {
+    const hasOld = p.old_subject_code !== undefined;
+    const hasNew = p.new_subject_code !== undefined;
+    if (hasOld || hasNew) {
+      return String(p.old_subject_code || "—") + " → " + String(p.new_subject_code || "—");
+    }
+    return p.subject_code || "";
+  }
+
   async function loadAudits() {
     const tbody = document.querySelector("#auditTable tbody");
     if (!tbody) return;
     const data = await api("/admin/audit-logs", "GET");
     tbody.innerHTML = "";
     (data.items || []).forEach(row => {
+      const p = parseAuditPayload(row);
+      const group = p.allocation_group || p.group || "";
       const tr = document.createElement("tr");
-      tr.innerHTML = "<td>" + row.id + "</td><td>" + row.event_type + "</td><td>" + row.request_id + "</td><td>" + escapeHtml(formatHkTime(row.created_at)) + "</td>";
+      tr.innerHTML =
+        "<td>" + row.id + "</td>"
+        + "<td>" + auditCell(row.event_type) + "</td>"
+        + "<td>" + auditCell(auditPhoneDisplay(p)) + "</td>"
+        + "<td>" + auditCell(p.site_id || p.existing_site_id) + "</td>"
+        + "<td>" + auditCell(p.recruiter_id) + "</td>"
+        + "<td>" + auditCell(auditStatusDisplay(p, row.event_type)) + "</td>"
+        + "<td>" + auditCell(auditSubjectCodeDisplay(p)) + "</td>"
+        + "<td>" + auditCell(p.enrollment_no || p.existing_enrollment_no) + "</td>"
+        + "<td>" + auditCell(group) + "</td>"
+        + "<td>" + auditCell(auditChangedBy(p)) + "</td>"
+        + "<td>" + auditCell(p.reason) + "</td>"
+        + "<td>" + escapeHtml(formatHkTime(row.created_at)) + "</td>";
       tbody.appendChild(tr);
     });
   }
