@@ -326,10 +326,22 @@ button.danger:hover { background: #b91c1c; }
   color: var(--group-control);
   background: rgba(13, 148, 136, 0.12);
 }
+.records-weekly-charts-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 10px;
+  align-items: stretch;
+}
+.records-weekly-chart-panel {
+  flex: 1 1 360px;
+  min-width: 0;
+  max-width: 100%;
+}
 .records-weekly-chart-wrap {
   width: 100%;
-  max-width: 680px;
-  height: 300px;
+  max-width: none;
+  height: 280px;
   padding: 10px 12px 8px;
   background: linear-gradient(180deg, #fafbfc 0%, #ffffff 100%);
   border: 1px solid var(--border);
@@ -340,6 +352,17 @@ button.danger:hover { background: #b91c1c; }
   display: block;
   width: 100% !important;
   height: 100% !important;
+}
+.records-weekly-subhead {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+}
+@media (max-width: 820px) {
+  .records-weekly-chart-panel {
+    flex: 1 1 100%;
+  }
 }
 pre#result {
   background: #1e293b;
@@ -393,6 +416,9 @@ table.data tr:hover td { background: #fafafa; }
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow-x: auto;
+}
+.table-wrap table.data {
+  min-width: 1200px;
 }
 .batch-pick-zone {
   margin-top: 18px;
@@ -820,7 +846,7 @@ def panel_settings() -> str:
       <h4 style="font-size:13px;margin:18px 0 8px;color:#64748b;">入組概覽與每週跟踪</h4>
       <label>計劃跟踪週數</label>
       <input id="weeklyPlanWeeks" type="number" min="1" placeholder="例如 20" />
-      <p class="muted" style="font-size:12px;margin:10px 0 16px;line-height:1.5;">填寫招募起止日後將依香港招募周規則自動計算（第1周僅起始日當天）。</p>
+      <p class="muted" style="font-size:12px;margin:10px 0 16px;line-height:1.5;">填寫招募起止日後將依香港招募周規則自動計算（第1周起為連續 7 日，例：6/15–6/21、6/22–6/28）。</p>
       <label>每週預計入組人數</label>
       <input id="weeklyPlanPerWeek" type="number" min="1" placeholder="例如 60" />
       <p id="weeklyPlanTargetHint" class="muted" style="font-size:12px;margin-top:4px;">累計計劃目標 = 週數 × 每週人數</p>
@@ -877,6 +903,25 @@ def panel_sites() -> str:
         </div>
         <button type="button" class="btn-save-inline" onclick="saveSiteName()">儲存修改</button>
       </div>
+      <div class="site-name-row" style="margin-top:10px;">
+        <div class="field-site-id">
+          <label for="editSiteAssignedWeek">歸屬招募周</label>
+          <input id="editSiteAssignedWeek" type="number" min="1" placeholder="可選" />
+        </div>
+        <button type="button" class="btn-save-inline secondary" onclick="saveSiteAssignedWeekFromForm()">儲存歸屬周</button>
+      </div>
+      <p class="muted" style="margin:6px 0 0;font-size:12px;">用於每週入組圖表統計；留空表示按入組日期歸屬。</p>
+      <div class="site-name-row" style="margin-top:10px;">
+        <div class="field-site">
+          <label for="editSiteEnrollmentMode">招募類型</label>
+          <select id="editSiteEnrollmentMode">
+            <option value="trial">Trial 招募點</option>
+            <option value="nontrial">Non-trial 招募點</option>
+          </select>
+        </div>
+        <button type="button" class="btn-save-inline secondary" onclick="saveSiteEnrollmentModeFromForm()">儲存招募類型</button>
+      </div>
+      <p class="muted" style="margin:6px 0 0;font-size:12px;">Non-trial 招募點入組不占用 Trial 分組序號，按 Non-trial 獨立計數做區塊隨機（GENAI/HUMAN）；Trial 滿員時仍可入組。</p>
       <label for="pwdRaw">密碼</label>
       <div class="password-field-wrap" id="pwdRawWrap">
         <input id="pwdRaw" type="password" autocomplete="new-password" />
@@ -916,7 +961,7 @@ def panel_sites() -> str:
 
       <h4 style="margin-top:16px;margin-bottom:8px;font-size:12px;font-weight:600;color:#64748b;">已啟用站點</h4>
       <div id="batchPickList" class="batch-pick-zone"></div>
-      <p class="muted" style="margin:8px 0 0;">點擊表格中的「啟用/取消啟用」將立即同步到當前開放批次。</p>
+      <p class="muted" style="margin:8px 0 0;">點擊表格中的「啟用/取消啟用」將立即同步到當前開放批次。歸屬招募周請在上方「站點設定」中維護。</p>
 
     </div>
     """
@@ -1049,10 +1094,21 @@ def panel_records() -> str:
       <div id="recordsOverview" class="records-overview">載入中…</div>
       <div id="recordsColorLegend" class="overview-color-legend" style="display:none;"></div>
       <div id="recordsWeeklySection" class="records-weekly-section" style="margin-top:16px;">
-        <h4>每週招募跟蹤（全部隨機）</h4>
+        <h4>每週招募跟蹤</h4>
         <p id="recordsWeeklyCaption" class="records-weekly-caption">載入中…</p>
-        <div class="records-weekly-chart-wrap">
-          <canvas id="recordsWeeklyChart"></canvas>
+        <div class="records-weekly-charts-grid">
+          <div class="records-weekly-chart-panel">
+            <h5 class="records-weekly-subhead">Trial</h5>
+            <div class="records-weekly-chart-wrap">
+              <canvas id="recordsTrialWeeklyChart"></canvas>
+            </div>
+          </div>
+          <div class="records-weekly-chart-panel">
+            <h5 class="records-weekly-subhead">Non-trial</h5>
+            <div class="records-weekly-chart-wrap">
+              <canvas id="recordsNontrialWeeklyChart"></canvas>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -1065,6 +1121,7 @@ def panel_records() -> str:
           <button type="button" class="secondary" onclick="exportRecordsCsv()">匯出 CSV</button>
         </div>
       </div>
+      <p class="muted" style="margin:8px 0 0;font-size:12px;">「歸屬周」在入組編號右側，留空按站點/入組日期。修改後點該行「保存修改」或上方「全部保存」。</p>
       <div class="row" style="margin-top:10px;max-width:none;flex-wrap:wrap;">
         <div style="flex:1 1 0;min-width:0;">
           <label>站點</label>
@@ -1102,7 +1159,7 @@ def panel_records() -> str:
       </div>
       <div class="table-wrap" style="margin-top:12px;">
         <table class="data" id="recordsTable">
-          <thead><tr><th>頁內序號</th><th class="sortable-th" id="recordsSortEnrollmentNo" title="點擊按入組編號排序">入組編號<span id="recordsSortEnrollmentNoIcon" class="sort-indicator"></span></th><th class="sortable-th" id="recordsSortSubjectCode" title="點擊按受試者編碼排序">受試者編碼<span id="recordsSortSubjectCodeIcon" class="sort-indicator"></span></th><th>手機號</th><th>站點</th><th>招募員姓名</th><th>分組</th><th>狀態</th><th>時間（香港時間）</th><th>操作</th></tr></thead>
+          <thead><tr><th>頁內序號</th><th class="sortable-th" id="recordsSortEnrollmentNo" title="點擊按入組編號排序">入組編號<span id="recordsSortEnrollmentNoIcon" class="sort-indicator"></span></th><th>歸屬周</th><th class="sortable-th" id="recordsSortSubjectCode" title="點擊按受試者編碼排序">受試者編碼<span id="recordsSortSubjectCodeIcon" class="sort-indicator"></span></th><th>手機號</th><th>站點</th><th>招募員姓名</th><th>分組</th><th>狀態</th><th>時間（香港時間）</th><th>操作</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -1145,6 +1202,9 @@ ADMIN_SCRIPTS = """
     chartTrialControl: "#6ee7b7",
     chartTrialCumulative: "#0d9488",
     chartNontrial: "#94a3b8",
+    chartNontrialIntervention: "#475569",
+    chartNontrialControl: "#cbd5e1",
+    chartNontrialCumulative: "#64748b",
     groupIntervention: "#ea580c",
     groupControl: "#0d9488",
     overviewTotal: "#334155",
@@ -1265,8 +1325,7 @@ ADMIN_SCRIPTS = """
     if (startMs == null || endMs == null) return null;
     const days = Math.round((endMs - startMs) / 86400000);
     if (days < 0) return null;
-    if (days === 0) return 1;
-    return Math.floor((days - 1) / 7) + 2;
+    return Math.floor(days / 7) + 1;
   }
 
   function syncWeeklyPlanWeeksFromDates() {
@@ -1439,14 +1498,36 @@ ADMIN_SCRIPTS = """
     fillTodayHkPasswordWindow();
   }
 
+  function siteAssignedWeekValue(siteId) {
+    if (!siteId) return "";
+    const adminRow = (window.__sitesAdminRows || {})[siteId];
+    const week = adminRow
+      ? adminRow.assigned_recruitment_week
+      : ((window.__sitesList || []).find(s => s.site_id === siteId) || {}).assigned_recruitment_week;
+    return week != null && week !== "" ? String(week) : "";
+  }
+
+  function siteEnrollmentModeValue(siteId) {
+    if (!siteId) return "trial";
+    const adminRow = (window.__sitesAdminRows || {})[siteId];
+    const mode = adminRow
+      ? adminRow.enrollment_mode
+      : ((window.__sitesList || []).find(s => s.site_id === siteId) || {}).enrollment_mode;
+    return mode === "nontrial" ? "nontrial" : "trial";
+  }
+
   function syncEditNameFromSelect() {
     const sel = document.getElementById("editSiteSelect");
     const inp = document.getElementById("editSiteName");
     const idInp = document.getElementById("editSiteIdInput");
+    const weekInp = document.getElementById("editSiteAssignedWeek");
+    const modeSel = document.getElementById("editSiteEnrollmentMode");
     if (!sel || !inp) return;
     const row = (window.__sitesList || []).find(s => s.site_id === sel.value);
     if (idInp) idInp.value = sel.value || "";
     inp.value = row ? row.site_name : "";
+    if (weekInp) weekInp.value = siteAssignedWeekValue(sel.value);
+    if (modeSel) modeSel.value = siteEnrollmentModeValue(sel.value);
     syncPwdSiteFromEdit();
   }
 
@@ -1642,7 +1723,7 @@ ADMIN_SCRIPTS = """
         formatHkTime(row.window_start) +
         "</span></td><td><span class='table-time'>" +
         formatHkTime(row.window_end) +
-        "</td><td><div class=\\\"table-actions\\\"><button type=\\\"button\\\" class=\\\"" +
+        "</span></td><td><div class=\\\"table-actions\\\"><button type=\\\"button\\\" class=\\\"" +
         actCls +
         "\\\" style=\\\"margin:0;padding:6px 10px;font-size:12px\\\" onclick='toggleBatchPickSite(" +
         sid +
@@ -1656,6 +1737,63 @@ ADMIN_SCRIPTS = """
     const sitesRes = await fetch("/admin/sites");
     const sitesJson = await sitesRes.json().catch(() => ({}));
     fillSiteIdSelects(sitesJson.items || []);
+  }
+
+  function parseAssignedWeekInput(raw) {
+    const trimmed = (raw || "").trim();
+    if (trimmed === "") return null;
+    const week = Number(trimmed);
+    if (!Number.isFinite(week) || week < 1) return undefined;
+    return week;
+  }
+
+  async function saveSiteAssignedWeekFromForm() {
+    const sid = document.getElementById("editSiteSelect")?.value.trim()
+      || document.getElementById("editSiteIdInput")?.value.trim();
+    if (!sid) {
+      resultBox.textContent = "[ERROR] 請先在站點設定中選擇站點";
+      return;
+    }
+    const week = parseAssignedWeekInput(document.getElementById("editSiteAssignedWeek")?.value);
+    if (week === undefined) {
+      resultBox.textContent = "[ERROR] 歸屬招募周須為正整數，或留空表示按入組日期統計";
+      return;
+    }
+    await api("/admin/sites/assigned-week", "PATCH", {
+      site_id: sid,
+      assigned_recruitment_week: week,
+      changed_by: document.getElementById("pwdBy")?.value || "admin",
+      reason: "manual site week assignment"
+    });
+    resultBox.textContent = "[OK] 已更新 " + sid + " 歸屬招募周"
+      + (week == null ? "（改為按入組日期）" : ("（第 " + week + " 周）"));
+    await loadSitesAdminTable();
+    syncEditNameFromSelect();
+  }
+
+  async function saveSiteEnrollmentModeFromForm() {
+    const sid = document.getElementById("editSiteSelect")?.value.trim()
+      || document.getElementById("editSiteIdInput")?.value.trim();
+    if (!sid) {
+      resultBox.textContent = "[ERROR] 請先在站點設定中選擇站點";
+      return;
+    }
+    const modeSel = document.getElementById("editSiteEnrollmentMode");
+    const mode = modeSel ? modeSel.value : "trial";
+    if (mode !== "trial" && mode !== "nontrial") {
+      resultBox.textContent = "[ERROR] 無效的招募類型";
+      return;
+    }
+    await api("/admin/sites/enrollment-mode", "PATCH", {
+      site_id: sid,
+      enrollment_mode: mode,
+      changed_by: document.getElementById("pwdBy")?.value || "admin",
+      reason: "manual site enrollment mode"
+    });
+    resultBox.textContent = "[OK] 已更新 " + sid + " 招募類型為「"
+      + (mode === "nontrial" ? "Non-trial 招募點" : "Trial 招募點") + "」";
+    await loadSitesAdminTable();
+    syncEditNameFromSelect();
   }
 
   async function deleteSiteRow(siteId) {
@@ -2057,14 +2195,17 @@ ADMIN_SCRIPTS = """
       + "<span><i class='overview-color-swatch' style='background:" + c.statusTrial + "'></i>Trial</span>"
       + "<span><i class='overview-color-swatch' style='background:" + c.statusNontrial + "'></i>Non-trial</span>"
       + "<span><i class='overview-color-swatch' style='background:" + c.statusVoided + "'></i>作廢</span>"
-      + "<span style='margin-left:8px;'><strong style='color:#475569;font-weight:600;'>柱狀</strong></span>"
-      + "<span><i class='overview-color-swatch' style='background:" + c.chartTrialIntervention + "'></i>Trial 干預</span>"
-      + "<span><i class='overview-color-swatch' style='background:" + c.chartTrialControl + "'></i>Trial 對照</span>"
-      + "<span><i class='overview-color-swatch' style='background:" + c.chartNontrial + "'></i>Non-trial</span>"
+      + "<span style='margin-left:8px;'><strong style='color:#475569;font-weight:600;'>Trial 柱狀</strong></span>"
+      + "<span><i class='overview-color-swatch' style='background:" + c.chartTrialIntervention + "'></i>干預</span>"
+      + "<span><i class='overview-color-swatch' style='background:" + c.chartTrialControl + "'></i>對照</span>"
+      + "<span style='margin-left:8px;'><strong style='color:#475569;font-weight:600;'>Non-trial 柱狀</strong></span>"
+      + "<span><i class='overview-color-swatch' style='background:" + c.chartNontrialIntervention + "'></i>干預</span>"
+      + "<span><i class='overview-color-swatch' style='background:" + c.chartNontrialControl + "'></i>對照</span>"
       + "<span><i class='overview-color-swatch' style='background:" + c.statusVoided + "'></i>作廢</span>"
       + "<span style='margin-left:8px;'><strong style='color:#475569;font-weight:600;'>折線</strong></span>"
-      + "<span><i class='overview-color-swatch' style='background:" + c.chartPlan + "'></i>計劃累計</span>"
-      + "<span><i class='overview-color-swatch' style='background:" + c.chartTrialCumulative + "'></i>Trial 累計</span>";
+      + "<span><i class='overview-color-swatch' style='background:" + c.chartPlan + "'></i>計劃累計（Trial）</span>"
+      + "<span><i class='overview-color-swatch' style='background:" + c.chartTrialCumulative + "'></i>Trial 累計</span>"
+      + "<span><i class='overview-color-swatch' style='background:" + c.chartNontrialCumulative + "'></i>Non-trial 累計</span>";
   }
 
   function renderGroupBadge(group) {
@@ -2078,20 +2219,27 @@ ADMIN_SCRIPTS = """
     return escapeHtml(group || "");
   }
 
-  let recordsWeeklyChartInstance = null;
+  let recordsTrialWeeklyChartInstance = null;
+  let recordsNontrialWeeklyChartInstance = null;
 
-  function weeklyChartValueLabelPlugin() {
+  function weeklyChartValueLabelPlugin(options) {
+    const barLabelColors = options.barLabelColors || ["#ffffff", "#334155"];
+    const cumulativeLineLabel = options.cumulativeLineLabel || "";
+    const cumulativeLineColor = options.cumulativeLineColor || UI_COLORS.chartTrialCumulative;
+    const planLineLabel = options.planLineLabel || "計劃";
+    const showPlanLineLabel = options.showPlanLineLabel !== false;
     return {
-      id: "weeklyChartValueLabels",
+      id: options.pluginId || "weeklyChartValueLabels",
       afterDatasetsDraw: function(chart) {
         const ctx = chart.ctx;
         const datasets = chart.data.datasets || [];
         ctx.save();
 
-        function drawBarLabels(datasetIndex, textColor) {
+        barLabelColors.forEach(function(textColor, datasetIndex) {
           const meta = chart.getDatasetMeta(datasetIndex);
           if (!meta || meta.hidden) return;
           const dataset = datasets[datasetIndex];
+          if (!dataset || dataset.type === "line") return;
           meta.data.forEach(function(bar, index) {
             const value = Number(dataset.data[index]) || 0;
             if (value <= 0) return;
@@ -2105,53 +2253,52 @@ ADMIN_SCRIPTS = """
             ctx.font = "600 10px system-ui, -apple-system, sans-serif";
             ctx.fillText(String(value), props.x, midY);
           });
-        }
-
-        drawBarLabels(0, "#ffffff");
-        drawBarLabels(1, "#334155");
-        drawBarLabels(2, "#ffffff");
-        drawBarLabels(3, "#ffffff");
-
-        const lineIndex = datasets.findIndex(function(ds) {
-          return ds.label && String(ds.label).indexOf("Trial") >= 0 && String(ds.label).indexOf("累計") >= 0;
         });
-        if (lineIndex >= 0) {
-          const lineMeta = chart.getDatasetMeta(lineIndex);
-          const lineData = datasets[lineIndex].data || [];
-          if (lineMeta && !lineMeta.hidden) {
-            lineMeta.data.forEach(function(point, index) {
-              const value = Number(lineData[index]) || 0;
-              const prev = index > 0 ? Number(lineData[index - 1]) || 0 : -1;
-              const isLast = index === lineData.length - 1;
-              if (value <= 0) return;
-              if (!(index === 0 || value !== prev || isLast)) return;
-              const props = point.getProps(["x", "y"], true);
-              ctx.fillStyle = UI_COLORS.chartTrialCumulative;
-              ctx.textAlign = "center";
-              ctx.textBaseline = "bottom";
-              ctx.font = "700 10px system-ui, -apple-system, sans-serif";
-              ctx.fillText(String(value), props.x, props.y - 5);
-            });
+
+        if (cumulativeLineLabel) {
+          const lineIndex = datasets.findIndex(function(ds) {
+            return ds.label === cumulativeLineLabel;
+          });
+          if (lineIndex >= 0) {
+            const lineMeta = chart.getDatasetMeta(lineIndex);
+            const lineData = datasets[lineIndex].data || [];
+            if (lineMeta && !lineMeta.hidden) {
+              lineMeta.data.forEach(function(point, index) {
+                const value = Number(lineData[index]) || 0;
+                const prev = index > 0 ? Number(lineData[index - 1]) || 0 : -1;
+                const isLast = index === lineData.length - 1;
+                if (value <= 0) return;
+                if (!(index === 0 || value !== prev || isLast)) return;
+                const props = point.getProps(["x", "y"], true);
+                ctx.fillStyle = cumulativeLineColor;
+                ctx.textAlign = "center";
+                ctx.textBaseline = "bottom";
+                ctx.font = "700 10px system-ui, -apple-system, sans-serif";
+                ctx.fillText(String(value), props.x, props.y - 5);
+              });
+            }
           }
         }
 
-        const planIndex = datasets.findIndex(function(ds) {
-          return ds.label && String(ds.label).indexOf("計劃") >= 0;
-        });
-        if (planIndex >= 0) {
-          const planMeta = chart.getDatasetMeta(planIndex);
-          const planData = datasets[planIndex].data || [];
-          if (planMeta && !planMeta.hidden && planData.length > 0) {
-            const lastIdx = planData.length - 1;
-            const value = Number(planData[lastIdx]) || 0;
-            if (value > 0) {
-              const point = planMeta.data[lastIdx];
-              const props = point.getProps(["x", "y"], true);
-              ctx.fillStyle = UI_COLORS.chartPlanLabel;
-              ctx.textAlign = "center";
-              ctx.textBaseline = "bottom";
-              ctx.font = "700 10px system-ui, -apple-system, sans-serif";
-              ctx.fillText(String(value), props.x, props.y - 5);
+        if (showPlanLineLabel) {
+          const planIndex = datasets.findIndex(function(ds) {
+            return ds.label === planLineLabel;
+          });
+          if (planIndex >= 0) {
+            const planMeta = chart.getDatasetMeta(planIndex);
+            const planData = datasets[planIndex].data || [];
+            if (planMeta && !planMeta.hidden && planData.length > 0) {
+              const lastIdx = planData.length - 1;
+              const value = Number(planData[lastIdx]) || 0;
+              if (value > 0) {
+                const point = planMeta.data[lastIdx];
+                const props = point.getProps(["x", "y"], true);
+                ctx.fillStyle = UI_COLORS.chartPlanLabel;
+                ctx.textAlign = "center";
+                ctx.textBaseline = "bottom";
+                ctx.font = "700 10px system-ui, -apple-system, sans-serif";
+                ctx.fillText(String(value), props.x, props.y - 5);
+              }
             }
           }
         }
@@ -2161,10 +2308,71 @@ ADMIN_SCRIPTS = """
     };
   }
 
+  function destroyWeeklyChartInstance(instanceRef) {
+    if (instanceRef) {
+      instanceRef.destroy();
+    }
+    return null;
+  }
+
+  function weeklyChartScaleOptions(weeklyMax, cumulativeMax, includePlan) {
+    const planMax = includePlan ? cumulativeMax : 0;
+    return {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      layout: { padding: { top: 20, right: 8, left: 4, bottom: 4 } },
+      plugins: {
+        legend: {
+          position: "top",
+          align: "center",
+          labels: {
+            boxWidth: 10,
+            boxHeight: 10,
+            padding: 16,
+            color: "#475569",
+            font: { size: 11, weight: "500", family: "system-ui, -apple-system, sans-serif" },
+            usePointStyle: true,
+            pointStyle: "rectRounded",
+          },
+        },
+      },
+      scales: {
+        x: {
+          stacked: true,
+          grid: { display: false },
+          border: { color: "#e2e8f0" },
+          ticks: { color: "#64748b", font: { size: 10 } },
+          title: { display: true, text: "招募週次", color: "#64748b", font: { size: 11, weight: "500" } },
+        },
+        y: {
+          stacked: true,
+          beginAtZero: true,
+          suggestedMax: Math.max(weeklyMax * 1.3, 4),
+          grid: { color: "rgba(226, 232, 240, 0.7)" },
+          border: { display: false },
+          ticks: { precision: 0, color: "#64748b", font: { size: 10 }, padding: 4 },
+          title: { display: true, text: "每週入組", color: "#64748b", font: { size: 11, weight: "500" } },
+          position: "left",
+        },
+        y1: {
+          beginAtZero: true,
+          suggestedMax: Math.max(cumulativeMax, planMax) * 1.08 || 4,
+          grid: { drawOnChartArea: false },
+          border: { display: false },
+          ticks: { precision: 0, color: "#94a3b8", font: { size: 10 }, padding: 4 },
+          title: { display: true, text: "累計", color: "#94a3b8", font: { size: 11, weight: "500" } },
+          position: "right",
+        },
+      },
+    };
+  }
+
   function renderWeeklyChart(ov) {
-    const canvas = document.getElementById("recordsWeeklyChart");
+    const trialCanvas = document.getElementById("recordsTrialWeeklyChart");
+    const nontrialCanvas = document.getElementById("recordsNontrialWeeklyChart");
     const caption = document.getElementById("recordsWeeklyCaption");
-    if (!canvas) return;
+    if (!trialCanvas || !nontrialCanvas) return;
     try {
     const weeks = (ov && ov.weekly_tracking) || [];
     const start = ov && ov.recruitment_start_date;
@@ -2179,36 +2387,86 @@ ADMIN_SCRIPTS = """
         caption.innerHTML = "招募期 <strong>" + escapeHtml(String(start)) + "</strong>"
           + (end ? " – <strong>" + escapeHtml(String(end)) + "</strong>" : "")
           + "（香港時間）"
-          + " · 柱狀＝每週入組（<span style='color:" + UI_COLORS.chartTrialIntervention + "'>Trial 干預</span>/<span style='color:" + UI_COLORS.chartTrialControl + "'>Trial 對照</span>/<span style='color:" + UI_COLORS.chartNontrial + "'>Non-trial</span>/<span style='color:" + UI_COLORS.statusVoided + "'>作廢</span>）"
-          + " · 虛線＝累計計劃（" + planWeeks + " 週 " + planTotal + " 人）"
-          + " · 實線＝<span style='color:" + UI_COLORS.chartTrialCumulative + "'>Trial 累計</span>";
+          + " · 統計口径：<strong>按站點歸屬招募周</strong>（站點/記錄未設定者按入組日期；記錄可單獨覆蓋）"
+          + " · 左 Trial、右 Non-trial 並排 · 計劃 " + planWeeks + " 週 × " + planPerWeek + " 人/週 = " + planTotal + " 人（僅 Trial 圖）";
       }
     }
     if (typeof Chart === "undefined") {
       if (caption) caption.textContent += "（圖表庫載入中，請重新整理）";
       return;
     }
-    if (recordsWeeklyChartInstance) {
-      recordsWeeklyChartInstance.destroy();
-      recordsWeeklyChartInstance = null;
-    }
+    recordsTrialWeeklyChartInstance = destroyWeeklyChartInstance(recordsTrialWeeklyChartInstance);
+    recordsNontrialWeeklyChartInstance = destroyWeeklyChartInstance(recordsNontrialWeeklyChartInstance);
+
     const labels = weeks.map(function(w) { return String(w.week_no); });
     const inter = weeks.map(function(w) { return Number(w.valid_intervention) || 0; });
     const ctrl = weeks.map(function(w) { return Number(w.valid_control) || 0; });
-    const nontrial = weeks.map(function(w) { return Number(w.nontrial_total) || 0; });
     const voided = weeks.map(function(w) { return Number(w.voided_total) || 0; });
-    const actualCumulative = weeks.map(function(w) { return Number(w.valid_cumulative) || 0; });
+    const nontrialInter = weeks.map(function(w) { return Number(w.nontrial_intervention) || 0; });
+    const nontrialCtrl = weeks.map(function(w) { return Number(w.nontrial_control) || 0; });
+    const trialCumulative = weeks.map(function(w) { return Number(w.valid_cumulative) || 0; });
+    const nontrialCumulative = weeks.map(function(w) { return Number(w.nontrial_cumulative) || 0; });
     const planCumulative = weeks.map(function(w) {
       return w.week_no <= planWeeks ? w.week_no * planPerWeek : null;
     });
-    const actualMax = actualCumulative.reduce(function(m, v) { return Math.max(m, Number(v) || 0); }, 0);
-    const planMax = planCumulative.reduce(function(m, v) { return Math.max(m, Number(v) || 0); }, 0);
-    const weeklyMax = weeks.reduce(function(m, w) {
-      return Math.max(m, Number(w.week_total_all != null ? w.week_total_all : w.valid_total) || 0);
+
+    const trialWeeklyMax = weeks.reduce(function(m, w) {
+      return Math.max(m, (Number(w.valid_intervention) || 0) + (Number(w.valid_control) || 0));
     }, 0);
-    recordsWeeklyChartInstance = new Chart(canvas, {
+    const nontrialWeeklyMax = weeks.reduce(function(m, w) {
+      return Math.max(m, (Number(w.nontrial_intervention) || 0) + (Number(w.nontrial_control) || 0) + (Number(w.voided_total) || 0));
+    }, 0);
+    const trialCumulativeMax = trialCumulative.reduce(function(m, v) { return Math.max(m, Number(v) || 0); }, 0);
+    const nontrialCumulativeMax = nontrialCumulative.reduce(function(m, v) { return Math.max(m, Number(v) || 0); }, 0);
+    const planMax = planCumulative.reduce(function(m, v) { return Math.max(m, Number(v) || 0); }, 0);
+
+    const trialOptions = weeklyChartScaleOptions(trialWeeklyMax, Math.max(trialCumulativeMax, planMax), true);
+    trialOptions.plugins.tooltip = {
+      backgroundColor: "rgba(15, 23, 42, 0.92)",
+      titleFont: { size: 12, weight: "600" },
+      bodyFont: { size: 12 },
+      padding: 10,
+      cornerRadius: 8,
+      callbacks: {
+        afterTitle: function(items) {
+          const idx = items[0] && items[0].dataIndex;
+          if (idx == null || !weeks[idx]) return "";
+          return weeks[idx].range_label || "";
+        },
+        label: function(ctx) {
+          const label = ctx.dataset.label || "";
+          const value = Number(ctx.parsed.y) || 0;
+          if (label.indexOf("干預") >= 0) return label + "（每週）：" + value;
+          if (label.indexOf("對照") >= 0) return label + "（每週）：" + value;
+          if (label === "計劃") return "累計計劃：" + value;
+          if (label === "Trial 累計") return "Trial 累計：" + value;
+          return label + "：" + value;
+        },
+        footer: function(items) {
+          const idx = items[0] && items[0].dataIndex;
+          if (idx == null || !weeks[idx]) return "";
+          const w = weeks[idx];
+          const interN = Number(w.valid_intervention) || 0;
+          const ctrlN = Number(w.valid_control) || 0;
+          const trialN = Number(w.valid_total) || 0;
+          const cumN = Number(w.valid_cumulative) || 0;
+          return [
+            "本週 Trial " + trialN + " 人",
+            "Trial 干預/對照 " + interN + "/" + ctrlN,
+            "Trial 累計 " + cumN + " 人",
+          ];
+        },
+      },
+    };
+
+    recordsTrialWeeklyChartInstance = new Chart(trialCanvas, {
       type: "bar",
-      plugins: [weeklyChartValueLabelPlugin()],
+      plugins: [weeklyChartValueLabelPlugin({
+        pluginId: "trialWeeklyValueLabels",
+        barLabelColors: ["#ffffff", "#334155"],
+        cumulativeLineLabel: "Trial 累計",
+        cumulativeLineColor: UI_COLORS.chartTrialCumulative,
+      })],
       data: {
         labels: labels,
         datasets: [
@@ -2219,7 +2477,7 @@ ADMIN_SCRIPTS = """
             hoverBackgroundColor: "#047857",
             borderRadius: 0,
             borderSkipped: false,
-            stack: "recruitment",
+            stack: "trial",
             order: 3,
             yAxisID: "y",
           },
@@ -2228,31 +2486,9 @@ ADMIN_SCRIPTS = """
             data: ctrl,
             backgroundColor: UI_COLORS.chartTrialControl,
             hoverBackgroundColor: "#34d399",
-            borderRadius: 0,
-            borderSkipped: false,
-            stack: "recruitment",
-            order: 3,
-            yAxisID: "y",
-          },
-          {
-            label: "Non-trial",
-            data: nontrial,
-            backgroundColor: UI_COLORS.chartNontrial,
-            hoverBackgroundColor: "#64748b",
-            borderRadius: 0,
-            borderSkipped: false,
-            stack: "recruitment",
-            order: 3,
-            yAxisID: "y",
-          },
-          {
-            label: "作廢",
-            data: voided,
-            backgroundColor: UI_COLORS.statusVoided,
-            hoverBackgroundColor: "#9f1239",
             borderRadius: { topLeft: 4, topRight: 4, bottomLeft: 0, bottomRight: 0 },
             borderSkipped: false,
-            stack: "recruitment",
+            stack: "trial",
             order: 3,
             yAxisID: "y",
           },
@@ -2274,7 +2510,7 @@ ADMIN_SCRIPTS = """
           {
             type: "line",
             label: "Trial 累計",
-            data: actualCumulative,
+            data: trialCumulative,
             borderColor: UI_COLORS.chartTrialCumulative,
             backgroundColor: UI_COLORS.chartTrialCumulative,
             borderWidth: 2.5,
@@ -2287,103 +2523,111 @@ ADMIN_SCRIPTS = """
           },
         ],
       },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: "index", intersect: false },
-        layout: { padding: { top: 20, right: 8, left: 4, bottom: 4 } },
-        plugins: {
-          legend: {
-            position: "top",
-            align: "center",
-            labels: {
-              boxWidth: 10,
-              boxHeight: 10,
-              padding: 16,
-              color: "#475569",
-              font: { size: 11, weight: "500", family: "system-ui, -apple-system, sans-serif" },
-              usePointStyle: true,
-              pointStyle: "rectRounded",
-            },
-          },
-          tooltip: {
-            backgroundColor: "rgba(15, 23, 42, 0.92)",
-            titleFont: { size: 12, weight: "600" },
-            bodyFont: { size: 12 },
-            padding: 10,
-            cornerRadius: 8,
-            callbacks: {
-              afterTitle: function(items) {
-                const idx = items[0] && items[0].dataIndex;
-                if (idx == null || !weeks[idx]) return "";
-                return weeks[idx].range_label || "";
-              },
-              label: function(ctx) {
-                const label = ctx.dataset.label || "";
-                const value = Number(ctx.parsed.y) || 0;
-                if (label === "Trial 干預") return "Trial 干預（每週）：" + value;
-                if (label === "Trial 對照") return "Trial 對照（每週）：" + value;
-                if (label === "Non-trial") return "Non-trial（每週）：" + value;
-                if (label === "作廢") return "作廢（每週）：" + value;
-                if (label === "計劃") return "累計計劃：" + value;
-                if (label === "Trial 累計") return "Trial 累計：" + value;
-                return label + "：" + value;
-              },
-              footer: function(items) {
-                const idx = items[0] && items[0].dataIndex;
-                if (idx == null || !weeks[idx]) return "";
-                const w = weeks[idx];
-                const interN = Number(w.valid_intervention) || 0;
-                const ctrlN = Number(w.valid_control) || 0;
-                const trialN = Number(w.valid_total) || 0;
-                const nontrialN = Number(w.nontrial_total) || 0;
-                const voidedN = Number(w.voided_total) || 0;
-                const weekAll = Number(w.week_total_all != null ? w.week_total_all : (trialN + nontrialN + voidedN)) || 0;
-                const cumN = Number(w.valid_cumulative) || 0;
-                const lines = [
-                  "本週合計 " + weekAll + " 人（Trial " + trialN + " · Non-trial " + nontrialN + " · 作廢 " + voidedN + "）",
-                ];
-                if (trialN > 0) {
-                  lines.push("Trial 干預/對照 " + interN + "/" + ctrlN);
-                }
-                if (trialN !== interN + ctrlN) {
-                  lines.push("另有 " + (trialN - interN - ctrlN) + " 人 Trial 未歸入干預/對照");
-                }
-                lines.push("Trial 累計 " + cumN + " 人");
-                return lines;
-              },
-            },
-          },
+      options: trialOptions,
+    });
+
+    const nontrialOptions = weeklyChartScaleOptions(nontrialWeeklyMax, nontrialCumulativeMax, false);
+    nontrialOptions.plugins.tooltip = {
+      backgroundColor: "rgba(15, 23, 42, 0.92)",
+      titleFont: { size: 12, weight: "600" },
+      bodyFont: { size: 12 },
+      padding: 10,
+      cornerRadius: 8,
+      callbacks: {
+        afterTitle: function(items) {
+          const idx = items[0] && items[0].dataIndex;
+          if (idx == null || !weeks[idx]) return "";
+          return weeks[idx].range_label || "";
         },
-        scales: {
-          x: {
-            stacked: true,
-            grid: { display: false },
-            border: { color: "#e2e8f0" },
-            ticks: { color: "#64748b", font: { size: 10 } },
-            title: { display: true, text: "招募週次", color: "#64748b", font: { size: 11, weight: "500" } },
-          },
-          y: {
-            stacked: true,
-            beginAtZero: true,
-            suggestedMax: Math.max(weeklyMax * 1.3, 4),
-            grid: { color: "rgba(226, 232, 240, 0.7)" },
-            border: { display: false },
-            ticks: { precision: 0, color: "#64748b", font: { size: 10 }, padding: 4 },
-            title: { display: true, text: "每週入組", color: "#64748b", font: { size: 11, weight: "500" } },
-            position: "left",
-          },
-          y1: {
-            beginAtZero: true,
-            suggestedMax: Math.max(planMax, actualMax) * 1.08,
-            grid: { drawOnChartArea: false },
-            border: { display: false },
-            ticks: { precision: 0, color: "#94a3b8", font: { size: 10 }, padding: 4 },
-            title: { display: true, text: "累計", color: "#94a3b8", font: { size: 11, weight: "500" } },
-            position: "right",
-          },
+        label: function(ctx) {
+          const label = ctx.dataset.label || "";
+          const value = Number(ctx.parsed.y) || 0;
+          if (label.indexOf("干預") >= 0) return label + "（每週）：" + value;
+          if (label.indexOf("對照") >= 0) return label + "（每週）：" + value;
+          if (label === "作廢") return "作廢（每週）：" + value;
+          if (label === "Non-trial 累計") return "Non-trial 累計：" + value;
+          return label + "：" + value;
+        },
+        footer: function(items) {
+          const idx = items[0] && items[0].dataIndex;
+          if (idx == null || !weeks[idx]) return "";
+          const w = weeks[idx];
+          const interN = Number(w.nontrial_intervention) || 0;
+          const ctrlN = Number(w.nontrial_control) || 0;
+          const nontrialN = Number(w.nontrial_total) || 0;
+          const voidedN = Number(w.voided_total) || 0;
+          const cumN = Number(w.nontrial_cumulative) || 0;
+          return [
+            "本週 Non-trial " + nontrialN + " 人 · 作廢 " + voidedN + " 人",
+            "Non-trial 干預/對照 " + interN + "/" + ctrlN,
+            "Non-trial 累計 " + cumN + " 人",
+          ];
         },
       },
+    };
+
+    recordsNontrialWeeklyChartInstance = new Chart(nontrialCanvas, {
+      type: "bar",
+      plugins: [weeklyChartValueLabelPlugin({
+        pluginId: "nontrialWeeklyValueLabels",
+        barLabelColors: ["#ffffff", "#334155", "#ffffff"],
+        cumulativeLineLabel: "Non-trial 累計",
+        cumulativeLineColor: UI_COLORS.chartNontrialCumulative,
+        showPlanLineLabel: false,
+      })],
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            label: "Non-trial 干預",
+            data: nontrialInter,
+            backgroundColor: UI_COLORS.chartNontrialIntervention,
+            hoverBackgroundColor: "#334155",
+            borderRadius: 0,
+            borderSkipped: false,
+            stack: "nontrial",
+            order: 3,
+            yAxisID: "y",
+          },
+          {
+            label: "Non-trial 對照",
+            data: nontrialCtrl,
+            backgroundColor: UI_COLORS.chartNontrialControl,
+            hoverBackgroundColor: "#94a3b8",
+            borderRadius: 0,
+            borderSkipped: false,
+            stack: "nontrial",
+            order: 3,
+            yAxisID: "y",
+          },
+          {
+            label: "作廢",
+            data: voided,
+            backgroundColor: UI_COLORS.statusVoided,
+            hoverBackgroundColor: "#9f1239",
+            borderRadius: { topLeft: 4, topRight: 4, bottomLeft: 0, bottomRight: 0 },
+            borderSkipped: false,
+            stack: "nontrial",
+            order: 3,
+            yAxisID: "y",
+          },
+          {
+            type: "line",
+            label: "Non-trial 累計",
+            data: nontrialCumulative,
+            borderColor: UI_COLORS.chartNontrialCumulative,
+            backgroundColor: UI_COLORS.chartNontrialCumulative,
+            borderWidth: 2.5,
+            pointRadius: 2,
+            pointHoverRadius: 5,
+            pointBackgroundColor: UI_COLORS.chartNontrialCumulative,
+            fill: false,
+            order: 2,
+            yAxisID: "y1",
+          },
+        ],
+      },
+      options: nontrialOptions,
     });
     } catch (err) {
       if (caption) caption.textContent = (caption.textContent || "") + "（圖表渲染失敗）";
@@ -2463,6 +2707,26 @@ ADMIN_SCRIPTS = """
     return items.find(function(r) { return String(r.enrollment_no) === String(enrollmentNo); }) || null;
   }
 
+  function recordAssignedWeekStored(row) {
+    const v = row.assigned_recruitment_week;
+    return v != null && v !== "" ? String(v) : "";
+  }
+
+  function recordAssignedWeekDraftValue(row, draft) {
+    if (draft && draft.assigned_recruitment_week !== undefined) {
+      return String(draft.assigned_recruitment_week || "");
+    }
+    return recordAssignedWeekStored(row);
+  }
+
+  function parseRecordAssignedWeekInput(raw) {
+    const trimmed = (raw || "").trim();
+    if (trimmed === "") return null;
+    const week = Number(trimmed);
+    if (!Number.isFinite(week) || week < 1) return undefined;
+    return week;
+  }
+
   function syncVisibleRecordsDrafts() {
     const tbody = document.querySelector("#recordsTable tbody");
     if (!tbody) return;
@@ -2473,10 +2737,12 @@ ADMIN_SCRIPTS = """
       const sel = tr.querySelector("select.rec-status-select");
       const codeInp = tr.querySelector("input.rec-subject-code-input");
       const phoneInp = tr.querySelector("input.rec-phone-input");
+      const weekInp = tr.querySelector("input.rec-week-input");
       const draft = window.__recordsDrafts[enrollmentNo] || {};
       if (sel) draft.status = sel.value;
       if (codeInp) draft.subject_code = codeInp.value;
       if (phoneInp) draft.phone = phoneInp.value;
+      if (weekInp) draft.assigned_recruitment_week = weekInp.value;
       window.__recordsDrafts[enrollmentNo] = draft;
     });
   }
@@ -2500,6 +2766,7 @@ ADMIN_SCRIPTS = """
       const origStatus = recordEffectiveStatus(row);
       const origCode = String(row.subject_code || "");
       const origPhone = String(row.phone_number || "");
+      const origWeek = recordAssignedWeekStored(row);
       const change = { enrollment_no: en, row: row };
       let has = false;
       if (draft.status !== undefined && draft.status !== origStatus) {
@@ -2512,6 +2779,10 @@ ADMIN_SCRIPTS = """
       }
       if (draft.phone !== undefined && draft.phone !== origPhone) {
         change.phone = draft.phone;
+        has = true;
+      }
+      if (draft.assigned_recruitment_week !== undefined && String(draft.assigned_recruitment_week || "").trim() !== origWeek) {
+        change.assigned_recruitment_week = draft.assigned_recruitment_week;
         has = true;
       }
       if (has) changes.push(change);
@@ -2584,6 +2855,10 @@ ADMIN_SCRIPTS = """
       const draft = drafts[row.enrollment_no] || {};
       const codeVal = escapeHtml(draft.subject_code !== undefined ? draft.subject_code : (row.subject_code || ""));
       const phoneVal = escapeHtml(draft.phone !== undefined ? draft.phone : (row.phone_number || ""));
+      const weekVal = escapeHtml(recordAssignedWeekDraftValue(row, draft));
+      const weekHint = row.effective_recruitment_week != null && row.effective_recruitment_week !== ""
+        ? ("默認第 " + row.effective_recruitment_week + " 周")
+        : "可選";
       const status = String(row.activation_status || "pending");
       const isVoided = status === "voided";
       const trialStatus = String(row.trial_status || "trial");
@@ -2592,18 +2867,19 @@ ADMIN_SCRIPTS = """
       tr.dataset.trialStatus = trialStatus;
       tr.innerHTML =
         "<td>" + String((startIndex || 0) + idx + 1) + "</td><td>" + escapeHtml(row.enrollment_no) + "</td>"
+        + "<td><input type='number' min='1' class='rec-week-input' style='width:56px;padding:6px 8px;' value='"
+        + weekVal + "' placeholder='" + escapeHtml(weekHint) + "' title='留空表示按站點/入組日期；填寫後優先用於圖表統計' /></td>"
         + "<td><input type='text' class='rec-subject-code-input' value='" + codeVal + "' placeholder='可選' /></td>"
         + "<td><input type='text' class='rec-phone-input' value='" + phoneVal + "' /></td><td>"
         + escapeHtml(row.site_id) + "</td><td>"
         + escapeHtml(row.recruiter_id || "") + "</td><td>" + renderGroupBadge(row.allocation_group) + "</td><td>"
         + renderStatusSelect(row, draft.status) + "</td><td>"
         + escapeHtml(formatHkTime(row.randomized_at)) + "</td><td><div class='table-actions'>"
-        + "<button type='button' class='secondary' style='margin:0;padding:6px 10px;font-size:12px' onclick='saveRecordSubjectCode(" + enc + ", this)'>保存編碼</button>"
-        + "<button type='button' class='secondary' style='margin:0;padding:6px 10px;font-size:12px' onclick='saveRecordPhone(" + enc + ", this)'>修改手機號</button>"
-        + "<button type='button' class='secondary' style='margin:0;padding:6px 10px;font-size:12px' onclick='saveRecordStatus(" + enc + ", this)'>保存狀態</button></div></td>";
+        + "<button type='button' class='secondary' style='margin:0;padding:6px 10px;font-size:12px' onclick='saveRecordRow(" + enc + ", this)'>保存修改</button></div></td>";
       const statusSel = tr.querySelector("select.rec-status-select");
       const codeInp = tr.querySelector("input.rec-subject-code-input");
       const phoneInp = tr.querySelector("input.rec-phone-input");
+      const weekInp = tr.querySelector("input.rec-week-input");
       const en = row.enrollment_no;
       if (statusSel) statusSel.addEventListener("change", function() {
         window.__recordsDrafts = window.__recordsDrafts || {};
@@ -2621,6 +2897,12 @@ ADMIN_SCRIPTS = """
         window.__recordsDrafts = window.__recordsDrafts || {};
         const d = window.__recordsDrafts[en] || {};
         d.phone = phoneInp.value;
+        window.__recordsDrafts[en] = d;
+      });
+      if (weekInp) weekInp.addEventListener("input", function() {
+        window.__recordsDrafts = window.__recordsDrafts || {};
+        const d = window.__recordsDrafts[en] || {};
+        d.assigned_recruitment_week = weekInp.value;
         window.__recordsDrafts[en] = d;
       });
       tbody.appendChild(tr);
@@ -2824,60 +3106,115 @@ ADMIN_SCRIPTS = """
     window.open(url, "_blank");
   }
 
-  async function saveRecordSubjectCode(enrollmentNo, btn) {
-    const tr = btn && btn.closest ? btn.closest("tr") : null;
-    const inp = tr ? tr.querySelector("input.rec-subject-code-input") : null;
-    if (!inp) { resultBox.textContent = "[ERROR] 未找到該行受試者編碼輸入框"; return; }
-    await api("/admin/randomization-records/subject-code", "PATCH", {
-      enrollment_no: enrollmentNo,
-      subject_code: inp.value.trim(),
-      changed_by: "admin",
-      reason: "manual subject code (list)"
-    });
-    clearRecordDraft(enrollmentNo, ["subject_code"]);
-    await refreshRecordsDataPreserveDrafts();
+  function buildChangeFromRow(enrollmentNo, tr, row) {
+    if (!tr || !row) return null;
+    const codeInp = tr.querySelector("input.rec-subject-code-input");
+    const phoneInp = tr.querySelector("input.rec-phone-input");
+    const weekInp = tr.querySelector("input.rec-week-input");
+    const statusSel = tr.querySelector("select.rec-status-select");
+    const origStatus = recordEffectiveStatus(row);
+    const origCode = String(row.subject_code || "");
+    const origPhone = String(row.phone_number || "");
+    const origWeek = recordAssignedWeekStored(row);
+    const change = { enrollment_no: enrollmentNo, row: row };
+    let has = false;
+    if (statusSel && statusSel.value !== origStatus) {
+      change.status = statusSel.value;
+      has = true;
+    }
+    if (codeInp && codeInp.value.trim() !== origCode) {
+      change.subject_code = codeInp.value;
+      has = true;
+    }
+    if (phoneInp && phoneInp.value.trim() !== origPhone) {
+      change.phone = phoneInp.value;
+      has = true;
+    }
+    if (weekInp && String(weekInp.value || "").trim() !== origWeek) {
+      change.assigned_recruitment_week = weekInp.value;
+      has = true;
+    }
+    return has ? change : null;
   }
 
-  async function saveRecordPhone(enrollmentNo, btn) {
-    const tr = btn && btn.closest ? btn.closest("tr") : null;
-    const inp = tr ? tr.querySelector("input.rec-phone-input") : null;
-    if (!inp) { resultBox.textContent = "[ERROR] 未找到該行手機號輸入框"; return; }
-    const newPhone = inp.value.trim();
-    if (!newPhone) { resultBox.textContent = "[ERROR] 請輸入新手機號"; return; }
-    await api("/admin/randomization-records/phone", "PATCH", {
-      enrollment_no: enrollmentNo,
-      new_phone_number: newPhone,
-      changed_by: "admin",
-      reason: "manual correction (list)"
-    });
-    clearRecordDraft(enrollmentNo, ["phone"]);
-    await refreshRecordsDataPreserveDrafts();
+  async function persistRecordChange(change) {
+    const en = change.enrollment_no;
+    let row = change.row || recordsFindItem(en);
+    if (!row) throw new Error("未找到入組編號 " + en);
+    if (change.status !== undefined) {
+      await persistRecordStatusChange(en, change.status, row);
+      applyStatusChangeToCachedRow(row, change.status);
+    }
+    if (change.subject_code !== undefined) {
+      await api("/admin/randomization-records/subject-code", "PATCH", {
+        enrollment_no: en,
+        subject_code: change.subject_code.trim(),
+        changed_by: "admin",
+        reason: "manual row save (list)"
+      });
+    }
+    if (change.phone !== undefined) {
+      const phone = change.phone.trim();
+      if (!phone) throw new Error("入組編號 " + en + " 的手機號不能為空");
+      await api("/admin/randomization-records/phone", "PATCH", {
+        enrollment_no: en,
+        new_phone_number: phone,
+        changed_by: "admin",
+        reason: "manual row save (list)"
+      });
+    }
+    if (change.assigned_recruitment_week !== undefined) {
+      const week = parseRecordAssignedWeekInput(change.assigned_recruitment_week);
+      if (week === undefined) throw new Error("入組編號 " + en + " 的歸屬周須為正整數或留空");
+      await api("/admin/randomization-records/assigned-week", "PATCH", {
+        enrollment_no: en,
+        assigned_recruitment_week: week,
+        changed_by: "admin",
+        reason: "manual row save (list)"
+      });
+    }
   }
 
-  async function saveRecordStatus(enrollmentNo, btn) {
+  function recordChangeSummaryParts(change) {
+    const parts = [];
+    if (change.status !== undefined) {
+      const label = change.status === "voided" ? "作廢" : (change.status === "trial" ? "Trial" : "Non-trial");
+      parts.push("狀態→" + label);
+    }
+    if (change.subject_code !== undefined) parts.push("編碼");
+    if (change.phone !== undefined) parts.push("手機號");
+    if (change.assigned_recruitment_week !== undefined) parts.push("歸屬周");
+    return parts;
+  }
+
+  async function saveRecordRow(enrollmentNo, btn) {
     const tr = btn && btn.closest ? btn.closest("tr") : null;
-    const sel = tr ? tr.querySelector("select.rec-status-select") : null;
-    if (!sel) { resultBox.textContent = "[ERROR] 未找到該行狀態選擇框"; return; }
-    const newStatus = sel.value;
     const row = recordsFindItem(enrollmentNo);
+    if (!tr) { resultBox.textContent = "[ERROR] 未找到該行"; return; }
     if (!row) { resultBox.textContent = "[ERROR] 未找到該條記錄"; return; }
-    const wasVoided = String(row.activation_status || "") === "voided";
-    const wasTrial = String(row.trial_status || "trial");
-    const currentStatus = wasVoided ? "voided" : wasTrial;
-    if (newStatus === currentStatus) {
-      resultBox.textContent = "[OK] 狀態未變更";
+    const change = buildChangeFromRow(enrollmentNo, tr, row);
+    if (!change) {
+      resultBox.textContent = "[OK] 沒有修改";
       return;
     }
-    let statusLabel = newStatus === "voided" ? "作廢" : (newStatus === "trial" ? "Trial" : "Non-trial");
-    let tip = "確認將入組編號 " + enrollmentNo + " 的狀態改為「" + statusLabel + "」？";
-    if (newStatus === "trial") tip += "（計入 Trial 有效入組）";
-    if (newStatus === "nontrial") tip += "（不計 Trial 有效入組，手機號仍不可重複隨機）";
-    if (newStatus === "voided") tip += "（作廢會保留歷史記錄並釋放手機號）";
-    if (!confirm(tip)) return;
-    await persistRecordStatusChange(enrollmentNo, newStatus, row);
-    clearRecordDraft(enrollmentNo, ["status"]);
-    await refreshRecordsDataPreserveDrafts();
-    resultBox.textContent = "[OK] 狀態已保存";
+    const parts = recordChangeSummaryParts(change);
+    if (change.status !== undefined) {
+      let tip = "確認保存入組編號 " + enrollmentNo + " 的修改？" + (parts.length ? "（" + parts.join("、") + "）" : "");
+      if (change.status === "trial") tip += " Trial 將計入有效入組。";
+      if (change.status === "nontrial") tip += " Non-trial 不計 Trial 有效入組。";
+      if (change.status === "voided") tip += " 作廢會保留歷史並釋放手機號。";
+      if (!confirm(tip)) return;
+    }
+    try {
+      await persistRecordChange(change);
+      clearRecordDraft(enrollmentNo, ["status", "subject_code", "phone", "assigned_recruitment_week"]);
+      await refreshRecordsDataPreserveDrafts();
+      resultBox.textContent = "[OK] 已保存 " + enrollmentNo + "（" + parts.join("、") + "）";
+    } catch (err) {
+      const msg = err && err.message ? String(err.message) : String(err);
+      resultBox.textContent = "[ERROR] 保存失敗\\n" + msg;
+      await refreshRecordsDataPreserveDrafts();
+    }
   }
 
   async function saveAllRecordChanges() {
@@ -2889,11 +3226,13 @@ ADMIN_SCRIPTS = """
     const statusN = pending.filter(function(c) { return c.status !== undefined; }).length;
     const codeN = pending.filter(function(c) { return c.subject_code !== undefined; }).length;
     const phoneN = pending.filter(function(c) { return c.phone !== undefined; }).length;
+    const weekN = pending.filter(function(c) { return c.assigned_recruitment_week !== undefined; }).length;
     let summary = "確認保存當前篩選結果中的 " + pending.length + " 條變更？";
     const parts = [];
     if (statusN) parts.push("狀態 " + statusN + " 條");
     if (codeN) parts.push("編碼 " + codeN + " 條");
     if (phoneN) parts.push("手機號 " + phoneN + " 條");
+    if (weekN) parts.push("歸屬周 " + weekN + " 條");
     if (parts.length) summary += "（" + parts.join("、") + "）";
     if (!confirm(summary)) return;
     try {
@@ -2901,31 +3240,8 @@ ADMIN_SCRIPTS = """
       for (let i = 0; i < pending.length; i++) {
         const change = pending[i];
         const en = change.enrollment_no;
-        let row = recordsFindItem(en);
-        if (!row) continue;
-        if (change.status !== undefined) {
-          await persistRecordStatusChange(en, change.status, row);
-          applyStatusChangeToCachedRow(row, change.status);
-        }
-        if (change.subject_code !== undefined) {
-          await api("/admin/randomization-records/subject-code", "PATCH", {
-            enrollment_no: en,
-            subject_code: change.subject_code.trim(),
-            changed_by: "admin",
-            reason: "batch save subject code (list)"
-          });
-        }
-        if (change.phone !== undefined) {
-          const phone = change.phone.trim();
-          if (!phone) throw new Error("入組編號 " + en + " 的手機號不能為空");
-          await api("/admin/randomization-records/phone", "PATCH", {
-            enrollment_no: en,
-            new_phone_number: phone,
-            changed_by: "admin",
-            reason: "batch save phone (list)"
-          });
-        }
-        clearRecordDraft(en, ["status", "subject_code", "phone"]);
+        await persistRecordChange(change);
+        clearRecordDraft(en, ["status", "subject_code", "phone", "assigned_recruitment_week"]);
         saved += 1;
         if (resultBox) resultBox.textContent = "[...] 正在保存 " + (i + 1) + "/" + pending.length;
       }

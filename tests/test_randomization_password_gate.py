@@ -487,7 +487,7 @@ def test_admin_can_update_randomization_settings():
     assert current.json()["min_per_group"] == 499
     assert current.json()["recruitment_end_date"] == "2026-11-01"
     assert current.json()["block_sizes"] == [4, 8]
-    assert current.json()["recruitment_start_date"] == "2026-06-20"
+    assert current.json()["recruitment_start_date"] == "2026-06-15"
 
 
 def test_settings_sync_weekly_plan_weeks_from_recruitment_dates():
@@ -496,7 +496,7 @@ def test_settings_sync_weekly_plan_weeks_from_recruitment_dates():
         client,
         "/admin/randomization-settings",
         json={
-            "recruitment_start_date": "2026-06-20",
+            "recruitment_start_date": "2026-06-15",
             "recruitment_end_date": "2026-10-31",
             "block_sizes": [4, 8, 12],
             "updated_by": "admin",
@@ -520,7 +520,7 @@ def test_overview_weekly_tracking_by_recruitment_week():
         client,
         "/admin/randomization-settings",
         json={
-            "recruitment_start_date": "2026-06-20",
+            "recruitment_start_date": "2026-06-15",
             "block_sizes": [4, 8, 12],
             "updated_by": "admin",
         },
@@ -540,38 +540,102 @@ def test_overview_weekly_tracking_by_recruitment_week():
         assert created.status_code == 200
 
     hk = ZoneInfo("Asia/Hong_Kong")
-    day_week2 = datetime(2026, 6, 21, 10, 0, tzinfo=hk).astimezone(timezone.utc)
-    day_week3 = datetime(2026, 6, 28, 10, 0, tzinfo=hk).astimezone(timezone.utc)
+    day_week1 = datetime(2026, 6, 18, 10, 0, tzinfo=hk).astimezone(timezone.utc)
+    day_week2 = datetime(2026, 6, 25, 10, 0, tzinfo=hk).astimezone(timezone.utc)
     with SessionLocal() as db:
         records = db.scalars(select(RandomizationRecord).order_by(RandomizationRecord.id.asc())).all()
         assert len(records) >= 2
-        records[0].randomized_at = day_week2
-        records[1].randomized_at = day_week3
+        records[0].randomized_at = day_week1
+        records[1].randomized_at = day_week2
         db.commit()
 
     overview = admin_get(client, "/admin/randomization-records").json()["overview"]
-    assert overview["recruitment_start_date"] == "2026-06-20"
+    assert overview["recruitment_start_date"] == "2026-06-15"
     assert overview["weekly_plan"] == {"weeks": 20, "per_week": 60, "total_target": 1200}
     weeks = overview["weekly_tracking"]
     w1 = next(item for item in weeks if item["week_no"] == 1)
     w2 = next(item for item in weeks if item["week_no"] == 2)
     w3 = next(item for item in weeks if item["week_no"] == 3)
     assert w1["week_label"] == "第1周"
-    assert w1["range_start"] == "2026-06-20"
-    assert w1["range_end"] == "2026-06-20"
-    assert w1["valid_total"] == 0
-    assert w1["valid_cumulative"] == 0
-    assert w2["range_start"] == "2026-06-21"
-    assert w2["range_end"] == "2026-06-27"
+    assert w1["range_start"] == "2026-06-15"
+    assert w1["range_end"] == "2026-06-21"
+    assert w1["valid_total"] == 1
+    assert w1["valid_cumulative"] == 1
+    assert w2["range_start"] == "2026-06-22"
+    assert w2["range_end"] == "2026-06-28"
     assert w2["valid_total"] == 1
-    assert w2["valid_cumulative"] == 1
-    assert w3["valid_total"] == 1
+    assert w2["valid_cumulative"] == 2
+    assert w3["valid_total"] == 0
     assert w3["valid_cumulative"] == 2
     assert len(weeks) >= 20
     assert weeks[19]["week_no"] == 20
     assert w2["nontrial_total"] == 0
     assert w2["voided_total"] == 0
     assert w2["week_total_all"] == 1
+
+
+def test_overview_weekly_tracking_by_site_assigned_week():
+    from sqlalchemy import select
+
+    from app.db import SessionLocal
+    from app.models import RandomizationRecord, Site
+
+    client = TestClient(app)
+    admin_put(
+        client,
+        "/admin/randomization-settings",
+        json={
+            "recruitment_start_date": "2026-06-15",
+            "block_sizes": [4, 8, 12],
+            "updated_by": "admin",
+        },
+    )
+    open_batch(client, ["SITE_01"])
+    set_site_password(client, "SITE_01")
+    assigned = admin_patch(
+        client,
+        "/admin/sites/assigned-week",
+        json={
+            "site_id": "SITE_01",
+            "assigned_recruitment_week": 2,
+            "changed_by": "admin",
+        },
+    )
+    assert assigned.status_code == 200
+
+    created = client.post(
+        "/randomization/trigger",
+        json={
+            "phone_number": "+85261113001",
+            "recruiter_id": "r1",
+            "site_id": "SITE_01",
+            "recruiter_password": "123456",
+        },
+    )
+    assert created.status_code == 200
+
+    hk = ZoneInfo("Asia/Hong_Kong")
+    day_week1 = datetime(2026, 6, 18, 10, 0, tzinfo=hk).astimezone(timezone.utc)
+    with SessionLocal() as db:
+        record = db.scalar(
+            select(RandomizationRecord).where(
+                RandomizationRecord.phone_number == "+85261113001"
+            )
+        )
+        assert record is not None
+        record.randomized_at = day_week1
+        db.commit()
+        site = db.get(Site, "SITE_01")
+        assert site is not None
+        assert site.assigned_recruitment_week == 2
+
+    overview = admin_get(client, "/admin/randomization-records").json()["overview"]
+    assert overview["weekly_tracking_mode"] == "site_assigned"
+    w1 = next(item for item in overview["weekly_tracking"] if item["week_no"] == 1)
+    w2 = next(item for item in overview["weekly_tracking"] if item["week_no"] == 2)
+    assert w1["valid_total"] == 0
+    assert w2["valid_total"] == 1
+    assert w2["valid_cumulative"] == 1
 
 
 def test_overview_weekly_tracking_includes_nontrial_and_voided():
@@ -585,7 +649,7 @@ def test_overview_weekly_tracking_includes_nontrial_and_voided():
         client,
         "/admin/randomization-settings",
         json={
-            "recruitment_start_date": "2026-06-20",
+            "recruitment_start_date": "2026-06-15",
             "block_sizes": [4, 8, 12],
             "updated_by": "admin",
         },
@@ -628,7 +692,7 @@ def test_overview_weekly_tracking_includes_nontrial_and_voided():
     )
 
     hk = ZoneInfo("Asia/Hong_Kong")
-    day_week2 = datetime(2026, 6, 21, 10, 0, tzinfo=hk).astimezone(timezone.utc)
+    day_week2 = datetime(2026, 6, 25, 10, 0, tzinfo=hk).astimezone(timezone.utc)
     with SessionLocal() as db:
         records = db.scalars(select(RandomizationRecord).order_by(RandomizationRecord.id.asc())).all()
         targets = [r for r in records if r.enrollment_no in enrollment_nos]
@@ -641,6 +705,8 @@ def test_overview_weekly_tracking_includes_nontrial_and_voided():
     w2 = next(item for item in overview["weekly_tracking"] if item["week_no"] == 2)
     assert w2["valid_total"] == 1
     assert w2["nontrial_total"] == 1
+    assert w2["nontrial_intervention"] + w2["nontrial_control"] == 1
+    assert w2["nontrial_cumulative"] == 1
     assert w2["voided_total"] == 1
     assert w2["week_total_all"] == 3
 
@@ -1536,3 +1602,162 @@ def test_site_password_required_when_no_existing_config():
     )
     assert rejected.status_code == 400
     assert rejected.json()["detail"] == "password_required_for_new_site"
+
+
+def set_site_enrollment_mode(client: TestClient, site_id: str, mode: str) -> None:
+    r = admin_patch(
+        client,
+        "/admin/sites/enrollment-mode",
+        json={
+            "site_id": site_id,
+            "enrollment_mode": mode,
+            "changed_by": "admin",
+            "reason": "test",
+        },
+    )
+    assert r.status_code == 200, r.text
+
+
+def _trigger_at_site(client: TestClient, phone: str, site_id: str) -> dict:
+    r = client.post(
+        "/randomization/trigger",
+        json={
+            "phone_number": phone,
+            "recruiter_id": "r1",
+            "site_id": site_id,
+            "recruiter_password": "123456",
+        },
+    )
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_nontrial_site_uses_independent_block_randomization():
+    from app.state import trial_group_at_index
+
+    client = TestClient(app)
+    configure_deterministic_trial_sequence(client, seed=999)
+    admin_post(client, "/admin/sites", json={"site_id": "SITE_NT", "site_name": "Non-trial站"})
+    set_site_enrollment_mode(client, "SITE_NT", "nontrial")
+    set_site_password(client, "SITE_01")
+    set_site_password(client, "SITE_NT")
+    open_batch(client, ["SITE_01", "SITE_NT"])
+
+    expected_nontrial = [trial_group_at_index(i, (4,), 999) for i in range(3)]
+    expected_trial = [trial_group_at_index(i, (4,), 999) for i in range(3)]
+
+    nt1 = _trigger_at_site(client, "+85271000002", "SITE_NT")
+    assert nt1["allocation_group"] == expected_nontrial[0]
+
+    trial_body = _trigger_at_site(client, "+85271000001", "SITE_01")
+    assert trial_body["allocation_group"] == expected_trial[0]
+
+    nt2 = _trigger_at_site(client, "+85271000003", "SITE_NT")
+    assert nt2["allocation_group"] == expected_nontrial[1]
+
+    trial_body2 = _trigger_at_site(client, "+85271000004", "SITE_01")
+    assert trial_body2["allocation_group"] == expected_trial[1]
+
+    records = admin_get(client, "/admin/randomization-records").json()["items"]
+    nt_record = next(r for r in records if r["enrollment_no"] == nt1["enrollment_no"])
+    assert nt_record["trial_status"] == "nontrial"
+    assert nt_record["allocation_group"] in {"GENAI", "HUMAN"}
+
+
+def test_nontrial_site_allowed_when_trial_recruitment_closed():
+    client = TestClient(app)
+    admin_post(client, "/admin/sites", json={"site_id": "SITE_NT", "site_name": "Non-trial站"})
+    set_site_enrollment_mode(client, "SITE_NT", "nontrial")
+    set_site_password(client, "SITE_01")
+    set_site_password(client, "SITE_NT")
+    open_batch(client, ["SITE_01", "SITE_NT"])
+    configure_deterministic_trial_sequence(client, seed=999)
+    admin_put(
+        client,
+        "/admin/randomization-settings",
+        json={"min_per_group": 1, "block_sizes": [4], "updated_by": "super_admin"},
+    )
+    _trigger_at_site(client, "+85272000001", "SITE_01")
+    _trigger_at_site(client, "+85272000002", "SITE_01")
+    blocked = client.post(
+        "/randomization/trigger",
+        json={
+            "phone_number": "+85272000003",
+            "recruiter_id": "r1",
+            "site_id": "SITE_01",
+            "recruiter_password": "123456",
+        },
+    )
+    assert blocked.status_code == 409
+
+    allowed = _trigger_at_site(client, "+85272000004", "SITE_NT")
+    assert allowed["allocation_group"] in {"GENAI", "HUMAN"}
+    records = admin_get(client, "/admin/randomization-records").json()["items"]
+    nt_record = next(r for r in records if r["enrollment_no"] == allowed["enrollment_no"])
+    assert nt_record["trial_status"] == "nontrial"
+
+
+def test_overview_weekly_tracking_by_record_assigned_week():
+    from sqlalchemy import select
+
+    from app.db import SessionLocal
+    from app.models import RandomizationRecord
+
+    client = TestClient(app)
+    admin_put(
+        client,
+        "/admin/randomization-settings",
+        json={
+            "recruitment_start_date": "2026-06-15",
+            "block_sizes": [4, 8, 12],
+            "updated_by": "admin",
+        },
+    )
+    open_batch(client, ["SITE_01"])
+    set_site_password(client, "SITE_01")
+    created = client.post(
+        "/randomization/trigger",
+        json={
+            "phone_number": "+85261113001",
+            "recruiter_id": "r1",
+            "site_id": "SITE_01",
+            "recruiter_password": "123456",
+        },
+    )
+    assert created.status_code == 200
+    enrollment_no = created.json()["enrollment_no"]
+
+    hk = ZoneInfo("Asia/Hong_Kong")
+    day_week2 = datetime(2026, 6, 25, 10, 0, tzinfo=hk).astimezone(timezone.utc)
+    with SessionLocal() as db:
+        record = db.scalar(select(RandomizationRecord).where(RandomizationRecord.enrollment_no == enrollment_no))
+        assert record is not None
+        record.randomized_at = day_week2
+        db.commit()
+
+    before = admin_get(client, "/admin/randomization-records").json()
+    item = next(i for i in before["items"] if i["enrollment_no"] == enrollment_no)
+    assert item["effective_recruitment_week"] == 2
+
+    patched = admin_patch(
+        client,
+        "/admin/randomization-records/assigned-week",
+        json={
+            "enrollment_no": enrollment_no,
+            "assigned_recruitment_week": 4,
+            "changed_by": "admin",
+            "reason": "record week override",
+        },
+    )
+    assert patched.status_code == 200
+
+    overview = admin_get(client, "/admin/randomization-records").json()["overview"]
+    w2 = next(item for item in overview["weekly_tracking"] if item["week_no"] == 2)
+    w4 = next(item for item in overview["weekly_tracking"] if item["week_no"] == 4)
+    assert w2["valid_total"] == 0
+    assert w4["valid_total"] == 1
+
+    after = admin_get(client, "/admin/randomization-records").json()
+    item2 = next(i for i in after["items"] if i["enrollment_no"] == enrollment_no)
+    assert item2["assigned_recruitment_week"] == 4
+    assert item2["effective_recruitment_week"] == 4

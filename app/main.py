@@ -61,6 +61,7 @@ from app.timeutil import (
     recruitment_week_range_label,
     recruitment_plan_end_date,
     recruitment_plan_weeks_from_end_date,
+    record_recruitment_week_for_stats,
     utc_iso,
 )
 
@@ -84,6 +85,8 @@ ADMIN_SESSION_VALUE = "ok"
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 TRIAL_STATUS_TRIAL = "trial"
 TRIAL_STATUS_NONTrial = "nontrial"
+ENROLLMENT_MODE_TRIAL = "trial"
+ENROLLMENT_MODE_NONTrial = "nontrial"
 QR_GROUP_TYPES = frozenset({"GENAI", "HUMAN"})
 QR_MODES = frozenset({"dynamic", "static_url", "static_image"})
 QR_GROUP_COLORS: dict[str, dict[str, str]] = {
@@ -309,7 +312,7 @@ def ensure_schema_migrations() -> None:
             conn.execute(text("ALTER TABLE randomization_settings ADD COLUMN recruitment_start_date DATE"))
             conn.execute(
                 text(
-                    "UPDATE randomization_settings SET recruitment_start_date = '2026-06-20' "
+                    "UPDATE randomization_settings SET recruitment_start_date = '2026-06-15' "
                     "WHERE recruitment_start_date IS NULL"
                 )
             )
@@ -349,6 +352,8 @@ def ensure_schema_migrations() -> None:
         rr_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_records')")).fetchall()]
         if rr_cols and "subject_code" not in rr_cols:
             conn.execute(text("ALTER TABLE randomization_records ADD COLUMN subject_code VARCHAR(64)"))
+        if rr_cols and "assigned_recruitment_week" not in rr_cols:
+            conn.execute(text("ALTER TABLE randomization_records ADD COLUMN assigned_recruitment_week INTEGER"))
         rs_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_settings')")).fetchall()]
         if rs_cols and "randomization_seed" not in rs_cols:
             conn.execute(text("ALTER TABLE randomization_settings ADD COLUMN randomization_seed INTEGER"))
@@ -358,6 +363,12 @@ def ensure_schema_migrations() -> None:
                     "WHERE randomization_seed IS NULL"
                 )
             )
+        site_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('sites')")).fetchall()]
+        if site_cols and "assigned_recruitment_week" not in site_cols:
+            conn.execute(text("ALTER TABLE sites ADD COLUMN assigned_recruitment_week INTEGER"))
+        if site_cols and "enrollment_mode" not in site_cols:
+            conn.execute(text("ALTER TABLE sites ADD COLUMN enrollment_mode VARCHAR(16) DEFAULT 'trial'"))
+            conn.execute(text("UPDATE sites SET enrollment_mode = 'trial' WHERE enrollment_mode IS NULL"))
 
 
 @app.on_event("startup")
@@ -413,6 +424,20 @@ def startup() -> None:
 class SiteUpsertRequest(BaseModel):
     site_id: str
     site_name: str
+
+
+class SiteAssignedWeekRequest(BaseModel):
+    site_id: str
+    assigned_recruitment_week: int | None = None
+    changed_by: str
+    reason: str = ""
+
+
+class SiteEnrollmentModeRequest(BaseModel):
+    site_id: str
+    enrollment_mode: Literal["trial", "nontrial"]
+    changed_by: str
+    reason: str = ""
 
 
 class SiteRenameIdRequest(BaseModel):
@@ -571,6 +596,13 @@ class SubjectCodeUpdateRequest(BaseModel):
     reason: str = ""
 
 
+class RecordAssignedWeekRequest(BaseModel):
+    enrollment_no: str
+    assigned_recruitment_week: int | None = None
+    changed_by: str
+    reason: str = ""
+
+
 class TrialStatusUpdateRequest(BaseModel):
     enrollment_no: str
     trial_status: Literal["trial", "nontrial"]
@@ -618,6 +650,7 @@ def _record_audit_snapshot(record: RandomizationRecord) -> dict[str, object]:
         "activation_status": record.activation_status,
         "trial_status": getattr(record, "trial_status", TRIAL_STATUS_TRIAL) or TRIAL_STATUS_TRIAL,
         "subject_code": record.subject_code,
+        "assigned_recruitment_week": getattr(record, "assigned_recruitment_week", None),
     }
 
 
@@ -676,6 +709,22 @@ def _voided_enrollment_counts(db: Session) -> tuple[int, int, int]:
 def _normalize_subject_code(raw: str) -> str | None:
     code = raw.strip()
     return code if code else None
+
+
+def _record_effective_recruitment_week(
+    record: RandomizationRecord,
+    start_date: date,
+    site_week_map: dict[str, int | None],
+) -> int | None:
+    if record.randomized_at is None:
+        return None
+    event_date = hk_calendar_date(record.randomized_at)
+    return record_recruitment_week_for_stats(
+        start_date,
+        event_date,
+        site_week_map.get(record.site_id),
+        getattr(record, "assigned_recruitment_week", None),
+    )
 
 
 def _is_recruitment_period_ended(setting: RandomizationSetting) -> bool:
@@ -740,11 +789,17 @@ def _empty_week_bucket() -> dict[str, int]:
         "valid_intervention": 0,
         "valid_control": 0,
         "nontrial_total": 0,
+        "nontrial_intervention": 0,
+        "nontrial_control": 0,
         "voided_total": 0,
     }
 
 
 def _weekly_recruitment_tracking(db: Session, start_date: date, plan_weeks: int) -> list[dict]:
+    site_week_map = {
+        s.site_id: getattr(s, "assigned_recruitment_week", None)
+        for s in db.scalars(select(Site)).all()
+    }
     records = db.scalars(select(RandomizationRecord)).all()
     buckets: dict[int, dict[str, int]] = {}
     max_data_week = 0
@@ -752,7 +807,12 @@ def _weekly_recruitment_tracking(db: Session, start_date: date, plan_weeks: int)
         if record.randomized_at is None:
             continue
         event_date = hk_calendar_date(record.randomized_at)
-        week_no = recruitment_week_no(start_date, event_date)
+        week_no = record_recruitment_week_for_stats(
+            start_date,
+            event_date,
+            site_week_map.get(record.site_id),
+            getattr(record, "assigned_recruitment_week", None),
+        )
         if week_no is None:
             continue
         bucket = buckets.setdefault(week_no, _empty_week_bucket())
@@ -760,6 +820,10 @@ def _weekly_recruitment_tracking(db: Session, start_date: date, plan_weeks: int)
             bucket["voided_total"] += 1
         elif record.trial_status == TRIAL_STATUS_NONTrial:
             bucket["nontrial_total"] += 1
+            if record.allocation_group == "GENAI":
+                bucket["nontrial_intervention"] += 1
+            elif record.allocation_group == "HUMAN":
+                bucket["nontrial_control"] += 1
         elif record.trial_status == TRIAL_STATUS_TRIAL:
             bucket["valid_total"] += 1
             if record.allocation_group == "GENAI":
@@ -777,14 +841,18 @@ def _weekly_recruitment_tracking(db: Session, start_date: date, plan_weeks: int)
 
     items: list[dict] = []
     running_trial_total = 0
+    running_nontrial_total = 0
     for week_no in range(1, end_week + 1):
         bucket = buckets.get(week_no, _empty_week_bucket())
         running_trial_total += bucket["valid_total"]
+        running_nontrial_total += bucket["nontrial_total"]
         week_start, week_end = recruitment_week_bounds(start_date, week_no)
         inter = bucket["valid_intervention"]
         ctrl = bucket["valid_control"]
         trial_total = bucket["valid_total"]
         nontrial_total = bucket["nontrial_total"]
+        nontrial_inter = bucket["nontrial_intervention"]
+        nontrial_ctrl = bucket["nontrial_control"]
         voided_total = bucket["voided_total"]
         items.append(
             {
@@ -798,9 +866,13 @@ def _weekly_recruitment_tracking(db: Session, start_date: date, plan_weeks: int)
                 "valid_control": ctrl,
                 "valid_other": max(0, trial_total - inter - ctrl),
                 "nontrial_total": nontrial_total,
+                "nontrial_intervention": nontrial_inter,
+                "nontrial_control": nontrial_ctrl,
+                "nontrial_other": max(0, nontrial_total - nontrial_inter - nontrial_ctrl),
                 "voided_total": voided_total,
                 "week_total_all": trial_total + nontrial_total + voided_total,
                 "valid_cumulative": running_trial_total,
+                "nontrial_cumulative": running_nontrial_total,
             }
         )
     return items
@@ -836,6 +908,7 @@ def _recruitment_overview(setting: RandomizationSetting, db: Session) -> dict:
         "recruitment_start_date": start_date.isoformat(),
         "recruitment_end_date": end_date.isoformat() if end_date is not None else None,
         "weekly_tracking": _weekly_recruitment_tracking(db, start_date, plan_weeks),
+        "weekly_tracking_mode": "site_assigned",
         "weekly_plan": {
             "weeks": plan_weeks,
             "per_week": plan_per_week,
@@ -878,11 +951,29 @@ def _randomization_seed(setting: RandomizationSetting) -> int:
     return int(raw)
 
 
+def _site_enrollment_mode(site: Site | None) -> str:
+    if site is None:
+        return ENROLLMENT_MODE_TRIAL
+    mode = getattr(site, "enrollment_mode", None) or ENROLLMENT_MODE_TRIAL
+    return ENROLLMENT_MODE_NONTrial if mode == ENROLLMENT_MODE_NONTrial else ENROLLMENT_MODE_TRIAL
+
+
+def _is_nontrial_recruitment_site(site: Site | None) -> bool:
+    return _site_enrollment_mode(site) == ENROLLMENT_MODE_NONTrial
+
+
 def _next_trial_allocation_group(db: Session, setting: RandomizationSetting) -> str:
     trial_total, _, _ = _trial_enrollment_counts(db)
     block_sizes = parse_block_sizes(setting.block_sizes_csv)
     seed = _randomization_seed(setting)
     return trial_group_at_index(trial_total, block_sizes, seed)
+
+
+def _next_nontrial_allocation_group(db: Session, setting: RandomizationSetting) -> str:
+    nontrial_total, _, _ = _nontrial_enrollment_counts(db)
+    block_sizes = parse_block_sizes(setting.block_sizes_csv)
+    seed = _randomization_seed(setting)
+    return trial_group_at_index(nontrial_total, block_sizes, seed)
 
 
 def parse_block_sizes(block_sizes_csv: str) -> tuple[int, ...]:
@@ -1224,6 +1315,64 @@ def upsert_site(payload: SiteUpsertRequest, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+@app.patch("/admin/sites/assigned-week")
+def update_site_assigned_week(payload: SiteAssignedWeekRequest, db: Session = Depends(get_db)):
+    site = db.get(Site, payload.site_id)
+    if site is None:
+        raise HTTPException(status_code=404, detail="site_not_found")
+    if payload.assigned_recruitment_week is not None and payload.assigned_recruitment_week < 1:
+        raise HTTPException(status_code=400, detail="invalid_assigned_recruitment_week")
+    old_week = getattr(site, "assigned_recruitment_week", None)
+    site.assigned_recruitment_week = payload.assigned_recruitment_week
+    db.commit()
+    add_audit(
+        db,
+        "site_assigned_week_updated",
+        {
+            "site_id": payload.site_id,
+            "site_name": site.site_name,
+            "old_assigned_recruitment_week": old_week,
+            "new_assigned_recruitment_week": payload.assigned_recruitment_week,
+            "changed_by": payload.changed_by,
+            "reason": payload.reason,
+        },
+    )
+    return {
+        "ok": True,
+        "site_id": site.site_id,
+        "assigned_recruitment_week": site.assigned_recruitment_week,
+    }
+
+
+@app.patch("/admin/sites/enrollment-mode")
+def update_site_enrollment_mode(payload: SiteEnrollmentModeRequest, db: Session = Depends(get_db)):
+    site = db.get(Site, payload.site_id)
+    if site is None:
+        raise HTTPException(status_code=404, detail="site_not_found")
+    if payload.enrollment_mode not in {ENROLLMENT_MODE_TRIAL, ENROLLMENT_MODE_NONTrial}:
+        raise HTTPException(status_code=400, detail="invalid_enrollment_mode")
+    old_mode = _site_enrollment_mode(site)
+    site.enrollment_mode = payload.enrollment_mode
+    db.commit()
+    add_audit(
+        db,
+        "site_enrollment_mode_updated",
+        {
+            "site_id": payload.site_id,
+            "site_name": site.site_name,
+            "old_enrollment_mode": old_mode,
+            "new_enrollment_mode": payload.enrollment_mode,
+            "changed_by": payload.changed_by,
+            "reason": payload.reason,
+        },
+    )
+    return {
+        "ok": True,
+        "site_id": site.site_id,
+        "enrollment_mode": _site_enrollment_mode(site),
+    }
+
+
 @app.post("/admin/sites/rename-id")
 def rename_site_id(payload: SiteRenameIdRequest, db: Session = Depends(get_db)):
     old_id = payload.old_site_id.strip()
@@ -1273,7 +1422,17 @@ def delete_site(site_id: str, db: Session = Depends(get_db)):
 @app.get("/admin/sites")
 def list_sites(db: Session = Depends(get_db)):
     sites = db.scalars(select(Site).order_by(Site.site_id.asc())).all()
-    return {"items": [{"site_id": s.site_id, "site_name": s.site_name} for s in sites]}
+    return {
+        "items": [
+            {
+                "site_id": s.site_id,
+                "site_name": s.site_name,
+                "assigned_recruitment_week": getattr(s, "assigned_recruitment_week", None),
+                "enrollment_mode": _site_enrollment_mode(s),
+            }
+            for s in sites
+        ]
+    }
 
 
 @app.get("/admin/site-recruitment-overview")
@@ -1327,6 +1486,8 @@ def sites_admin_table(db: Session = Depends(get_db)):
             {
                 "site_id": s.site_id,
                 "site_name": s.site_name,
+                "assigned_recruitment_week": getattr(s, "assigned_recruitment_week", None),
+                "enrollment_mode": _site_enrollment_mode(s),
                 "password_plain": pwd.password_plain if pwd else None,
                 "window_start": utc_iso(pwd.window_start) if pwd else None,
                 "window_end": utc_iso(pwd.window_end) if pwd else None,
@@ -1578,25 +1739,30 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
             "idempotent": True,
         }
 
-    trial_total, trial_genai, trial_human = _trial_enrollment_counts(db)
-    if _is_recruitment_closed(setting, trial_total, trial_genai, trial_human):
-        add_audit(
-            db,
-            "randomization_blocked_recruitment_target_reached",
-            _randomization_trigger_audit_payload(
-                payload,
-                at,
-                min_per_group=getattr(setting, "min_per_group", None),
-                trial_total=trial_total,
-                trial_genai=trial_genai,
-                trial_human=trial_human,
-            ),
-        )
-        raise HTTPException(status_code=409, detail="recruitment_target_reached")
-
     site = db.get(Site, payload.site_id)
     site_name = site.site_name if site else payload.site_id
-    group = _next_trial_allocation_group(db, setting)
+    nontrial_site = _is_nontrial_recruitment_site(site)
+    if nontrial_site:
+        group = _next_nontrial_allocation_group(db, setting)
+        trial_status = TRIAL_STATUS_NONTrial
+    else:
+        trial_total, trial_genai, trial_human = _trial_enrollment_counts(db)
+        if _is_recruitment_closed(setting, trial_total, trial_genai, trial_human):
+            add_audit(
+                db,
+                "randomization_blocked_recruitment_target_reached",
+                _randomization_trigger_audit_payload(
+                    payload,
+                    at,
+                    min_per_group=getattr(setting, "min_per_group", None),
+                    trial_total=trial_total,
+                    trial_genai=trial_genai,
+                    trial_human=trial_human,
+                ),
+            )
+            raise HTTPException(status_code=409, detail="recruitment_target_reached")
+        group = _next_trial_allocation_group(db, setting)
+        trial_status = TRIAL_STATUS_TRIAL
     record = RandomizationRecord(
         enrollment_no=next_enrollment_no(db),
         phone_number=payload.phone_number,
@@ -1604,7 +1770,7 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
         site_id=payload.site_id,
         site_name=site_name,
         allocation_group=group,
-        trial_status=TRIAL_STATUS_TRIAL,
+        trial_status=trial_status,
     )
     db.add(record)
     db.commit()
@@ -1840,6 +2006,11 @@ def get_randomization_records(db: Session = Depends(get_db)):
         db.commit()
         db.refresh(setting)
     records = db.scalars(select(RandomizationRecord).order_by(RandomizationRecord.id.desc())).all()
+    site_week_map = {
+        s.site_id: getattr(s, "assigned_recruitment_week", None)
+        for s in db.scalars(select(Site)).all()
+    }
+    start_date = _recruitment_start_date(setting)
     overview = _recruitment_overview(setting, db)
     return {
         "overview": overview,
@@ -1855,6 +2026,8 @@ def get_randomization_records(db: Session = Depends(get_db)):
                 "activation_status": r.activation_status,
                 "trial_status": getattr(r, "trial_status", TRIAL_STATUS_TRIAL) or TRIAL_STATUS_TRIAL,
                 "subject_code": r.subject_code,
+                "assigned_recruitment_week": getattr(r, "assigned_recruitment_week", None),
+                "effective_recruitment_week": _record_effective_recruitment_week(r, start_date, site_week_map),
             }
             for r in records
         ],
@@ -1878,8 +2051,16 @@ def export_randomization_records_csv(db: Session = Depends(get_db)):
             "trial_status",
             "activation_status",
             "subject_code",
+            "assigned_recruitment_week",
+            "effective_recruitment_week",
         ]
     )
+    setting = db.get(RandomizationSetting, 1)
+    start_date = _recruitment_start_date(setting) if setting is not None else DEFAULT_RECRUITMENT_START_DATE
+    site_week_map = {
+        s.site_id: getattr(s, "assigned_recruitment_week", None)
+        for s in db.scalars(select(Site)).all()
+    }
     for r in records:
         writer.writerow(
             [
@@ -1893,6 +2074,8 @@ def export_randomization_records_csv(db: Session = Depends(get_db)):
                 getattr(r, "trial_status", TRIAL_STATUS_TRIAL) or TRIAL_STATUS_TRIAL,
                 r.activation_status,
                 r.subject_code or "",
+                getattr(r, "assigned_recruitment_week", None) or "",
+                _record_effective_recruitment_week(r, start_date, site_week_map) or "",
             ]
         )
     csv_text = buf.getvalue()
@@ -2103,6 +2286,35 @@ def admin_update_subject_code(payload: SubjectCodeUpdateRequest, db: Session = D
         },
     )
     return {"ok": True, "enrollment_no": record.enrollment_no, "subject_code": record.subject_code}
+
+
+@app.patch("/admin/randomization-records/assigned-week")
+def admin_update_record_assigned_week(payload: RecordAssignedWeekRequest, db: Session = Depends(get_db)):
+    record = db.scalar(select(RandomizationRecord).where(RandomizationRecord.enrollment_no == payload.enrollment_no))
+    if record is None:
+        raise HTTPException(status_code=404, detail="record_not_found")
+    if payload.assigned_recruitment_week is not None and payload.assigned_recruitment_week < 1:
+        raise HTTPException(status_code=400, detail="invalid_assigned_recruitment_week")
+    snapshot = _record_audit_snapshot(record)
+    old_week = getattr(record, "assigned_recruitment_week", None)
+    record.assigned_recruitment_week = payload.assigned_recruitment_week
+    db.commit()
+    add_audit(
+        db,
+        "admin_record_assigned_week_updated",
+        {
+            **snapshot,
+            "old_assigned_recruitment_week": old_week,
+            "new_assigned_recruitment_week": payload.assigned_recruitment_week,
+            "changed_by": payload.changed_by,
+            "reason": payload.reason,
+        },
+    )
+    return {
+        "ok": True,
+        "enrollment_no": record.enrollment_no,
+        "assigned_recruitment_week": record.assigned_recruitment_week,
+    }
 
 
 @app.patch("/admin/randomization-records/trial-status")

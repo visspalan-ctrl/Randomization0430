@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 HK = ZoneInfo("Asia/Hong_Kong")
-DEFAULT_RECRUITMENT_START_DATE = date(2026, 6, 20)
+DEFAULT_RECRUITMENT_START_DATE = date(2026, 6, 15)
 DEFAULT_WEEKLY_PLAN_WEEKS = 20
 DEFAULT_WEEKLY_PLAN_PER_WEEK = 60
 
@@ -57,17 +57,29 @@ def hk_today_password_window() -> tuple[datetime, datetime]:
 def recruitment_week_no(start_date: date, event_date: date) -> int | None:
     if event_date < start_date:
         return None
-    if event_date == start_date:
-        return 1
-    return ((event_date - start_date).days - 1) // 7 + 2
+    return (event_date - start_date).days // 7 + 1
 
 
 def recruitment_week_bounds(start_date: date, week_no: int) -> tuple[date, date]:
-    if week_no <= 1:
-        return start_date, start_date
-    week_start = start_date + timedelta(days=1 + (week_no - 2) * 7)
-    week_end = start_date + timedelta(days=(week_no - 1) * 7)
+    if week_no < 1:
+        raise ValueError("invalid_week_no")
+    week_start = start_date + timedelta(days=(week_no - 1) * 7)
+    week_end = week_start + timedelta(days=6)
     return week_start, week_end
+
+
+def record_recruitment_week_for_stats(
+    start_date: date,
+    event_date: date,
+    site_assigned_week: int | None,
+    record_assigned_week: int | None = None,
+) -> int | None:
+    """統計口径：優先按記錄歸屬周，其次站點歸屬周，未設定時按入組日期。"""
+    if record_assigned_week is not None and record_assigned_week >= 1:
+        return record_assigned_week
+    if site_assigned_week is not None and site_assigned_week >= 1:
+        return site_assigned_week
+    return recruitment_week_no(start_date, event_date)
 
 
 def recruitment_week_range_label(start_date: date, week_no: int) -> str:

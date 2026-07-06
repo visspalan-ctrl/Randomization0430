@@ -19,6 +19,8 @@ class Site(Base):
     __tablename__ = "sites"
     site_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     site_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    assigned_recruitment_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    enrollment_mode: Mapped[str] = mapped_column(String(16), default="trial")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -90,6 +92,7 @@ class RandomizationRecord(Base):
     activation_status: Mapped[str] = mapped_column(String(16), default="pending")
     trial_status: Mapped[str] = mapped_column(String(16), default="trial")
     subject_code: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    assigned_recruitment_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
     activation_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
