@@ -418,7 +418,7 @@ table.data tr:hover td { background: #fafafa; }
   overflow-x: auto;
 }
 .table-wrap table.data {
-  min-width: 1200px;
+  min-width: 1320px;
 }
 .batch-pick-zone {
   margin-top: 18px;
@@ -1121,7 +1121,7 @@ def panel_records() -> str:
           <button type="button" class="secondary" onclick="exportRecordsCsv()">匯出 CSV</button>
         </div>
       </div>
-      <p class="muted" style="margin:8px 0 0;font-size:12px;">「歸屬周」在入組編號右側，留空按站點/入組日期。修改後點該行「保存修改」或上方「全部保存」。</p>
+      <p class="muted" style="margin:8px 0 0;font-size:12px;">「歸屬周」在入組編號右側；「參加者姓名」在手機號右側。留空按站點/入組日期歸屬周。修改後點該行「保存修改」或上方「全部保存」。</p>
       <div class="row" style="margin-top:10px;max-width:none;flex-wrap:wrap;">
         <div style="flex:1 1 0;min-width:0;">
           <label>站點</label>
@@ -1159,7 +1159,7 @@ def panel_records() -> str:
       </div>
       <div class="table-wrap" style="margin-top:12px;">
         <table class="data" id="recordsTable">
-          <thead><tr><th>頁內序號</th><th class="sortable-th" id="recordsSortEnrollmentNo" title="點擊按入組編號排序">入組編號<span id="recordsSortEnrollmentNoIcon" class="sort-indicator"></span></th><th>歸屬周</th><th class="sortable-th" id="recordsSortSubjectCode" title="點擊按受試者編碼排序">受試者編碼<span id="recordsSortSubjectCodeIcon" class="sort-indicator"></span></th><th>手機號</th><th>站點</th><th>招募員姓名</th><th>分組</th><th>狀態</th><th>時間（香港時間）</th><th>操作</th></tr></thead>
+          <thead><tr><th>頁內序號</th><th class="sortable-th" id="recordsSortEnrollmentNo" title="點擊按入組編號排序">入組編號<span id="recordsSortEnrollmentNoIcon" class="sort-indicator"></span></th><th>歸屬周</th><th class="sortable-th" id="recordsSortSubjectCode" title="點擊按受試者編碼排序">受試者編碼<span id="recordsSortSubjectCodeIcon" class="sort-indicator"></span></th><th>手機號</th><th>參加者姓名</th><th>站點</th><th>招募員姓名</th><th>分組</th><th>狀態</th><th>時間（香港時間）</th><th>操作</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -1183,7 +1183,7 @@ def panel_records() -> str:
       <button type="button" class="secondary" onclick="loadAudits()">重新整理日誌</button>
       <div class="scroll-box" style="margin-top:12px;">
         <table class="data" id="auditTable">
-          <thead><tr><th>ID</th><th>事件</th><th>手機號</th><th>站點</th><th>招募員</th><th>狀態</th><th>受試者編碼</th><th>入組編號</th><th>分組</th><th>變更人</th><th>原因</th><th>時間（香港時間）</th></tr></thead>
+          <thead><tr><th>ID</th><th>事件</th><th>手機號</th><th>站點</th><th>招募員</th><th>參加者姓名</th><th>狀態</th><th>受試者編碼</th><th>入組編號</th><th>分組</th><th>變更人</th><th>原因</th><th>時間（香港時間）</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -2737,11 +2737,13 @@ ADMIN_SCRIPTS = """
       const sel = tr.querySelector("select.rec-status-select");
       const codeInp = tr.querySelector("input.rec-subject-code-input");
       const phoneInp = tr.querySelector("input.rec-phone-input");
+      const pnameInp = tr.querySelector("input.rec-participant-name-input");
       const weekInp = tr.querySelector("input.rec-week-input");
       const draft = window.__recordsDrafts[enrollmentNo] || {};
       if (sel) draft.status = sel.value;
       if (codeInp) draft.subject_code = codeInp.value;
       if (phoneInp) draft.phone = phoneInp.value;
+      if (pnameInp) draft.participant_name = pnameInp.value;
       if (weekInp) draft.assigned_recruitment_week = weekInp.value;
       window.__recordsDrafts[enrollmentNo] = draft;
     });
@@ -2766,6 +2768,7 @@ ADMIN_SCRIPTS = """
       const origStatus = recordEffectiveStatus(row);
       const origCode = String(row.subject_code || "");
       const origPhone = String(row.phone_number || "");
+      const origPname = String(row.participant_name || "");
       const origWeek = recordAssignedWeekStored(row);
       const change = { enrollment_no: en, row: row };
       let has = false;
@@ -2779,6 +2782,10 @@ ADMIN_SCRIPTS = """
       }
       if (draft.phone !== undefined && draft.phone !== origPhone) {
         change.phone = draft.phone;
+        has = true;
+      }
+      if (draft.participant_name !== undefined && draft.participant_name !== origPname) {
+        change.participant_name = draft.participant_name;
         has = true;
       }
       if (draft.assigned_recruitment_week !== undefined && String(draft.assigned_recruitment_week || "").trim() !== origWeek) {
@@ -2855,6 +2862,7 @@ ADMIN_SCRIPTS = """
       const draft = drafts[row.enrollment_no] || {};
       const codeVal = escapeHtml(draft.subject_code !== undefined ? draft.subject_code : (row.subject_code || ""));
       const phoneVal = escapeHtml(draft.phone !== undefined ? draft.phone : (row.phone_number || ""));
+      const pnameVal = escapeHtml(draft.participant_name !== undefined ? draft.participant_name : (row.participant_name || ""));
       const weekVal = escapeHtml(recordAssignedWeekDraftValue(row, draft));
       const weekHint = row.effective_recruitment_week != null && row.effective_recruitment_week !== ""
         ? ("默認第 " + row.effective_recruitment_week + " 周")
@@ -2870,7 +2878,8 @@ ADMIN_SCRIPTS = """
         + "<td><input type='number' min='1' class='rec-week-input' style='width:56px;padding:6px 8px;' value='"
         + weekVal + "' placeholder='" + escapeHtml(weekHint) + "' title='留空表示按站點/入組日期；填寫後優先用於圖表統計' /></td>"
         + "<td><input type='text' class='rec-subject-code-input' value='" + codeVal + "' placeholder='可選' /></td>"
-        + "<td><input type='text' class='rec-phone-input' value='" + phoneVal + "' /></td><td>"
+        + "<td><input type='text' class='rec-phone-input' value='" + phoneVal + "' /></td>"
+        + "<td><input type='text' class='rec-participant-name-input' value='" + pnameVal + "' placeholder='可選' /></td><td>"
         + escapeHtml(row.site_id) + "</td><td>"
         + escapeHtml(row.recruiter_id || "") + "</td><td>" + renderGroupBadge(row.allocation_group) + "</td><td>"
         + renderStatusSelect(row, draft.status) + "</td><td>"
@@ -2879,6 +2888,7 @@ ADMIN_SCRIPTS = """
       const statusSel = tr.querySelector("select.rec-status-select");
       const codeInp = tr.querySelector("input.rec-subject-code-input");
       const phoneInp = tr.querySelector("input.rec-phone-input");
+      const pnameInp = tr.querySelector("input.rec-participant-name-input");
       const weekInp = tr.querySelector("input.rec-week-input");
       const en = row.enrollment_no;
       if (statusSel) statusSel.addEventListener("change", function() {
@@ -2897,6 +2907,12 @@ ADMIN_SCRIPTS = """
         window.__recordsDrafts = window.__recordsDrafts || {};
         const d = window.__recordsDrafts[en] || {};
         d.phone = phoneInp.value;
+        window.__recordsDrafts[en] = d;
+      });
+      if (pnameInp) pnameInp.addEventListener("input", function() {
+        window.__recordsDrafts = window.__recordsDrafts || {};
+        const d = window.__recordsDrafts[en] || {};
+        d.participant_name = pnameInp.value;
         window.__recordsDrafts[en] = d;
       });
       if (weekInp) weekInp.addEventListener("input", function() {
@@ -3110,11 +3126,13 @@ ADMIN_SCRIPTS = """
     if (!tr || !row) return null;
     const codeInp = tr.querySelector("input.rec-subject-code-input");
     const phoneInp = tr.querySelector("input.rec-phone-input");
+    const pnameInp = tr.querySelector("input.rec-participant-name-input");
     const weekInp = tr.querySelector("input.rec-week-input");
     const statusSel = tr.querySelector("select.rec-status-select");
     const origStatus = recordEffectiveStatus(row);
     const origCode = String(row.subject_code || "");
     const origPhone = String(row.phone_number || "");
+    const origPname = String(row.participant_name || "");
     const origWeek = recordAssignedWeekStored(row);
     const change = { enrollment_no: enrollmentNo, row: row };
     let has = false;
@@ -3128,6 +3146,10 @@ ADMIN_SCRIPTS = """
     }
     if (phoneInp && phoneInp.value.trim() !== origPhone) {
       change.phone = phoneInp.value;
+      has = true;
+    }
+    if (pnameInp && pnameInp.value.trim() !== origPname) {
+      change.participant_name = pnameInp.value;
       has = true;
     }
     if (weekInp && String(weekInp.value || "").trim() !== origWeek) {
@@ -3163,6 +3185,14 @@ ADMIN_SCRIPTS = """
         reason: "manual row save (list)"
       });
     }
+    if (change.participant_name !== undefined) {
+      await api("/admin/randomization-records/participant-name", "PATCH", {
+        enrollment_no: en,
+        participant_name: change.participant_name.trim(),
+        changed_by: "admin",
+        reason: "manual row save (list)"
+      });
+    }
     if (change.assigned_recruitment_week !== undefined) {
       const week = parseRecordAssignedWeekInput(change.assigned_recruitment_week);
       if (week === undefined) throw new Error("入組編號 " + en + " 的歸屬周須為正整數或留空");
@@ -3183,6 +3213,7 @@ ADMIN_SCRIPTS = """
     }
     if (change.subject_code !== undefined) parts.push("編碼");
     if (change.phone !== undefined) parts.push("手機號");
+    if (change.participant_name !== undefined) parts.push("參加者姓名");
     if (change.assigned_recruitment_week !== undefined) parts.push("歸屬周");
     return parts;
   }
@@ -3207,7 +3238,7 @@ ADMIN_SCRIPTS = """
     }
     try {
       await persistRecordChange(change);
-      clearRecordDraft(enrollmentNo, ["status", "subject_code", "phone", "assigned_recruitment_week"]);
+      clearRecordDraft(enrollmentNo, ["status", "subject_code", "phone", "participant_name", "assigned_recruitment_week"]);
       await refreshRecordsDataPreserveDrafts();
       resultBox.textContent = "[OK] 已保存 " + enrollmentNo + "（" + parts.join("、") + "）";
     } catch (err) {
@@ -3226,12 +3257,14 @@ ADMIN_SCRIPTS = """
     const statusN = pending.filter(function(c) { return c.status !== undefined; }).length;
     const codeN = pending.filter(function(c) { return c.subject_code !== undefined; }).length;
     const phoneN = pending.filter(function(c) { return c.phone !== undefined; }).length;
+    const pnameN = pending.filter(function(c) { return c.participant_name !== undefined; }).length;
     const weekN = pending.filter(function(c) { return c.assigned_recruitment_week !== undefined; }).length;
     let summary = "確認保存當前篩選結果中的 " + pending.length + " 條變更？";
     const parts = [];
     if (statusN) parts.push("狀態 " + statusN + " 條");
     if (codeN) parts.push("編碼 " + codeN + " 條");
     if (phoneN) parts.push("手機號 " + phoneN + " 條");
+    if (pnameN) parts.push("參加者姓名 " + pnameN + " 條");
     if (weekN) parts.push("歸屬周 " + weekN + " 條");
     if (parts.length) summary += "（" + parts.join("、") + "）";
     if (!confirm(summary)) return;
@@ -3241,7 +3274,7 @@ ADMIN_SCRIPTS = """
         const change = pending[i];
         const en = change.enrollment_no;
         await persistRecordChange(change);
-        clearRecordDraft(en, ["status", "subject_code", "phone", "assigned_recruitment_week"]);
+        clearRecordDraft(en, ["status", "subject_code", "phone", "participant_name", "assigned_recruitment_week"]);
         saved += 1;
         if (resultBox) resultBox.textContent = "[...] 正在保存 " + (i + 1) + "/" + pending.length;
       }
@@ -3306,6 +3339,15 @@ ADMIN_SCRIPTS = """
     return p.subject_code || "";
   }
 
+  function auditParticipantNameDisplay(p) {
+    const hasOld = p.old_participant_name !== undefined;
+    const hasNew = p.new_participant_name !== undefined;
+    if (hasOld || hasNew) {
+      return String(p.old_participant_name || "—") + " → " + String(p.new_participant_name || "—");
+    }
+    return p.participant_name || "";
+  }
+
   async function loadAudits() {
     const tbody = document.querySelector("#auditTable tbody");
     if (!tbody) return;
@@ -3321,6 +3363,7 @@ ADMIN_SCRIPTS = """
         + "<td>" + auditCell(auditPhoneDisplay(p)) + "</td>"
         + "<td>" + auditCell(p.site_id || p.existing_site_id) + "</td>"
         + "<td>" + auditCell(p.recruiter_id) + "</td>"
+        + "<td>" + auditCell(auditParticipantNameDisplay(p)) + "</td>"
         + "<td>" + auditCell(auditStatusDisplay(p, row.event_type)) + "</td>"
         + "<td>" + auditCell(auditSubjectCodeDisplay(p)) + "</td>"
         + "<td>" + auditCell(p.enrollment_no || p.existing_enrollment_no) + "</td>"

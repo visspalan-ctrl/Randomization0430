@@ -469,6 +469,40 @@ def test_admin_can_maintain_record_phone():
     assert corrected.json()["phone_number"] == "+85260000999"
 
 
+def test_participant_name_on_randomization_and_admin_update():
+    client = TestClient(app)
+    open_batch(client, ["SITE_01"])
+    set_site_password(client, "SITE_01")
+    randomized = client.post(
+        "/randomization/trigger",
+        json={
+            "phone_number": "+85260000071",
+            "recruiter_id": "r1",
+            "site_id": "SITE_01",
+            "recruiter_password": "123456",
+            "participant_name": " 張三 ",
+        },
+    )
+    assert randomized.status_code == 200
+    enrollment_no = randomized.json()["enrollment_no"]
+    listing = admin_get(client, "/admin/randomization-records").json()
+    item = next(i for i in listing["items"] if i["enrollment_no"] == enrollment_no)
+    assert item["participant_name"] == "張三"
+
+    updated = admin_patch(
+        client,
+        "/admin/randomization-records/participant-name",
+        json={
+            "enrollment_no": enrollment_no,
+            "participant_name": "李四",
+            "changed_by": "admin",
+            "reason": "fix name",
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["participant_name"] == "李四"
+
+
 def test_admin_can_update_randomization_settings():
     client = TestClient(app)
     updated = admin_put(

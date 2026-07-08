@@ -85,6 +85,7 @@ class RandomizationRecord(Base):
     enrollment_no: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
     phone_number: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
     recruiter_id: Mapped[str] = mapped_column(String(64), default="")
+    participant_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     site_id: Mapped[str] = mapped_column(String(64), nullable=False)
     site_name: Mapped[str] = mapped_column(String(128), nullable=False)
     allocation_group: Mapped[str] = mapped_column(String(16), nullable=False)

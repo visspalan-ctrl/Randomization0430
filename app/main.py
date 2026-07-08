@@ -275,6 +275,7 @@ def _randomization_trigger_audit_payload(
         "phone_number": payload.phone_number,
         "site_id": payload.site_id,
         "recruiter_id": payload.recruiter_id,
+        "participant_name": _normalize_participant_name(payload.participant_name),
         "at": utc_iso(at),
     }
     out.update(extra)
@@ -354,6 +355,9 @@ def ensure_schema_migrations() -> None:
             conn.execute(text("ALTER TABLE randomization_records ADD COLUMN subject_code VARCHAR(64)"))
         if rr_cols and "assigned_recruitment_week" not in rr_cols:
             conn.execute(text("ALTER TABLE randomization_records ADD COLUMN assigned_recruitment_week INTEGER"))
+        rr_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_records')")).fetchall()]
+        if rr_cols and "participant_name" not in rr_cols:
+            conn.execute(text("ALTER TABLE randomization_records ADD COLUMN participant_name VARCHAR(128)"))
         rs_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_settings')")).fetchall()]
         if rs_cols and "randomization_seed" not in rs_cols:
             conn.execute(text("ALTER TABLE randomization_settings ADD COLUMN randomization_seed INTEGER"))
@@ -460,6 +464,7 @@ class RandomizationTriggerRequest(BaseModel):
     site_id: str
     recruiter_id: str
     recruiter_password: str
+    participant_name: str = ""
     at: datetime | None = None
 
 
@@ -596,6 +601,13 @@ class SubjectCodeUpdateRequest(BaseModel):
     reason: str = ""
 
 
+class ParticipantNameUpdateRequest(BaseModel):
+    enrollment_no: str
+    participant_name: str = ""
+    changed_by: str
+    reason: str = ""
+
+
 class RecordAssignedWeekRequest(BaseModel):
     enrollment_no: str
     assigned_recruitment_week: int | None = None
@@ -646,6 +658,7 @@ def _record_audit_snapshot(record: RandomizationRecord) -> dict[str, object]:
         "site_id": record.site_id,
         "site_name": record.site_name,
         "recruiter_id": record.recruiter_id,
+        "participant_name": getattr(record, "participant_name", None),
         "allocation_group": record.allocation_group,
         "activation_status": record.activation_status,
         "trial_status": getattr(record, "trial_status", TRIAL_STATUS_TRIAL) or TRIAL_STATUS_TRIAL,
@@ -709,6 +722,11 @@ def _voided_enrollment_counts(db: Session) -> tuple[int, int, int]:
 def _normalize_subject_code(raw: str) -> str | None:
     code = raw.strip()
     return code if code else None
+
+
+def _normalize_participant_name(raw: str) -> str | None:
+    name = (raw or "").strip()
+    return name if name else None
 
 
 def _record_effective_recruitment_week(
@@ -1151,6 +1169,7 @@ def randomize_page():
             </select>
             <input id="phone" placeholder="請輸入號碼（不含區號）" inputmode="numeric" />
           </div>
+          <label>參加者姓名</label><input id="pname" placeholder="請輸入姓名" />
           <label>招募地點</label>
           <select id="site">
             <option value="">請選擇站點</option>
@@ -1272,6 +1291,7 @@ def randomize_page():
             phone_number: code + localPhone,
             site_id: document.getElementById("site").value,
             recruiter_id: document.getElementById("rid").value,
+            participant_name: (document.getElementById("pname").value || "").trim(),
             recruiter_password: document.getElementById("pwd").value,
             at: new Date().toISOString()
           };
@@ -1767,6 +1787,7 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
         enrollment_no=next_enrollment_no(db),
         phone_number=payload.phone_number,
         recruiter_id=payload.recruiter_id,
+        participant_name=_normalize_participant_name(payload.participant_name),
         site_id=payload.site_id,
         site_name=site_name,
         allocation_group=group,
@@ -2019,6 +2040,7 @@ def get_randomization_records(db: Session = Depends(get_db)):
                 "enrollment_no": r.enrollment_no,
                 "phone_number": _display_phone(r.phone_number, r.enrollment_no),
                 "recruiter_id": r.recruiter_id,
+                "participant_name": getattr(r, "participant_name", None),
                 "site_id": r.site_id,
                 "site_name": r.site_name,
                 "allocation_group": r.allocation_group,
@@ -2045,6 +2067,7 @@ def export_randomization_records_csv(db: Session = Depends(get_db)):
             "phone_number",
             "site_id",
             "recruiter_id",
+            "participant_name",
             "site_name",
             "allocation_group",
             "randomized_at (HKT)",
@@ -2068,6 +2091,7 @@ def export_randomization_records_csv(db: Session = Depends(get_db)):
                 _display_phone(r.phone_number, r.enrollment_no),
                 r.site_id,
                 r.recruiter_id,
+                getattr(r, "participant_name", None) or "",
                 r.site_name,
                 r.allocation_group,
                 format_hk_datetime(r.randomized_at),
@@ -2286,6 +2310,31 @@ def admin_update_subject_code(payload: SubjectCodeUpdateRequest, db: Session = D
         },
     )
     return {"ok": True, "enrollment_no": record.enrollment_no, "subject_code": record.subject_code}
+
+
+@app.patch("/admin/randomization-records/participant-name")
+def admin_update_participant_name(payload: ParticipantNameUpdateRequest, db: Session = Depends(get_db)):
+    record = db.scalar(select(RandomizationRecord).where(RandomizationRecord.enrollment_no == payload.enrollment_no))
+    if record is None:
+        raise HTTPException(status_code=404, detail="record_not_found")
+    new_name = _normalize_participant_name(payload.participant_name)
+    snapshot = _record_audit_snapshot(record)
+    old_name = getattr(record, "participant_name", None)
+    record.participant_name = new_name
+    db.commit()
+    add_audit(
+        db,
+        "admin_participant_name_updated",
+        {
+            **snapshot,
+            "old_participant_name": old_name,
+            "new_participant_name": new_name,
+            "participant_name": new_name,
+            "changed_by": payload.changed_by,
+            "reason": payload.reason,
+        },
+    )
+    return {"ok": True, "enrollment_no": record.enrollment_no, "participant_name": record.participant_name}
 
 
 @app.patch("/admin/randomization-records/assigned-week")
