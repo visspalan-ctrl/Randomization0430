@@ -358,6 +358,9 @@ def ensure_schema_migrations() -> None:
         rr_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_records')")).fetchall()]
         if rr_cols and "participant_name" not in rr_cols:
             conn.execute(text("ALTER TABLE randomization_records ADD COLUMN participant_name VARCHAR(128)"))
+        rr_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_records')")).fetchall()]
+        if rr_cols and "whatsapp_number" not in rr_cols:
+            conn.execute(text("ALTER TABLE randomization_records ADD COLUMN whatsapp_number VARCHAR(32)"))
         rs_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_settings')")).fetchall()]
         if rs_cols and "randomization_seed" not in rs_cols:
             conn.execute(text("ALTER TABLE randomization_settings ADD COLUMN randomization_seed INTEGER"))
@@ -421,6 +424,9 @@ def startup() -> None:
             setting = db.get(RandomizationSetting, 1)
             if setting is not None and setting.randomization_seed is None:
                 setting.randomization_seed = DEFAULT_RANDOMIZATION_SEED
+        for record in db.scalars(select(RandomizationRecord)).all():
+            if _stored_whatsapp_number(record) is None:
+                record.whatsapp_number = _display_phone(record.phone_number, record.enrollment_no)
         ensure_preset_sites(db)
         db.commit()
 
@@ -608,6 +614,13 @@ class ParticipantNameUpdateRequest(BaseModel):
     reason: str = ""
 
 
+class WhatsappNumberUpdateRequest(BaseModel):
+    enrollment_no: str
+    whatsapp_number: str = Field(min_length=6)
+    changed_by: str
+    reason: str = ""
+
+
 class RecordAssignedWeekRequest(BaseModel):
     enrollment_no: str
     assigned_recruitment_week: int | None = None
@@ -650,6 +663,21 @@ def _display_phone(stored: str, enrollment_no: str) -> str:
     return stored
 
 
+def _stored_whatsapp_number(record: RandomizationRecord) -> str | None:
+    raw = getattr(record, "whatsapp_number", None)
+    if raw is None:
+        return None
+    trimmed = str(raw).strip()
+    return trimmed if trimmed else None
+
+
+def _display_whatsapp_number(record: RandomizationRecord) -> str:
+    stored = _stored_whatsapp_number(record)
+    if stored:
+        return stored
+    return _display_phone(record.phone_number, record.enrollment_no)
+
+
 def _record_audit_snapshot(record: RandomizationRecord) -> dict[str, object]:
     """管理端變更審計：記錄當前入組記錄快照（不含密碼）。"""
     return {
@@ -659,6 +687,7 @@ def _record_audit_snapshot(record: RandomizationRecord) -> dict[str, object]:
         "site_name": record.site_name,
         "recruiter_id": record.recruiter_id,
         "participant_name": getattr(record, "participant_name", None),
+        "whatsapp_number": _display_whatsapp_number(record),
         "allocation_group": record.allocation_group,
         "activation_status": record.activation_status,
         "trial_status": getattr(record, "trial_status", TRIAL_STATUS_TRIAL) or TRIAL_STATUS_TRIAL,
@@ -727,6 +756,11 @@ def _normalize_subject_code(raw: str) -> str | None:
 def _normalize_participant_name(raw: str) -> str | None:
     name = (raw or "").strip()
     return name if name else None
+
+
+def _normalize_whatsapp_number(raw: str) -> str:
+    number = (raw or "").strip().replace(" ", "")
+    return number
 
 
 def _record_effective_recruitment_week(
@@ -1788,6 +1822,7 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
         phone_number=payload.phone_number,
         recruiter_id=payload.recruiter_id,
         participant_name=_normalize_participant_name(payload.participant_name),
+        whatsapp_number=payload.phone_number,
         site_id=payload.site_id,
         site_name=site_name,
         allocation_group=group,
@@ -2041,6 +2076,7 @@ def get_randomization_records(db: Session = Depends(get_db)):
                 "phone_number": _display_phone(r.phone_number, r.enrollment_no),
                 "recruiter_id": r.recruiter_id,
                 "participant_name": getattr(r, "participant_name", None),
+                "whatsapp_number": _display_whatsapp_number(r),
                 "site_id": r.site_id,
                 "site_name": r.site_name,
                 "allocation_group": r.allocation_group,
@@ -2068,6 +2104,7 @@ def export_randomization_records_csv(db: Session = Depends(get_db)):
             "site_id",
             "recruiter_id",
             "participant_name",
+            "whatsapp_number",
             "site_name",
             "allocation_group",
             "randomized_at (HKT)",
@@ -2092,6 +2129,7 @@ def export_randomization_records_csv(db: Session = Depends(get_db)):
                 r.site_id,
                 r.recruiter_id,
                 getattr(r, "participant_name", None) or "",
+                _display_whatsapp_number(r),
                 r.site_name,
                 r.allocation_group,
                 format_hk_datetime(r.randomized_at),
@@ -2335,6 +2373,37 @@ def admin_update_participant_name(payload: ParticipantNameUpdateRequest, db: Ses
         },
     )
     return {"ok": True, "enrollment_no": record.enrollment_no, "participant_name": record.participant_name}
+
+
+@app.patch("/admin/randomization-records/whatsapp")
+def admin_update_whatsapp_number(payload: WhatsappNumberUpdateRequest, db: Session = Depends(get_db)):
+    record = db.scalar(select(RandomizationRecord).where(RandomizationRecord.enrollment_no == payload.enrollment_no))
+    if record is None:
+        raise HTTPException(status_code=404, detail="record_not_found")
+    new_number = _normalize_whatsapp_number(payload.whatsapp_number)
+    if len(new_number) < 6:
+        raise HTTPException(status_code=400, detail="invalid_whatsapp_number")
+    snapshot = _record_audit_snapshot(record)
+    old_number = snapshot["whatsapp_number"]
+    record.whatsapp_number = new_number
+    db.commit()
+    add_audit(
+        db,
+        "admin_whatsapp_number_updated",
+        {
+            **snapshot,
+            "old_whatsapp_number": old_number,
+            "new_whatsapp_number": new_number,
+            "whatsapp_number": new_number,
+            "changed_by": payload.changed_by,
+            "reason": payload.reason,
+        },
+    )
+    return {
+        "ok": True,
+        "enrollment_no": record.enrollment_no,
+        "whatsapp_number": _display_whatsapp_number(record),
+    }
 
 
 @app.patch("/admin/randomization-records/assigned-week")

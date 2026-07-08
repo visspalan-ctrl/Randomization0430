@@ -503,6 +503,55 @@ def test_participant_name_on_randomization_and_admin_update():
     assert updated.json()["participant_name"] == "李四"
 
 
+def test_whatsapp_number_defaults_to_phone_and_can_be_updated():
+    client = TestClient(app)
+    open_batch(client, ["SITE_01"])
+    set_site_password(client, "SITE_01")
+    randomized = client.post(
+        "/randomization/trigger",
+        json={
+            "phone_number": "+85260000072",
+            "recruiter_id": "r1",
+            "site_id": "SITE_01",
+            "recruiter_password": "123456",
+        },
+    )
+    assert randomized.status_code == 200
+    enrollment_no = randomized.json()["enrollment_no"]
+    listing = admin_get(client, "/admin/randomization-records").json()
+    item = next(i for i in listing["items"] if i["enrollment_no"] == enrollment_no)
+    assert item["whatsapp_number"] == "+85260000072"
+
+    updated = admin_patch(
+        client,
+        "/admin/randomization-records/whatsapp",
+        json={
+            "enrollment_no": enrollment_no,
+            "whatsapp_number": "+85269998888",
+            "changed_by": "admin",
+            "reason": "different whatsapp",
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["whatsapp_number"] == "+85269998888"
+
+    phone_patch = admin_patch(
+        client,
+        "/admin/randomization-records/phone",
+        json={
+            "enrollment_no": enrollment_no,
+            "new_phone_number": "+85260007777",
+            "changed_by": "admin",
+            "reason": "phone only",
+        },
+    )
+    assert phone_patch.status_code == 200
+    listing2 = admin_get(client, "/admin/randomization-records").json()
+    item2 = next(i for i in listing2["items"] if i["enrollment_no"] == enrollment_no)
+    assert item2["phone_number"] == "+85260007777"
+    assert item2["whatsapp_number"] == "+85269998888"
+
+
 def test_admin_can_update_randomization_settings():
     client = TestClient(app)
     updated = admin_put(
