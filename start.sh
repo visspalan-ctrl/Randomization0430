@@ -97,6 +97,26 @@ if [ ! -x "$VENV/bin/python" ] || ! "$VENV/bin/python" -c "import uvicorn" 2>/de
   "$VENV/bin/pip" install -r requirements.txt
 fi
 
+if [ "$CMD" = "sync" ]; then
+  if ! command -v git >/dev/null; then
+    echo "需要 git 才能同步"
+    exit 1
+  fi
+  SYNC_BRANCH="${SYNC_BRANCH:-main}"
+  echo "從 GitHub 拉取最新代碼（分支: ${SYNC_BRANCH}）..."
+  git fetch origin
+  if ! git pull --rebase origin "$SYNC_BRANCH"; then
+    echo "同步失敗。若有本地未提交修改，請先 git stash 或提交後再試。"
+    exit 1
+  fi
+  echo "同步完成: $(git log -1 --oneline)"
+  if needs_terminal_mode; then
+    echo "此目錄在 iCloud Drive 內，代碼文件會隨 iCloud 自動上傳到其他設備。"
+    echo "注意: randomization.db 與 uploads/qr 未納入 Git，僅保存在本機 iCloud 目錄。"
+  fi
+  exit 0
+fi
+
 if [ "$CMD" = "status" ]; then
   if curl -fsS --max-time 2 "http://127.0.0.1:${PORT}/" >/dev/null 2>&1; then
     echo "服務運行中"
@@ -174,5 +194,5 @@ if [ "$CMD" = "restart" ] || [ -z "$CMD" ]; then
   exit 1
 fi
 
-echo "用法: ./start.sh [restart|terminal|run|bg|stop|status]"
+echo "用法: ./start.sh [restart|terminal|run|bg|stop|status|sync]"
 exit 1
