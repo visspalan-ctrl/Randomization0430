@@ -14,13 +14,32 @@ PIDFILE="/tmp/randomization_uvicorn.pid"
 CMD="${1:-restart}"
 
 print_urls() {
+  echo "  項目目錄: $ROOT"
+  if command -v git >/dev/null && [ -d .git ]; then
+    echo "  Git 版本: $(git log -1 --oneline 2>/dev/null || echo 未知)"
+  fi
   echo "  首頁:     http://127.0.0.1:${PORT}/"
-  echo "  受試者頁: http://127.0.0.1:${PORT}/h5/randomize"
+  echo "  受試者頁: http://127.0.0.1:${PORT}/h5/enroll （推薦）"
+  echo "  舊連結:   http://127.0.0.1:${PORT}/h5/randomize"
+  echo "  版本 API: http://127.0.0.1:${PORT}/h5/form-info"
   echo "  管理登入: http://127.0.0.1:${PORT}/admin/login"
   echo "  日誌:     $LOG"
 }
 
+kill_port_listeners() {
+  local pids
+  pids="$(lsof -tiTCP:${PORT} -sTCP:LISTEN 2>/dev/null || true)"
+  if [ -n "$pids" ]; then
+    echo "釋放端口 ${PORT} ..."
+    kill $pids 2>/dev/null || true
+    sleep 1
+    kill -9 $pids 2>/dev/null || true
+    sleep 1
+  fi
+}
+
 stop_existing() {
+  kill_port_listeners
   if [ -f "$PIDFILE" ]; then
     local pid
     pid="$(cat "$PIDFILE")"
@@ -63,28 +82,50 @@ maybe_auto_sync() {
     echo "同步跳過：無法連線 GitHub"
     return 0
   fi
-  if git pull --rebase origin "$branch" 2>/dev/null; then
+  if git pull --rebase origin "$branch"; then
     echo "同步完成: $(git log -1 --oneline)"
   else
-    echo "同步跳過：有本地未提交修改或衝突，請手動執行 ./start.sh sync"
+    echo "同步失敗。請執行 ./start.sh diagnose 查看詳情"
+    git status -sb 2>/dev/null || true
   fi
 }
 
 verify_h5_form() {
   local html
-  html="$(curl -fsS --max-time 4 "http://127.0.0.1:${PORT}/h5/randomize" 2>/dev/null || true)"
+  html="$(curl -fsS --max-time 4 "http://127.0.0.1:${PORT}/h5/enroll" 2>/dev/null || true)"
+  if [ -z "$html" ]; then
+    html="$(curl -fsS --max-time 4 "http://127.0.0.1:${PORT}/h5/randomize" 2>/dev/null || true)"
+  fi
   if [ -z "$html" ]; then
     echo "  警告: 無法讀取受試者頁"
     return 1
   fi
   if echo "$html" | grep -q 'id="pname"'; then
     local ver
-    ver="$(curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/h5/form-info" 2>/dev/null | grep -o '"form_version":"[^"]*"' | head -1 || true)"
-    echo "  受試者頁: 已含「參加者姓名」欄位 ${ver}"
+    ver="$(curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/h5/form-info" 2>/dev/null || true)"
+    echo "  受試者頁: 已含「參加者姓名」欄位"
+    echo "  form-info: ${ver}"
     return 0
   fi
-  echo "  警告: 受試者頁仍是舊版（無參加者姓名）。請執行: ./start.sh sync && ./start.sh restart"
+  echo "  警告: 受試者頁仍是舊版（無參加者姓名）"
+  echo "  請在本目錄執行: ./start.sh diagnose"
   return 1
+}
+
+print_local_source_check() {
+  echo "本地源碼檢查:"
+  echo "  目錄: $ROOT"
+  if command -v git >/dev/null && [ -d .git ]; then
+    git status -sb 2>/dev/null || true
+    echo "  提交: $(git log -1 --oneline 2>/dev/null || echo 無)"
+  else
+    echo "  警告: 非 Git 目錄，無法自動同步 GitHub"
+  fi
+  if grep -q 'id="pname"' app/main.py 2>/dev/null; then
+    echo "  app/main.py: 含參加者姓名字段"
+  else
+    echo "  警告: app/main.py 不含參加者姓名字段（代碼過舊）"
+  fi
 }
 
 start_background() {
@@ -131,6 +172,24 @@ if [ ! -x "$VENV/bin/python" ] || ! "$VENV/bin/python" -c "import uvicorn" 2>/de
   "$VENV/bin/pip" install -r requirements.txt
 fi
 
+if [ "$CMD" = "diagnose" ]; then
+  print_local_source_check
+  echo ""
+  if curl -fsS --max-time 2 "http://127.0.0.1:${PORT}/" >/dev/null 2>&1; then
+    echo "服務: 運行中"
+    verify_h5_form || true
+    echo ""
+    echo "端口佔用:"
+    lsof -nP -iTCP:${PORT} -sTCP:LISTEN 2>/dev/null || echo "  (無)"
+    echo ""
+    echo "uvicorn 進程:"
+    pgrep -fl "uvicorn app\.main:app" 2>/dev/null || echo "  (無)"
+  else
+    echo "服務: 未運行"
+  fi
+  exit 0
+fi
+
 if [ "$CMD" = "sync" ]; then
   if ! command -v git >/dev/null; then
     echo "需要 git 才能同步"
@@ -167,8 +226,10 @@ if [ "$CMD" = "status" ]; then
 fi
 
 if [ "$CMD" = "run" ]; then
+  print_local_source_check
+  echo ""
   echo "前台執行（關閉此終端機視窗即停止服務）..."
-  echo "存取: http://127.0.0.1:${PORT}/"
+  echo "存取: http://127.0.0.1:${PORT}/h5/enroll"
   exec "$VENV/bin/uvicorn" app.main:app --host "$HOST" --port "$PORT" --reload
 fi
 
@@ -233,5 +294,5 @@ if [ "$CMD" = "restart" ] || [ -z "$CMD" ]; then
   exit 1
 fi
 
-echo "用法: ./start.sh [restart|terminal|run|bg|stop|status|sync]"
+echo "用法: ./start.sh [restart|terminal|run|bg|stop|status|sync|diagnose]"
 exit 1

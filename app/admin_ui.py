@@ -818,7 +818,8 @@ def render_sidebar(active: PageId) -> str:
       </nav>
       <div class="sidebar-footer">
         <a href="/docs" target="_blank">API 文件 (Swagger)</a>
-        · <a href="/h5/randomize" target="_blank">受試者頁</a>
+        · <a href="/h5/enroll" target="_blank">受試者入組頁</a>
+        · <a href="/h5/randomize" target="_blank">受試者頁（舊連結）</a>
       </div>
     </aside>
     """

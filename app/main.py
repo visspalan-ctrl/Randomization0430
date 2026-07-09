@@ -85,7 +85,7 @@ ADMIN_SESSION_VALUE = "ok"
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 TRIAL_STATUS_TRIAL = "trial"
 TRIAL_STATUS_NONTrial = "nontrial"
-H5_FORM_VERSION = "2026-07-09-participant-name"
+H5_FORM_VERSION = "2026-07-09-enroll-v2"
 ENROLLMENT_MODE_TRIAL = "trial"
 ENROLLMENT_MODE_NONTrial = "nontrial"
 QR_GROUP_TYPES = frozenset({"GENAI", "HUMAN"})
@@ -1073,10 +1073,13 @@ def qr_group_redirect(group: str, db: Session = Depends(get_db)):
 
 @app.get("/", response_class=HTMLResponse)
 def home_page():
-    return """
-    <html><body>
+    return f"""
+    <html><body style="font-family:-apple-system,sans-serif;padding:20px;">
     <h2>Randomization Product</h2>
-    <p><a href="/h5/randomize">受試者掃碼頁</a></p>
+    <p><strong>表單版本：</strong>{H5_FORM_VERSION}</p>
+    <p><a href="/h5/enroll">受試者入組頁（推薦，含參加者姓名）</a></p>
+    <p><a href="/h5/randomize">受試者掃碼頁（舊連結）</a></p>
+    <p><a href="/h5/form-info">表單版本 API</a></p>
     <p><a href="/admin/web?page=settings">管理員後台頁</a></p>
     </body></html>
     """
@@ -1087,12 +1090,12 @@ def h5_form_info():
     return {
         "form_version": H5_FORM_VERSION,
         "has_participant_name_field": True,
-        "participant_page": "/h5/randomize",
+        "participant_pages": ["/h5/enroll", "/h5/randomize"],
+        "recommended_page": "/h5/enroll",
     }
 
 
-@app.get("/h5/randomize", response_class=HTMLResponse)
-def randomize_page():
+def _h5_randomize_html() -> str:
     html = """
     <!doctype html>
     <html>
@@ -1381,13 +1384,27 @@ def randomize_page():
     </html>
     """
     html = html.replace("__H5_FORM_VERSION__", H5_FORM_VERSION)
+    return html
+
+
+def _h5_randomize_response() -> HTMLResponse:
     return HTMLResponse(
-        content=html,
+        content=_h5_randomize_html(),
         headers={
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
         },
     )
+
+
+@app.get("/h5/randomize", response_class=HTMLResponse)
+def randomize_page():
+    return _h5_randomize_response()
+
+
+@app.get("/h5/enroll", response_class=HTMLResponse)
+def enroll_page():
+    return _h5_randomize_response()
 
 
 @app.get("/admin/web", response_class=HTMLResponse)
