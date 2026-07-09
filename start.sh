@@ -112,6 +112,26 @@ verify_h5_form() {
   return 1
 }
 
+verify_records_account_column() {
+  local html
+  html="$(curl -fsS --max-time 4 -u "${ADMIN_USERNAME:-admin}:${ADMIN_PASSWORD:-admin}" \
+    "http://127.0.0.1:${PORT}/admin/web?page=records" 2>/dev/null || true)"
+  if [ -z "$html" ]; then
+    echo "  警告: 無法讀取記錄列表頁"
+    return 1
+  fi
+  if echo "$html" | grep -q 'rec-account-added-input'; then
+    echo "  記錄列表: 已含「已添加帳號」勾選列"
+    if echo "$html" | grep -q '2026-07-09-account-added-v1'; then
+      echo "  列表版本: 2026-07-09-account-added-v1"
+    fi
+    return 0
+  fi
+  echo "  警告: 記錄列表仍是舊版（無「已添加帳號」列）"
+  echo "  請執行: git pull origin main && ./start.sh restart"
+  return 1
+}
+
 print_local_source_check() {
   echo "本地源碼檢查:"
   echo "  目錄: $ROOT"
@@ -125,6 +145,11 @@ print_local_source_check() {
     echo "  app/main.py: 含參加者姓名字段"
   else
     echo "  警告: app/main.py 不含參加者姓名字段（代碼過舊）"
+  fi
+  if grep -q 'rec-account-added-input' app/admin_ui.py 2>/dev/null; then
+    echo "  app/admin_ui.py: 含「已添加帳號」勾選列"
+  else
+    echo "  警告: app/admin_ui.py 不含「已添加帳號」列（代碼過舊）"
   fi
 }
 
@@ -178,6 +203,8 @@ if [ "$CMD" = "diagnose" ]; then
   if curl -fsS --max-time 2 "http://127.0.0.1:${PORT}/" >/dev/null 2>&1; then
     echo "服務: 運行中"
     verify_h5_form || true
+    verify_records_account_column || true
+    verify_records_account_column || true
     echo ""
     echo "端口佔用:"
     lsof -nP -iTCP:${PORT} -sTCP:LISTEN 2>/dev/null || echo "  (無)"
@@ -215,6 +242,7 @@ if [ "$CMD" = "status" ]; then
     echo "服務運行中"
     print_urls
     verify_h5_form || true
+    verify_records_account_column || true
     if [ -f "$PIDFILE" ]; then
       echo "  PID:      $(cat "$PIDFILE")"
     fi
@@ -266,8 +294,10 @@ if [ "$CMD" = "restart" ] || [ -z "$CMD" ]; then
     if start_terminal; then
       echo "啟動成功（Terminal 前台）"
       print_urls
-      verify_h5_form || true
-      echo ""
+    verify_h5_form || true
+    verify_records_account_column || true
+    verify_records_account_column || true
+    echo ""
       echo "請保持 Terminal 視窗開啟；關閉即停止服務。"
       exit 0
     fi
@@ -278,6 +308,7 @@ if [ "$CMD" = "restart" ] || [ -z "$CMD" ]; then
     echo "啟動成功（後台）"
     print_urls
     verify_h5_form || true
+    verify_records_account_column || true
     echo "  PID:      $(cat "$PIDFILE")"
     echo ""
     echo "若稍後瀏覽器打不開，請執行: ./start.sh terminal"
@@ -288,6 +319,7 @@ if [ "$CMD" = "restart" ] || [ -z "$CMD" ]; then
     echo "啟動成功（Terminal 前台）"
     print_urls
     verify_h5_form || true
+    verify_records_account_column || true
     exit 0
   fi
   echo "啟動失敗。請手動執行: cd \"$ROOT\" && ./start.sh run"

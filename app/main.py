@@ -1427,7 +1427,13 @@ def enroll_page():
 
 @app.get("/admin/web", response_class=HTMLResponse)
 def admin_page(page: PageId = Query("settings")):
-    return HTMLResponse(render_admin_page(page))
+    return HTMLResponse(
+        render_admin_page(page),
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+        },
+    )
 
 
 @app.post("/admin/sites")

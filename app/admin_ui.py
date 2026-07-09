@@ -11,6 +11,8 @@ from app.models import (
 
 PageId = Literal["settings", "sites", "qr", "records"]
 
+ADMIN_UI_BUILD_ID = "2026-07-09-account-added-v1"
+
 ADMIN_CSS = """
 :root {
   --bg: #f1f5f9;
@@ -1116,6 +1118,7 @@ def panel_records() -> str:
     <div class="page-header">
       <h2>隨機化分組記錄</h2>
       <p class="lead">查詢入組記錄；可編輯受試者編碼、手機號與狀態，修改後點「全部保存」一次提交（或分別點行內按鈕）。新隨機默認為 Trial。</p>
+      <p class="muted" style="margin:6px 0 0;font-size:12px;">列表版本：""" + ADMIN_UI_BUILD_ID + """</p>
     </div>
     <div class="card">
       <h3>入組概覽</h3>
@@ -1195,7 +1198,7 @@ def panel_records() -> str:
       </div>
       <div class="table-wrap" style="margin-top:12px;">
         <table class="data" id="recordsTable">
-          <thead><tr><th>頁內序號</th><th class="sortable-th" id="recordsSortEnrollmentNo" title="點擊按入組編號排序">入組編號<span id="recordsSortEnrollmentNoIcon" class="sort-indicator"></span></th><th>歸屬周</th><th class="sortable-th" id="recordsSortSubjectCode" title="點擊按受試者編碼排序">受試者編碼<span id="recordsSortSubjectCodeIcon" class="sort-indicator"></span></th><th>手機號</th><th>WhatsApp 號</th><th>參加者姓名</th><th>站點</th><th>招募員姓名</th><th>分組</th><th title="手動核對：對方已添加或我方已添加對方">已添加帳號</th><th>狀態</th><th>時間（香港時間）</th><th>操作</th></tr></thead>
+          <thead><tr><th>頁內序號</th><th class="sortable-th" id="recordsSortEnrollmentNo" title="點擊按入組編號排序">入組編號<span id="recordsSortEnrollmentNoIcon" class="sort-indicator"></span></th><th title="手動核對：對方已添加或我方已添加對方">已添加帳號</th><th>歸屬周</th><th class="sortable-th" id="recordsSortSubjectCode" title="點擊按受試者編碼排序">受試者編碼<span id="recordsSortSubjectCodeIcon" class="sort-indicator"></span></th><th>手機號</th><th>WhatsApp 號</th><th>參加者姓名</th><th>站點</th><th>招募員姓名</th><th>分組</th><th>狀態</th><th>時間（香港時間）</th><th>操作</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -3094,6 +3097,9 @@ ADMIN_SCRIPTS = """
       tr.dataset.trialStatus = trialStatus;
       tr.innerHTML =
         "<td>" + String((startIndex || 0) + idx + 1) + "</td><td>" + escapeHtml(row.enrollment_no) + "</td>"
+        + "<td class='rec-account-added-cell' style='text-align:center;'>"
+        + "<input type='checkbox' class='rec-account-added-input' title='手動核對：對方已添加或我方已添加對方'"
+        + (accountAdded ? " checked" : "") + " /></td>"
         + "<td><input type='number' min='1' class='rec-week-input' style='width:56px;padding:6px 8px;' value='"
         + weekVal + "' placeholder='" + escapeHtml(weekHint) + "' title='留空表示按站點/入組日期；填寫後優先用於圖表統計' /></td>"
         + "<td><input type='text' class='rec-subject-code-input' value='" + codeVal + "' placeholder='可選' /></td>"
@@ -3102,9 +3108,7 @@ ADMIN_SCRIPTS = """
         + "<td><input type='text' class='rec-participant-name-input' value='" + pnameVal + "' placeholder='可選' /></td><td>"
         + escapeHtml(row.site_id) + "</td><td>"
         + escapeHtml(row.recruiter_id || "") + "</td><td class='rec-group-cell'>"
-        + renderGroupCell(row, draft) + "</td><td class='rec-account-added-cell' style='text-align:center;'>"
-        + "<input type='checkbox' class='rec-account-added-input' title='手動核對：對方已添加或我方已添加對方'"
-        + (accountAdded ? " checked" : "") + " /></td><td>"
+        + renderGroupCell(row, draft) + "</td><td>"
         + renderStatusSelect(row, draft.status) + "</td><td>"
         + escapeHtml(formatHkTime(row.randomized_at)) + "</td><td><div class='table-actions'>"
         + "<button type='button' class='secondary' style='margin:0;padding:6px 10px;font-size:12px' onclick='saveRecordRow(" + enc + ", this)'>保存修改</button></div></td>";
