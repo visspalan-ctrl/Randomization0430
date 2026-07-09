@@ -469,6 +469,17 @@ def test_admin_can_maintain_record_phone():
     assert corrected.json()["phone_number"] == "+85260000999"
 
 
+def test_h5_randomize_page_has_participant_name_field():
+    client = TestClient(app)
+    res = client.get("/h5/randomize")
+    assert res.status_code == 200
+    assert 'id="pname"' in res.text
+    assert "參加者姓名" in res.text
+    assert res.headers.get("cache-control") == "no-store, no-cache, must-revalidate, max-age=0"
+    info = client.get("/h5/form-info").json()
+    assert info["has_participant_name_field"] is True
+
+
 def test_participant_name_on_randomization_and_admin_update():
     client = TestClient(app)
     open_batch(client, ["SITE_01"])

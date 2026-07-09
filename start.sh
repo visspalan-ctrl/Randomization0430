@@ -53,6 +53,40 @@ needs_terminal_mode() {
   return 1
 }
 
+maybe_auto_sync() {
+  if ! command -v git >/dev/null || [ ! -d .git ]; then
+    return 0
+  fi
+  local branch="${SYNC_BRANCH:-main}"
+  echo "嘗試從 GitHub 同步最新代碼（${branch}）..."
+  if ! git fetch origin "$branch" 2>/dev/null; then
+    echo "同步跳過：無法連線 GitHub"
+    return 0
+  fi
+  if git pull --rebase origin "$branch" 2>/dev/null; then
+    echo "同步完成: $(git log -1 --oneline)"
+  else
+    echo "同步跳過：有本地未提交修改或衝突，請手動執行 ./start.sh sync"
+  fi
+}
+
+verify_h5_form() {
+  local html
+  html="$(curl -fsS --max-time 4 "http://127.0.0.1:${PORT}/h5/randomize" 2>/dev/null || true)"
+  if [ -z "$html" ]; then
+    echo "  警告: 無法讀取受試者頁"
+    return 1
+  fi
+  if echo "$html" | grep -q 'id="pname"'; then
+    local ver
+    ver="$(curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/h5/form-info" 2>/dev/null | grep -o '"form_version":"[^"]*"' | head -1 || true)"
+    echo "  受試者頁: 已含「參加者姓名」欄位 ${ver}"
+    return 0
+  fi
+  echo "  警告: 受試者頁仍是舊版（無參加者姓名）。請執行: ./start.sh sync && ./start.sh restart"
+  return 1
+}
+
 start_background() {
   echo "後台啟動 http://${HOST}:${PORT} ..."
   : >"$LOG"
@@ -121,6 +155,7 @@ if [ "$CMD" = "status" ]; then
   if curl -fsS --max-time 2 "http://127.0.0.1:${PORT}/" >/dev/null 2>&1; then
     echo "服務運行中"
     print_urls
+    verify_h5_form || true
     if [ -f "$PIDFILE" ]; then
       echo "  PID:      $(cat "$PIDFILE")"
     fi
@@ -163,12 +198,14 @@ fi
 
 if [ "$CMD" = "restart" ] || [ -z "$CMD" ]; then
   echo "重新啟動服務..."
+  maybe_auto_sync
   stop_existing
   if needs_terminal_mode; then
     echo "偵測到 iCloud 專案目錄，使用 Terminal 前台啟動（較穩定）..."
     if start_terminal; then
       echo "啟動成功（Terminal 前台）"
       print_urls
+      verify_h5_form || true
       echo ""
       echo "請保持 Terminal 視窗開啟；關閉即停止服務。"
       exit 0
@@ -179,6 +216,7 @@ if [ "$CMD" = "restart" ] || [ -z "$CMD" ]; then
   if start_background; then
     echo "啟動成功（後台）"
     print_urls
+    verify_h5_form || true
     echo "  PID:      $(cat "$PIDFILE")"
     echo ""
     echo "若稍後瀏覽器打不開，請執行: ./start.sh terminal"
@@ -188,6 +226,7 @@ if [ "$CMD" = "restart" ] || [ -z "$CMD" ]; then
   if start_terminal; then
     echo "啟動成功（Terminal 前台）"
     print_urls
+    verify_h5_form || true
     exit 0
   fi
   echo "啟動失敗。請手動執行: cd \"$ROOT\" && ./start.sh run"

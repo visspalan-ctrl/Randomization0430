@@ -85,6 +85,7 @@ ADMIN_SESSION_VALUE = "ok"
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 TRIAL_STATUS_TRIAL = "trial"
 TRIAL_STATUS_NONTrial = "nontrial"
+H5_FORM_VERSION = "2026-07-09-participant-name"
 ENROLLMENT_MODE_TRIAL = "trial"
 ENROLLMENT_MODE_NONTrial = "nontrial"
 QR_GROUP_TYPES = frozenset({"GENAI", "HUMAN"})
@@ -1081,14 +1082,26 @@ def home_page():
     """
 
 
+@app.get("/h5/form-info")
+def h5_form_info():
+    return {
+        "form_version": H5_FORM_VERSION,
+        "has_participant_name_field": True,
+        "participant_page": "/h5/randomize",
+    }
+
+
 @app.get("/h5/randomize", response_class=HTMLResponse)
 def randomize_page():
-    return """
+    html = """
     <!doctype html>
     <html>
     <head>
       <meta charset="utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+      <meta http-equiv="Pragma" content="no-cache" />
+      <meta http-equiv="Expires" content="0" />
       <title>歡迎參加第十七屆「戒煙大贏家」</title>
       <style>
         :root {
@@ -1185,6 +1198,20 @@ def randomize_page():
           background: #fff;
           padding: 4px;
         }
+        .highlight-field {
+          margin-top: 12px;
+          padding: 12px;
+          border-radius: 12px;
+          background: #f0f9ff;
+          border: 1px solid #7dd3fc;
+        }
+        .highlight-field label { margin-top: 0; color: #0c4a6e; }
+        .form-version {
+          margin-top: 14px;
+          font-size: 11px;
+          color: var(--muted);
+          text-align: center;
+        }
       </style>
     </head>
     <body>
@@ -1193,6 +1220,10 @@ def randomize_page():
         <h3 class="title">歡迎參加第十七屆「戒煙大贏家」</h3>
         <p class="lead">請按現場資訊填寫後提交。系統會按當前招募地點與密碼時間窗校驗後完成隨機化。</p>
         <form id="f">
+          <div class="highlight-field">
+            <label for="pname">參加者姓名</label>
+            <input id="pname" name="participant_name" placeholder="請輸入参加者姓名" autocomplete="name" />
+          </div>
           <label>手機號</label>
           <div class="phone-row">
             <select id="phoneCode">
@@ -1203,7 +1234,6 @@ def randomize_page():
             </select>
             <input id="phone" placeholder="請輸入號碼（不含區號）" inputmode="numeric" />
           </div>
-          <label>參加者姓名</label><input id="pname" placeholder="請輸入姓名" />
           <label>招募地點</label>
           <select id="site">
             <option value="">請選擇站點</option>
@@ -1213,6 +1243,7 @@ def randomize_page():
           <p class="muted" style="font-size:12px;margin-top:6px;">校驗時間以伺服器當前時間為準；站點須屬於當前已開啟的招募批次，且密碼在設定的時間窗內有效。</p>
           <button type="submit">提交隨機化</button>
         </form>
+        <p class="form-version">表單版本 __H5_FORM_VERSION__</p>
 
         <div class="result">
           <div class="kv"><strong>入組編號：</strong><span id="enrollmentNo">-</span></div>
@@ -1349,6 +1380,14 @@ def randomize_page():
     </body>
     </html>
     """
+    html = html.replace("__H5_FORM_VERSION__", H5_FORM_VERSION)
+    return HTMLResponse(
+        content=html,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+        },
+    )
 
 
 @app.get("/admin/web", response_class=HTMLResponse)
