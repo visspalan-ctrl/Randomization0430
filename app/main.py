@@ -636,6 +636,13 @@ class TrialStatusUpdateRequest(BaseModel):
     reason: str = ""
 
 
+class AllocationGroupUpdateRequest(BaseModel):
+    enrollment_no: str
+    allocation_group: Literal["GENAI", "HUMAN"]
+    changed_by: str
+    reason: str = ""
+
+
 class RecordVoidRequest(BaseModel):
     enrollment_no: str
     voided_by: str
@@ -2522,6 +2529,38 @@ def admin_update_trial_status(payload: TrialStatusUpdateRequest, db: Session = D
         },
     )
     return {"ok": True, "enrollment_no": record.enrollment_no, "trial_status": record.trial_status}
+
+
+@app.patch("/admin/randomization-records/allocation-group")
+def admin_update_allocation_group(payload: AllocationGroupUpdateRequest, db: Session = Depends(get_db)):
+    record = db.scalar(select(RandomizationRecord).where(RandomizationRecord.enrollment_no == payload.enrollment_no))
+    if record is None:
+        raise HTTPException(status_code=404, detail="record_not_found")
+    if record.activation_status == "voided":
+        raise HTTPException(status_code=400, detail="voided_record_cannot_change_allocation_group")
+    if getattr(record, "trial_status", TRIAL_STATUS_TRIAL) != TRIAL_STATUS_NONTrial:
+        raise HTTPException(status_code=400, detail="only_nontrial_allocation_group_editable")
+    if payload.allocation_group not in QR_GROUP_TYPES:
+        raise HTTPException(status_code=400, detail="invalid_allocation_group")
+    snapshot = _record_audit_snapshot(record)
+    old_group = record.allocation_group
+    if old_group == payload.allocation_group:
+        return {"ok": True, "enrollment_no": record.enrollment_no, "allocation_group": record.allocation_group}
+    record.allocation_group = payload.allocation_group
+    db.commit()
+    add_audit(
+        db,
+        "admin_allocation_group_updated",
+        {
+            **snapshot,
+            "old_allocation_group": old_group,
+            "new_allocation_group": payload.allocation_group,
+            "allocation_group": payload.allocation_group,
+            "changed_by": payload.changed_by,
+            "reason": payload.reason,
+        },
+    )
+    return {"ok": True, "enrollment_no": record.enrollment_no, "allocation_group": record.allocation_group}
 
 
 @app.post("/admin/randomization-records/delete")

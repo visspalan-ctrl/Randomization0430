@@ -1509,6 +1509,70 @@ def test_nontrial_phone_still_blocks_rerandomize():
     assert again["enrollment_no"] == first["enrollment_no"]
 
 
+def test_admin_can_update_nontrial_allocation_group_only():
+    client = TestClient(app)
+    open_batch(client, ["SITE_01"])
+    set_site_password(client, "SITE_01")
+    body = _trigger_randomization(client, "+85261115001")
+    enrollment_no = body["enrollment_no"]
+    original_group = body["allocation_group"]
+
+    marked = admin_patch(
+        client,
+        "/admin/randomization-records/trial-status",
+        json={
+            "enrollment_no": enrollment_no,
+            "trial_status": "nontrial",
+            "changed_by": "admin",
+            "reason": "test nontrial group edit",
+        },
+    )
+    assert marked.status_code == 200
+
+    new_group = "HUMAN" if original_group == "GENAI" else "GENAI"
+    updated = admin_patch(
+        client,
+        "/admin/randomization-records/allocation-group",
+        json={
+            "enrollment_no": enrollment_no,
+            "allocation_group": new_group,
+            "changed_by": "admin",
+            "reason": "manual nontrial group fix",
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["allocation_group"] == new_group
+
+    listing = admin_get(client, "/admin/randomization-records").json()
+    item = next(i for i in listing["items"] if i["enrollment_no"] == enrollment_no)
+    assert item["allocation_group"] == new_group
+
+    back_trial = admin_patch(
+        client,
+        "/admin/randomization-records/trial-status",
+        json={
+            "enrollment_no": enrollment_no,
+            "trial_status": "trial",
+            "changed_by": "admin",
+            "reason": "back to trial",
+        },
+    )
+    assert back_trial.status_code == 200
+
+    blocked = admin_patch(
+        client,
+        "/admin/randomization-records/allocation-group",
+        json={
+            "enrollment_no": enrollment_no,
+            "allocation_group": original_group,
+            "changed_by": "admin",
+            "reason": "should fail on trial",
+        },
+    )
+    assert blocked.status_code == 400
+    assert blocked.json()["detail"] == "only_nontrial_allocation_group_editable"
+
+
 def test_mark_nontrial_to_trial_respects_min_per_group():
     client = TestClient(app)
     open_batch(client, ["SITE_01"])
