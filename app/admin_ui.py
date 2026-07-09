@@ -1498,9 +1498,20 @@ ADMIN_SCRIPTS = """
     syncPasswordFormFromSite();
   }
 
+  function resolvePwdSiteId() {
+    syncEditSelectFromIdInput();
+    syncPwdSiteFromEdit();
+    return (
+      document.getElementById("pwdSiteSelect")?.value?.trim()
+      || document.getElementById("editSiteSelect")?.value?.trim()
+      || document.getElementById("editSiteIdInput")?.value?.trim()
+      || ""
+    );
+  }
+
   function siteHasConfiguredPassword(siteId) {
     const row = siteId && (window.__sitesAdminRows || {})[siteId];
-    return !!(row && row.password_plain);
+    return !!(row && row.window_start && row.window_end);
   }
 
   function syncPasswordFormFromSite() {
@@ -1713,7 +1724,7 @@ ADMIN_SCRIPTS = """
   async function loadSitesAdminTable() {
     const tbody = document.querySelector("#sitesAdminTable tbody");
     if (!tbody) return;
-    const data = await fetch("/admin/sites/table").then(r => r.json());
+    const data = await fetch("/admin/sites/table?_=" + Date.now(), { cache: "no-store" }).then(r => r.json());
     tbody.innerHTML = "";
     window.__sitesAdminRows = {};
     const picked = window.__batchPickSiteIds || [];
@@ -1901,7 +1912,7 @@ ADMIN_SCRIPTS = """
   }
 
   async function savePassword() {
-    const sid = document.getElementById("pwdSiteSelect").value;
+    const sid = resolvePwdSiteId();
     if (!sid) { resultBox.textContent = "[ERROR] 請先選擇密碼對應的站點"; return; }
     const ws = hkDatetimeLocalToIso(document.getElementById("pwdWinStart").value);
     const we = hkDatetimeLocalToIso(document.getElementById("pwdWinEnd").value);
@@ -1923,15 +1934,19 @@ ADMIN_SCRIPTS = """
       changed_by: document.getElementById("pwdBy").value
     };
     if (pwd) body.raw_password = pwd;
-    const res = await api("/admin/site-passwords", "POST", body);
-    document.getElementById("pwdRaw").value = "";
-    resetPwdFieldVisibility();
-    await loadSiteOverview();
-    await loadSitesAdminTable();
-    syncPasswordFormFromSite();
-    resultBox.textContent = res && res.updated
-      ? "[OK] 已更新生效時間（密碼未變）"
-      : "[OK] 已儲存密碼與生效時間";
+    try {
+      const res = await api("/admin/site-passwords", "POST", body);
+      document.getElementById("pwdRaw").value = "";
+      resetPwdFieldVisibility();
+      await loadSitesAdminTable();
+      syncPasswordFormFromSite();
+      await loadSiteOverview();
+      resultBox.textContent = res && res.updated
+        ? "[OK] 已更新生效時間（密碼未變）"
+        : "[OK] 已儲存密碼與生效時間";
+    } catch (err) {
+      // api() 已寫入 resultBox
+    }
   }
 
   function toAbsoluteUrl(raw) {
@@ -3590,9 +3605,11 @@ ADMIN_SCRIPTS = """
     }
     if (PAGE === "sites") {
       window.__batchPickSiteIds = [];
-      loadSiteOverview();
-      loadSitesAdminTable();
-      renderBatchPickList();
+      (async function initSitesPage() {
+        await loadSitesAdminTable();
+        await loadSiteOverview();
+        renderBatchPickList();
+      })();
     }
     if (PAGE === "qr") {
       loadGroupLabels();

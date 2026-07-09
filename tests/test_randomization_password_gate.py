@@ -1741,6 +1741,53 @@ def test_site_password_window_can_update_without_new_password():
     assert randomized.status_code == 200
 
 
+def test_site_password_window_can_update_when_password_plain_missing():
+    """旧数据可能只有 hash、无 password_plain；仍应允许仅更新生效窗。"""
+    client = TestClient(app)
+    open_batch(client, ["SITE_01"])
+    set_site_password(client, "SITE_01", "123456")
+
+    from app.db import SessionLocal
+    from app.models import SiteDailyPassword
+
+    with SessionLocal() as db:
+        row = db.query(SiteDailyPassword).filter(SiteDailyPassword.site_id == "SITE_01").order_by(SiteDailyPassword.id.desc()).first()
+        assert row is not None
+        row.password_plain = None
+        db.commit()
+
+    table_before = admin_get(client, "/admin/sites/table").json()
+    row_before = next(item for item in table_before["items"] if item["site_id"] == "SITE_01")
+    assert row_before["password_plain"] is None
+    assert row_before["window_end"] is not None
+
+    hk = ZoneInfo("Asia/Hong_Kong")
+    now_hk = datetime.now(hk)
+    start_hk = now_hk.replace(hour=7, minute=0, second=0, microsecond=0)
+    end_hk = now_hk.replace(hour=22, minute=30, second=0, microsecond=0)
+    ws = start_hk.astimezone(timezone.utc).isoformat()
+    we = end_hk.astimezone(timezone.utc).isoformat()
+
+    updated = admin_post(
+        client,
+        "/admin/site-passwords",
+        json={
+            "site_id": "SITE_01",
+            "window_start": ws,
+            "window_end": we,
+            "changed_by": "admin",
+            "reason": "window only without plain",
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json().get("updated") is True
+
+    table_after = admin_get(client, "/admin/sites/table").json()
+    row_after = next(item for item in table_after["items"] if item["site_id"] == "SITE_01")
+    assert row_after["window_end"] == we
+    assert row_after["window_start"] == ws
+
+
 def test_site_password_required_when_no_existing_config():
     client = TestClient(app)
     ws, we = hk_full_day_window_iso()
