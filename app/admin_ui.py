@@ -1498,15 +1498,15 @@ ADMIN_SCRIPTS = """
     syncPasswordFormFromSite();
   }
 
-  function resolvePwdSiteId() {
-    syncEditSelectFromIdInput();
-    syncPwdSiteFromEdit();
-    return (
-      document.getElementById("pwdSiteSelect")?.value?.trim()
-      || document.getElementById("editSiteSelect")?.value?.trim()
-      || document.getElementById("editSiteIdInput")?.value?.trim()
-      || ""
-    );
+  /** 保存密码/生效窗时解析站点 ID，不重置表单中的起止时间。 */
+  function resolvePwdSiteIdForSave() {
+    const editVal = document.getElementById("editSiteSelect")?.value?.trim() || "";
+    const idInpVal = document.getElementById("editSiteIdInput")?.value?.trim() || "";
+    const pwdVal = document.getElementById("pwdSiteSelect")?.value?.trim() || "";
+    const sid = editVal || idInpVal || pwdVal;
+    const selPwd = document.getElementById("pwdSiteSelect");
+    if (sid && selPwd && selPwd.value !== sid) selPwd.value = sid;
+    return sid;
   }
 
   function siteHasConfiguredPassword(siteId) {
@@ -1912,11 +1912,11 @@ ADMIN_SCRIPTS = """
   }
 
   async function savePassword() {
-    const sid = resolvePwdSiteId();
-    if (!sid) { resultBox.textContent = "[ERROR] 請先選擇密碼對應的站點"; return; }
     const ws = hkDatetimeLocalToIso(document.getElementById("pwdWinStart").value);
     const we = hkDatetimeLocalToIso(document.getElementById("pwdWinEnd").value);
     const pwd = (document.getElementById("pwdRaw").value || "").trim();
+    const sid = resolvePwdSiteIdForSave();
+    if (!sid) { resultBox.textContent = "[ERROR] 請先選擇密碼對應的站點"; return; }
     if (!ws || !we) { resultBox.textContent = "[ERROR] 請填寫密碼生效開始和結束時間"; return; }
     const hasExisting = siteHasConfiguredPassword(sid);
     if (pwd && !/^\d{6,}$/.test(pwd)) {
@@ -1939,8 +1939,6 @@ ADMIN_SCRIPTS = """
       document.getElementById("pwdRaw").value = "";
       resetPwdFieldVisibility();
       await loadSitesAdminTable();
-      syncPasswordFormFromSite();
-      await loadSiteOverview();
       resultBox.textContent = res && res.updated
         ? "[OK] 已更新生效時間（密碼未變）"
         : "[OK] 已儲存密碼與生效時間";
