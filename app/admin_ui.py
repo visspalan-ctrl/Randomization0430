@@ -326,6 +326,29 @@ button.danger:hover { background: #b91c1c; }
   color: var(--group-control);
   background: rgba(13, 148, 136, 0.12);
 }
+select.rec-group-select {
+  display: inline-block;
+  width: auto;
+  min-width: 88px;
+  max-width: 100%;
+  margin: 0;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+}
+select.rec-group-select.genai {
+  color: var(--group-intervention);
+  background: rgba(234, 88, 12, 0.12);
+  border: 1px solid rgba(234, 88, 12, 0.35);
+}
+select.rec-group-select.human {
+  color: var(--group-control);
+  background: rgba(13, 148, 136, 0.12);
+  border: 1px solid rgba(13, 148, 136, 0.35);
+}
 .records-weekly-charts-grid {
   display: flex;
   flex-wrap: wrap;
@@ -2225,6 +2248,20 @@ ADMIN_SCRIPTS = """
     return recordEffectiveStatus(row);
   }
 
+  function groupSelectClassName(group) {
+    const g = String(group || "").toUpperCase();
+    if (g === "GENAI") return "genai";
+    if (g === "HUMAN") return "human";
+    return "";
+  }
+
+  function applyGroupSelectStyle(groupSel) {
+    if (!groupSel) return;
+    groupSel.classList.remove("genai", "human");
+    const cls = groupSelectClassName(groupSel.value);
+    if (cls) groupSel.classList.add(cls);
+  }
+
   function renderGroupCell(row, draft) {
     const status = recordGroupDraftStatus(row, draft || {});
     if (status !== "nontrial") {
@@ -2234,7 +2271,9 @@ ADMIN_SCRIPTS = """
       ? String(draft.allocation_group || "")
       : String(row.allocation_group || "GENAI");
     const upper = current.toUpperCase();
-    return "<select class='rec-group-select' title='僅 Non-trial 可修改分組'>"
+    const colorCls = groupSelectClassName(upper);
+    const selectCls = "rec-group-select" + (colorCls ? " " + colorCls : "");
+    return "<select class='" + selectCls + "' title='僅 Non-trial 可修改分組'>"
       + ["GENAI", "HUMAN"].map(function(g) {
         const selected = upper === g ? " selected" : "";
         return "<option value='" + g + "'" + selected + ">" + g + "</option>";
@@ -2937,11 +2976,13 @@ ADMIN_SCRIPTS = """
       const en = row.enrollment_no;
       function bindGroupSelect(groupSel) {
         if (!groupSel) return;
+        applyGroupSelectStyle(groupSel);
         groupSel.addEventListener("change", function() {
           window.__recordsDrafts = window.__recordsDrafts || {};
           const d = window.__recordsDrafts[en] || {};
           d.allocation_group = groupSel.value;
           window.__recordsDrafts[en] = d;
+          applyGroupSelectStyle(groupSel);
         });
       }
       bindGroupSelect(tr.querySelector("select.rec-group-select"));
