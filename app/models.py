@@ -95,6 +95,7 @@ class RandomizationRecord(Base):
     trial_status: Mapped[str] = mapped_column(String(16), default="trial")
     subject_code: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     assigned_recruitment_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    account_added: Mapped[bool] = mapped_column(Boolean, default=False)
     activation_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 

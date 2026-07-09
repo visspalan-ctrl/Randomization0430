@@ -362,6 +362,9 @@ def ensure_schema_migrations() -> None:
         rr_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_records')")).fetchall()]
         if rr_cols and "whatsapp_number" not in rr_cols:
             conn.execute(text("ALTER TABLE randomization_records ADD COLUMN whatsapp_number VARCHAR(32)"))
+        if rr_cols and "account_added" not in rr_cols:
+            conn.execute(text("ALTER TABLE randomization_records ADD COLUMN account_added BOOLEAN DEFAULT 0"))
+            conn.execute(text("UPDATE randomization_records SET account_added = 0 WHERE account_added IS NULL"))
         rs_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_settings')")).fetchall()]
         if rs_cols and "randomization_seed" not in rs_cols:
             conn.execute(text("ALTER TABLE randomization_settings ADD COLUMN randomization_seed INTEGER"))
@@ -622,6 +625,13 @@ class WhatsappNumberUpdateRequest(BaseModel):
     reason: str = ""
 
 
+class AccountAddedUpdateRequest(BaseModel):
+    enrollment_no: str
+    account_added: bool
+    changed_by: str
+    reason: str = "manual account check"
+
+
 class RecordAssignedWeekRequest(BaseModel):
     enrollment_no: str
     assigned_recruitment_week: int | None = None
@@ -701,6 +711,7 @@ def _record_audit_snapshot(record: RandomizationRecord) -> dict[str, object]:
         "trial_status": getattr(record, "trial_status", TRIAL_STATUS_TRIAL) or TRIAL_STATUS_TRIAL,
         "subject_code": record.subject_code,
         "assigned_recruitment_week": getattr(record, "assigned_recruitment_week", None),
+        "account_added": bool(getattr(record, "account_added", False)),
     }
 
 
@@ -2149,6 +2160,7 @@ def get_randomization_records(db: Session = Depends(get_db)):
                 "subject_code": r.subject_code,
                 "assigned_recruitment_week": getattr(r, "assigned_recruitment_week", None),
                 "effective_recruitment_week": _record_effective_recruitment_week(r, start_date, site_week_map),
+                "account_added": bool(getattr(r, "account_added", False)),
             }
             for r in records
         ],
@@ -2176,6 +2188,7 @@ def export_randomization_records_csv(db: Session = Depends(get_db)):
             "subject_code",
             "assigned_recruitment_week",
             "effective_recruitment_week",
+            "account_added",
         ]
     )
     setting = db.get(RandomizationSetting, 1)
@@ -2201,6 +2214,7 @@ def export_randomization_records_csv(db: Session = Depends(get_db)):
                 r.subject_code or "",
                 getattr(r, "assigned_recruitment_week", None) or "",
                 _record_effective_recruitment_week(r, start_date, site_week_map) or "",
+                "yes" if bool(getattr(r, "account_added", False)) else "no",
             ]
         )
     csv_text = buf.getvalue()
@@ -2467,6 +2481,30 @@ def admin_update_whatsapp_number(payload: WhatsappNumberUpdateRequest, db: Sessi
         "enrollment_no": record.enrollment_no,
         "whatsapp_number": _display_whatsapp_number(record),
     }
+
+
+@app.patch("/admin/randomization-records/account-added")
+def admin_update_account_added(payload: AccountAddedUpdateRequest, db: Session = Depends(get_db)):
+    record = db.scalar(select(RandomizationRecord).where(RandomizationRecord.enrollment_no == payload.enrollment_no))
+    if record is None:
+        raise HTTPException(status_code=404, detail="record_not_found")
+    snapshot = _record_audit_snapshot(record)
+    old_value = bool(getattr(record, "account_added", False))
+    record.account_added = bool(payload.account_added)
+    db.commit()
+    add_audit(
+        db,
+        "admin_account_added_updated",
+        {
+            **snapshot,
+            "old_account_added": old_value,
+            "new_account_added": record.account_added,
+            "account_added": record.account_added,
+            "changed_by": payload.changed_by,
+            "reason": payload.reason,
+        },
+    )
+    return {"ok": True, "enrollment_no": record.enrollment_no, "account_added": record.account_added}
 
 
 @app.patch("/admin/randomization-records/assigned-week")

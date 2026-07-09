@@ -1149,7 +1149,7 @@ def panel_records() -> str:
           <button type="button" class="secondary" onclick="exportRecordsCsv()">匯出 CSV</button>
         </div>
       </div>
-      <p class="muted" style="margin:8px 0 0;font-size:12px;">「歸屬周」在入組編號右側；「參加者姓名」在手機號右側；「WhatsApp 號」默認與手機號相同，可單獨修改。Non-trial 記錄的「分組」可改 GENAI/HUMAN，Trial 記錄分組只讀。修改後點該行「保存修改」或上方「全部保存」。</p>
+      <p class="muted" style="margin:8px 0 0;font-size:12px;">「歸屬周」在入組編號右側；「參加者姓名」在手機號右側；「WhatsApp 號」默認與手機號相同，可單獨修改。「已添加帳號」為手動核對（對方已添加或我方已添加對方），勾選後立即保存。Non-trial 記錄的「分組」可改 GENAI/HUMAN，Trial 記錄分組只讀。其餘修改後點該行「保存修改」或上方「全部保存」。</p>
       <div class="row" style="margin-top:10px;max-width:none;flex-wrap:wrap;">
         <div style="flex:1 1 0;min-width:0;">
           <label>站點</label>
@@ -1184,10 +1184,18 @@ def panel_records() -> str:
           <label>手機號</label>
           <input id="recordsFilterPhone" type="search" placeholder="搜尋手機號（部分匹配）" autocomplete="off" />
         </div>
+        <div style="flex:1 1 0;min-width:0;">
+          <label>已添加帳號</label>
+          <select id="recordsFilterAccountAdded">
+            <option value="">全部</option>
+            <option value="no">僅未添加</option>
+            <option value="yes">僅已添加</option>
+          </select>
+        </div>
       </div>
       <div class="table-wrap" style="margin-top:12px;">
         <table class="data" id="recordsTable">
-          <thead><tr><th>頁內序號</th><th class="sortable-th" id="recordsSortEnrollmentNo" title="點擊按入組編號排序">入組編號<span id="recordsSortEnrollmentNoIcon" class="sort-indicator"></span></th><th>歸屬周</th><th class="sortable-th" id="recordsSortSubjectCode" title="點擊按受試者編碼排序">受試者編碼<span id="recordsSortSubjectCodeIcon" class="sort-indicator"></span></th><th>手機號</th><th>WhatsApp 號</th><th>參加者姓名</th><th>站點</th><th>招募員姓名</th><th>分組</th><th>狀態</th><th>時間（香港時間）</th><th>操作</th></tr></thead>
+          <thead><tr><th>頁內序號</th><th class="sortable-th" id="recordsSortEnrollmentNo" title="點擊按入組編號排序">入組編號<span id="recordsSortEnrollmentNoIcon" class="sort-indicator"></span></th><th>歸屬周</th><th class="sortable-th" id="recordsSortSubjectCode" title="點擊按受試者編碼排序">受試者編碼<span id="recordsSortSubjectCodeIcon" class="sort-indicator"></span></th><th>手機號</th><th>WhatsApp 號</th><th>參加者姓名</th><th>站點</th><th>招募員姓名</th><th>分組</th><th title="手動核對：對方已添加或我方已添加對方">已添加帳號</th><th>狀態</th><th>時間（香港時間）</th><th>操作</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -2866,6 +2874,39 @@ ADMIN_SCRIPTS = """
     return items.find(function(r) { return String(r.enrollment_no) === String(enrollmentNo); }) || null;
   }
 
+  async function toggleRecordAccountAdded(enrollmentNo, inputEl) {
+    const row = recordsFindItem(enrollmentNo);
+    if (!row || !inputEl) return;
+    const newVal = !!inputEl.checked;
+    const oldVal = !!row.account_added;
+    if (newVal === oldVal) return;
+    inputEl.disabled = true;
+    try {
+      const res = await api("/admin/randomization-records/account-added", "PATCH", {
+        enrollment_no: enrollmentNo,
+        account_added: newVal,
+        changed_by: "admin",
+        reason: "manual account check"
+      });
+      row.account_added = !!res.account_added;
+      inputEl.checked = row.account_added;
+      if (resultBox) {
+        resultBox.textContent = "[OK] " + enrollmentNo + " 已添加帳號："
+          + (row.account_added ? "是" : "否");
+      }
+    } catch (err) {
+      inputEl.checked = oldVal;
+      const msg = err && err.message ? String(err.message) : String(err);
+      if (resultBox) resultBox.textContent = "[ERROR] 更新已添加帳號失敗\\n" + msg;
+    } finally {
+      inputEl.disabled = false;
+    }
+  }
+
+  function recordAccountAddedForFilter(row) {
+    return !!row.account_added;
+  }
+
   function recordAssignedWeekStored(row) {
     const v = row.assigned_recruitment_week;
     return v != null && v !== "" ? String(v) : "";
@@ -3047,6 +3088,7 @@ ADMIN_SCRIPTS = """
       const status = String(row.activation_status || "pending");
       const isVoided = status === "voided";
       const trialStatus = String(row.trial_status || "trial");
+      const accountAdded = !!row.account_added;
       tr.dataset.enrollmentNo = row.enrollment_no;
       tr.dataset.voided = isVoided ? "1" : "0";
       tr.dataset.trialStatus = trialStatus;
@@ -3060,7 +3102,9 @@ ADMIN_SCRIPTS = """
         + "<td><input type='text' class='rec-participant-name-input' value='" + pnameVal + "' placeholder='可選' /></td><td>"
         + escapeHtml(row.site_id) + "</td><td>"
         + escapeHtml(row.recruiter_id || "") + "</td><td class='rec-group-cell'>"
-        + renderGroupCell(row, draft) + "</td><td>"
+        + renderGroupCell(row, draft) + "</td><td class='rec-account-added-cell' style='text-align:center;'>"
+        + "<input type='checkbox' class='rec-account-added-input' title='手動核對：對方已添加或我方已添加對方'"
+        + (accountAdded ? " checked" : "") + " /></td><td>"
         + renderStatusSelect(row, draft.status) + "</td><td>"
         + escapeHtml(formatHkTime(row.randomized_at)) + "</td><td><div class='table-actions'>"
         + "<button type='button' class='secondary' style='margin:0;padding:6px 10px;font-size:12px' onclick='saveRecordRow(" + enc + ", this)'>保存修改</button></div></td>";
@@ -3070,6 +3114,7 @@ ADMIN_SCRIPTS = """
       const waInp = tr.querySelector("input.rec-whatsapp-input");
       const pnameInp = tr.querySelector("input.rec-participant-name-input");
       const weekInp = tr.querySelector("input.rec-week-input");
+      const accountInp = tr.querySelector("input.rec-account-added-input");
       const en = row.enrollment_no;
       function bindGroupSelect(groupSel) {
         if (!groupSel) return;
@@ -3123,6 +3168,9 @@ ADMIN_SCRIPTS = """
         const d = window.__recordsDrafts[en] || {};
         d.assigned_recruitment_week = weekInp.value;
         window.__recordsDrafts[en] = d;
+      });
+      if (accountInp) accountInp.addEventListener("change", function() {
+        toggleRecordAccountAdded(en, accountInp);
       });
       tbody.appendChild(tr);
     });
@@ -3247,10 +3295,13 @@ ADMIN_SCRIPTS = """
     const status = (document.getElementById("recordsFilterStatus")?.value || "").trim();
     const codeQ = (document.getElementById("recordsFilterSubjectCode")?.value || "").trim().toLowerCase();
     const phoneQ = (document.getElementById("recordsFilterPhone")?.value || "").trim().replace(/\s+/g, "").toLowerCase();
+    const accountAdded = (document.getElementById("recordsFilterAccountAdded")?.value || "").trim();
     const filtered = all.filter(row => {
       if (site && String(row.site_id || "") !== site) return false;
       if (group && String(row.allocation_group || "") !== group) return false;
       if (status && recordEffectiveStatus(row) !== status) return false;
+      if (accountAdded === "yes" && !recordAccountAddedForFilter(row)) return false;
+      if (accountAdded === "no" && recordAccountAddedForFilter(row)) return false;
       if (codeQ) {
         const code = recordSubjectCodeForFilter(row).toLowerCase();
         if (!code.includes(codeQ)) return false;
@@ -3285,7 +3336,7 @@ ADMIN_SCRIPTS = """
   }
 
   function resetRecordsFilter() {
-    const ids = ["recordsFilterSite", "recordsFilterDate", "recordsFilterGroup", "recordsFilterStatus", "recordsFilterSubjectCode", "recordsFilterPhone"];
+    const ids = ["recordsFilterSite", "recordsFilterDate", "recordsFilterGroup", "recordsFilterStatus", "recordsFilterSubjectCode", "recordsFilterPhone", "recordsFilterAccountAdded"];
     ids.forEach(id => {
       const el = document.getElementById(id);
       if (!el) return;
@@ -3630,6 +3681,7 @@ ADMIN_SCRIPTS = """
     const statusSel = document.getElementById("recordsFilterStatus");
     const subjectCodeInp = document.getElementById("recordsFilterSubjectCode");
     const phoneInp = document.getElementById("recordsFilterPhone");
+    const accountAddedSel = document.getElementById("recordsFilterAccountAdded");
     const sortSubjectTh = document.getElementById("recordsSortSubjectCode");
     const sortEnrollmentTh = document.getElementById("recordsSortEnrollmentNo");
     const pageSizeSel = document.getElementById("recordsPageSize");
@@ -3640,7 +3692,7 @@ ADMIN_SCRIPTS = """
     window.__recordsSubjectCodeSort = "none";
     window.__recordsEnrollmentNoSort = "none";
     updateRecordsSortHeaders();
-    [siteSel, dateInp, groupSel, statusSel].forEach(el => {
+    [siteSel, dateInp, groupSel, statusSel, accountAddedSel].forEach(el => {
       if (!el) return;
       el.addEventListener("change", function() {
         window.__recordsCurrentPage = 1;
