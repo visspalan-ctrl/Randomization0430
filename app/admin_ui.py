@@ -957,15 +957,19 @@ def panel_sites() -> str:
       <p class="muted" style="margin:6px 0 0;font-size:12px;">密碼：至少 6 位數字。已設密碼的站點可留空，僅更新生效時間。</p>
       <div class="row">
         <div>
-          <label>生效開始（香港時間）</label>
-          <input id="pwdWinStart" type="datetime-local" />
+          <label for="pwdWinDate">生效日期（香港時間）</label>
+          <input id="pwdWinDate" type="date" />
         </div>
         <div>
-          <label>生效結束（香港時間）</label>
-          <input id="pwdWinEnd" type="datetime-local" />
+          <label for="pwdWinStartTime">開始時間</label>
+          <input id="pwdWinStartTime" type="time" />
+        </div>
+        <div>
+          <label for="pwdWinEndTime">結束時間</label>
+          <input id="pwdWinEndTime" type="time" />
         </div>
       </div>
-      <p class="muted" style="margin:6px 0 0;font-size:12px;">預設為當日 00:00–23:59（香港時間）；新站點或未設密碼的站點選取後會自動帶入今日時段。</p>
+      <p class="muted" style="margin:6px 0 0;font-size:12px;">密碼僅在<strong>同一香港日曆日</strong>內生效；預設為當日 00:00–23:59。新站點選取後會自動帶入今日時段。</p>
       <div class="site-name-row" style="margin-top:10px;">
         <div class="field-name">
           <label>變更人</label>
@@ -1333,6 +1337,82 @@ ADMIN_SCRIPTS = """
     return new Date(Date.UTC(y, mo - 1, d, h - 8, mi, 0)).toISOString();
   }
 
+  function parseHkDatetimeLocal(value) {
+    const m = String(value || "").match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/);
+    if (!m) return null;
+    return { date: m[1], time: m[2] + ":" + m[3] };
+  }
+
+  function hkDateTimePartsToIso(dateYmd, timeHm) {
+    const dm = String(dateYmd || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const tm = String(timeHm || "").match(/^(\d{2}):(\d{2})/);
+    if (!dm || !tm) return null;
+    const y = Number(dm[1]);
+    const mo = Number(dm[2]);
+    const d = Number(dm[3]);
+    const h = Number(tm[1]);
+    const mi = Number(tm[2]);
+    return new Date(Date.UTC(y, mo - 1, d, h - 8, mi, 0)).toISOString();
+  }
+
+  function isoToHkDateAndTimes(isoStart, isoEnd) {
+    const s = parseHkDatetimeLocal(isoToHkDatetimeLocal(isoStart));
+    const e = parseHkDatetimeLocal(isoToHkDatetimeLocal(isoEnd));
+    if (!s || !e) return null;
+    let endTime = e.time;
+    if (s.date !== e.date) endTime = "23:59";
+    return { date: s.date, startTime: s.time, endTime: endTime };
+  }
+
+  function readHkPasswordWindowForm() {
+    return {
+      date: document.getElementById("pwdWinDate")?.value?.trim() || "",
+      startTime: document.getElementById("pwdWinStartTime")?.value?.trim() || "",
+      endTime: document.getElementById("pwdWinEndTime")?.value?.trim() || "",
+    };
+  }
+
+  function setHkPasswordWindowForm(date, startTime, endTime) {
+    const dateEl = document.getElementById("pwdWinDate");
+    const startEl = document.getElementById("pwdWinStartTime");
+    const endEl = document.getElementById("pwdWinEndTime");
+    if (dateEl) dateEl.value = date || "";
+    if (startEl) startEl.value = startTime || "";
+    if (endEl) endEl.value = endTime || "";
+  }
+
+  function hkPasswordWindowFormToIso() {
+    const form = readHkPasswordWindowForm();
+    if (!form.date || !form.startTime || !form.endTime) return { ws: null, we: null };
+    return {
+      ws: hkDateTimePartsToIso(form.date, form.startTime),
+      we: hkDateTimePartsToIso(form.date, form.endTime),
+    };
+  }
+
+  function hkTimeToMinutes(timeHm) {
+    const m = String(timeHm || "").match(/^(\d{2}):(\d{2})/);
+    if (!m) return null;
+    return Number(m[1]) * 60 + Number(m[2]);
+  }
+
+  function formatSitePasswordApiError(detail) {
+    const code = String(detail || "");
+    if (code === "password_window_must_be_same_hk_calendar_day") {
+      return "[ERROR] 生效起止須在同一香港日曆日內（請確認日期與時間）";
+    }
+    if (code === "invalid_password_window") {
+      return "[ERROR] 結束時間須晚於開始時間";
+    }
+    if (code === "password_required_for_new_site") {
+      return "[ERROR] 新站點須設定密碼；已設密碼的站點可留空僅改生效時間";
+    }
+    if (code === "invalid_password_format") {
+      return "[ERROR] 密碼要求：至少 6 位且只能為數字";
+    }
+    return "[ERROR] /admin/site-passwords\\n" + JSON.stringify({ detail: code }, null, 2);
+  }
+
   function csvToInts(raw) {
     return raw.split(",").map(x => Number(x.trim())).filter(x => !Number.isNaN(x));
   }
@@ -1437,27 +1517,23 @@ ADMIN_SCRIPTS = """
   }
 
   function fillTodayHkPasswordWindow(data) {
-    const startEl = document.getElementById("pwdWinStart");
-    const endEl = document.getElementById("pwdWinEnd");
-    if (!startEl || !endEl) return;
     const overview = data || window.__siteOverviewData || {};
     const ws = overview.default_password_window_start;
     const we = overview.default_password_window_end;
     if (ws && we) {
-      startEl.value = isoToHkDatetimeLocal(ws);
-      endEl.value = isoToHkDatetimeLocal(we);
-      return;
+      const parts = isoToHkDateAndTimes(ws, we);
+      if (parts) {
+        setHkPasswordWindowForm(parts.date, parts.startTime, parts.endTime);
+        return;
+      }
     }
     const today = hkDateFromIso(new Date().toISOString());
-    startEl.value = today + "T00:00";
-    endEl.value = today + "T23:59";
+    setHkPasswordWindowForm(today, "00:00", "23:59");
   }
 
   function applyPasswordWindowDefaults(data) {
-    const startEl = document.getElementById("pwdWinStart");
-    const endEl = document.getElementById("pwdWinEnd");
-    if (!startEl || !endEl) return;
-    if (startEl.value && endEl.value) return;
+    const form = readHkPasswordWindowForm();
+    if (form.date && form.startTime && form.endTime) return;
     fillTodayHkPasswordWindow(data);
   }
 
@@ -1517,18 +1593,16 @@ ADMIN_SCRIPTS = """
   function syncPasswordFormFromSite() {
     const sid = document.getElementById("pwdSiteSelect")?.value || document.getElementById("editSiteSelect")?.value || "";
     const row = sid ? (window.__sitesAdminRows || {})[sid] : null;
-    const startEl = document.getElementById("pwdWinStart");
-    const endEl = document.getElementById("pwdWinEnd");
-    if (!startEl || !endEl) return;
-    if (row && row.window_start && row.window_end) {
-      startEl.value = isoToHkDatetimeLocal(row.window_start);
-      endEl.value = isoToHkDatetimeLocal(row.window_end);
+    if (!sid) {
+      setHkPasswordWindowForm("", "", "");
       return;
     }
-    if (!sid) {
-      startEl.value = "";
-      endEl.value = "";
-      return;
+    if (row && row.window_start && row.window_end) {
+      const parts = isoToHkDateAndTimes(row.window_start, row.window_end);
+      if (parts) {
+        setHkPasswordWindowForm(parts.date, parts.startTime, parts.endTime);
+        return;
+      }
     }
     fillTodayHkPasswordWindow();
   }
@@ -1912,12 +1986,22 @@ ADMIN_SCRIPTS = """
   }
 
   async function savePassword() {
-    const ws = hkDatetimeLocalToIso(document.getElementById("pwdWinStart").value);
-    const we = hkDatetimeLocalToIso(document.getElementById("pwdWinEnd").value);
+    const form = readHkPasswordWindowForm();
+    const { ws, we } = hkPasswordWindowFormToIso();
     const pwd = (document.getElementById("pwdRaw").value || "").trim();
     const sid = resolvePwdSiteIdForSave();
     if (!sid) { resultBox.textContent = "[ERROR] 請先選擇密碼對應的站點"; return; }
-    if (!ws || !we) { resultBox.textContent = "[ERROR] 請填寫密碼生效開始和結束時間"; return; }
+    if (!ws || !we) { resultBox.textContent = "[ERROR] 請填寫生效日期與起止時間"; return; }
+    const startMins = hkTimeToMinutes(form.startTime);
+    const endMins = hkTimeToMinutes(form.endTime);
+    if (startMins == null || endMins == null) {
+      resultBox.textContent = "[ERROR] 起止時間格式不正確";
+      return;
+    }
+    if (endMins <= startMins) {
+      resultBox.textContent = "[ERROR] 結束時間須晚於開始時間（同一香港日曆日內）";
+      return;
+    }
     const hasExisting = siteHasConfiguredPassword(sid);
     if (pwd && !/^\d{6,}$/.test(pwd)) {
       resultBox.textContent = "[ERROR] 密碼要求：至少 6 位且只能為數字";
@@ -1943,7 +2027,7 @@ ADMIN_SCRIPTS = """
         ? "[OK] 已更新生效時間（密碼未變）"
         : "[OK] 已儲存密碼與生效時間";
     } catch (err) {
-      // api() 已寫入 resultBox
+      if (resultBox) resultBox.textContent = formatSitePasswordApiError(err && err.message);
     }
   }
 

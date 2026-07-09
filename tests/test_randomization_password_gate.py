@@ -1788,6 +1788,38 @@ def test_site_password_window_can_update_when_password_plain_missing():
     assert row_after["window_start"] == ws
 
 
+def test_site_password_window_same_hk_day_from_split_date_times():
+    """模拟前端：同一香港日期 + 起止时间，应能通过校验。"""
+    client = TestClient(app)
+    open_batch(client, ["SITE_01"])
+    set_site_password(client, "SITE_01", "123456")
+
+    hk = ZoneInfo("Asia/Hong_Kong")
+    day = datetime.now(hk).date()
+    start_hk = datetime(day.year, day.month, day.day, 8, 0, tzinfo=hk)
+    end_hk = datetime(day.year, day.month, day.day, 20, 30, tzinfo=hk)
+    ws = start_hk.astimezone(timezone.utc).isoformat()
+    we = end_hk.astimezone(timezone.utc).isoformat()
+
+    updated = admin_post(
+        client,
+        "/admin/site-passwords",
+        json={
+            "site_id": "SITE_01",
+            "window_start": ws,
+            "window_end": we,
+            "changed_by": "admin",
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json().get("updated") is True
+
+    table = admin_get(client, "/admin/sites/table").json()
+    row = next(item for item in table["items"] if item["site_id"] == "SITE_01")
+    assert row["window_start"] == ws
+    assert row["window_end"] == we
+
+
 def test_site_password_required_when_no_existing_config():
     client = TestClient(app)
     ws, we = hk_full_day_window_iso()
