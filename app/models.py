@@ -64,6 +64,7 @@ class QRConfig(Base):
     qr_mode: Mapped[str] = mapped_column(String(32), default="static_url", nullable=False)
     qr_value: Mapped[str] = mapped_column(String(512), nullable=False)
     qr_logo_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    wechat_qr_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
     changed_by: Mapped[str] = mapped_column(String(64), nullable=False)
     reason: Mapped[str] = mapped_column(String(255), default="")
@@ -96,6 +97,7 @@ class RandomizationRecord(Base):
     subject_code: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     assigned_recruitment_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
     account_added: Mapped[bool] = mapped_column(Boolean, default=False)
+    contact_channel: Mapped[str | None] = mapped_column(String(16), nullable=True)
     activation_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 

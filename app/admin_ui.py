@@ -1086,6 +1086,17 @@ def panel_qr() -> str:
       </div>
       <label id="qrFileLabel">或上傳圖片</label>
       <input id="qrFile" type="file" accept="image/png,image/jpeg,image/webp" />
+      <div id="qrWechatSection" style="margin-top:14px;padding:12px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;">
+        <h4 style="margin:0 0 8px;font-size:13px;color:#334155;">微信二維碼（對照組建議上傳）</h4>
+        <p class="muted" style="margin:0 0 8px;font-size:12px;">上傳後，該組入組結果會同時顯示 WhatsApp 動態碼與微信圖片碼，並要求招募員選擇參加者實際添加的渠道。</p>
+        <input id="qrWechatFile" type="file" accept="image/png,image/jpeg,image/webp" />
+        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+          <button type="button" class="secondary" onclick="uploadWechatQr()">上傳微信二維碼</button>
+          <button type="button" class="secondary" onclick="removeWechatQr()">移除微信二維碼</button>
+        </div>
+        <div id="qrWechatCurrent" class="muted" style="margin-top:6px;">尚未上傳微信二維碼</div>
+        <img id="qrWechatPreview" alt="wechat-preview" style="display:none;max-width:160px;margin-top:8px;border:1px solid #e2e8f0;border-radius:8px;" />
+      </div>
       <label>變更人</label>
       <input id="qrBy" value="admin" />
       <label>原因</label>
@@ -1197,10 +1208,19 @@ def panel_records() -> str:
             <option value="yes">僅已添加</option>
           </select>
         </div>
+        <div style="flex:1 1 0;min-width:0;">
+          <label>添加渠道</label>
+          <select id="recordsFilterContactChannel">
+            <option value="">全部</option>
+            <option value="whatsapp">WhatsApp</option>
+            <option value="wechat">微信</option>
+            <option value="unset">未選擇</option>
+          </select>
+        </div>
       </div>
       <div class="table-wrap" style="margin-top:12px;">
         <table class="data" id="recordsTable">
-          <thead><tr><th>頁內序號</th><th class="sortable-th" id="recordsSortEnrollmentNo" title="點擊按入組編號排序">入組編號<span id="recordsSortEnrollmentNoIcon" class="sort-indicator"></span></th><th title="手動核對：對方已添加或我方已添加對方">已添加帳號</th><th>歸屬周</th><th class="sortable-th" id="recordsSortSubjectCode" title="點擊按受試者編碼排序">受試者編碼<span id="recordsSortSubjectCodeIcon" class="sort-indicator"></span></th><th>手機號</th><th>WhatsApp 號</th><th>參加者姓名</th><th>站點</th><th>招募員姓名</th><th>分組</th><th>狀態</th><th>時間（香港時間）</th><th>操作</th></tr></thead>
+          <thead><tr><th>頁內序號</th><th class="sortable-th" id="recordsSortEnrollmentNo" title="點擊按入組編號排序">入組編號<span id="recordsSortEnrollmentNoIcon" class="sort-indicator"></span></th><th title="手動核對：對方已添加或我方已添加對方">已添加帳號</th><th title="參加者實際添加的渠道">添加渠道</th><th>歸屬周</th><th class="sortable-th" id="recordsSortSubjectCode" title="點擊按受試者編碼排序">受試者編碼<span id="recordsSortSubjectCodeIcon" class="sort-indicator"></span></th><th>手機號</th><th>WhatsApp 號</th><th>參加者姓名</th><th>站點</th><th>招募員姓名</th><th>分組</th><th>狀態</th><th>時間（香港時間）</th><th>操作</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -2223,6 +2243,35 @@ ADMIN_SCRIPTS = """
     updateQrLivePreview();
   }
 
+  async function uploadWechatQr() {
+    const fileInput = document.getElementById("qrWechatFile");
+    if (!fileInput || !fileInput.files || !fileInput.files.length) {
+      resultBox.textContent = "[ERROR] 請選擇微信二維碼圖片";
+      return;
+    }
+    const fd = new FormData();
+    fd.append("group", document.getElementById("qrGroup").value);
+    fd.append("changed_by", document.getElementById("qrBy").value || "admin");
+    fd.append("reason", "wechat qr upload");
+    fd.append("file", fileInput.files[0]);
+    const res = await fetch("/admin/qr-config/wechat", { method: "POST", body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { resultBox.textContent = "[ERROR] wechat upload\\n" + JSON.stringify(data, null, 2); return; }
+    resultBox.textContent = "[OK] 微信二維碼已上傳（入組結果將雙碼展示）";
+    fileInput.value = "";
+    await loadQrCurrent();
+  }
+
+  async function removeWechatQr() {
+    const group = document.getElementById("qrGroup")?.value;
+    if (!group) return;
+    const res = await fetch("/admin/qr-config/wechat?group=" + encodeURIComponent(group), { method: "DELETE" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { resultBox.textContent = "[ERROR] remove wechat\\n" + JSON.stringify(data, null, 2); return; }
+    resultBox.textContent = "[OK] 微信二維碼已移除";
+    await loadQrCurrent();
+  }
+
   async function loadQrCurrent() {
     const text = document.getElementById("qrCurrentText");
     const img = document.getElementById("qrPreview");
@@ -2250,6 +2299,22 @@ ADMIN_SCRIPTS = """
       logoEl.textContent = current.qr_logo_path
         ? "當前 Logo：" + current.qr_logo_path
         : "尚未上傳中心 Logo";
+    }
+    const wechatEl = document.getElementById("qrWechatCurrent");
+    const wechatPrev = document.getElementById("qrWechatPreview");
+    if (wechatEl) {
+      wechatEl.textContent = current.wechat_qr_path
+        ? "當前微信碼：" + current.wechat_qr_path
+        : "尚未上傳微信二維碼";
+    }
+    if (wechatPrev) {
+      if (current.wechat_qr_path) {
+        wechatPrev.src = toAbsoluteUrl(current.wechat_qr_path);
+        wechatPrev.style.display = "block";
+      } else {
+        wechatPrev.removeAttribute("src");
+        wechatPrev.style.display = "none";
+      }
     }
     const mode = current.qr_mode || "static_url";
     if (mode === "dynamic" && current.qr_value) {
@@ -3055,6 +3120,46 @@ ADMIN_SCRIPTS = """
     return !!row.account_added;
   }
 
+  function recordContactChannelValue(row) {
+    const v = String(row.contact_channel || "").trim().toLowerCase();
+    return v === "wechat" || v === "whatsapp" ? v : "";
+  }
+
+  async function saveRecordContactChannel(enrollmentNo, selectEl) {
+    const row = recordsFindItem(enrollmentNo);
+    if (!row || !selectEl) return;
+    const newVal = String(selectEl.value || "").trim();
+    if (newVal && newVal !== "whatsapp" && newVal !== "wechat") {
+      selectEl.value = recordContactChannelValue(row);
+      return;
+    }
+    if (!newVal) {
+      resultBox.textContent = "[ERROR] 添加渠道不可清空，請選 WhatsApp 或微信";
+      selectEl.value = recordContactChannelValue(row);
+      return;
+    }
+    const oldVal = recordContactChannelValue(row);
+    if (newVal === oldVal) return;
+    selectEl.disabled = true;
+    try {
+      const res = await api("/admin/randomization-records/contact-channel", "PATCH", {
+        enrollment_no: enrollmentNo,
+        contact_channel: newVal,
+        changed_by: "admin",
+        reason: "manual channel update"
+      });
+      row.contact_channel = res.contact_channel;
+      resultBox.textContent = "[OK] " + enrollmentNo + " 添加渠道："
+        + (row.contact_channel === "wechat" ? "微信" : "WhatsApp");
+    } catch (err) {
+      selectEl.value = oldVal;
+      const msg = err && err.message ? String(err.message) : String(err);
+      resultBox.textContent = "[ERROR] 更新添加渠道失敗\\n" + msg;
+    } finally {
+      selectEl.disabled = false;
+    }
+  }
+
   function recordAssignedWeekStored(row) {
     const v = row.assigned_recruitment_week;
     return v != null && v !== "" ? String(v) : "";
@@ -3253,6 +3358,7 @@ ADMIN_SCRIPTS = """
       const isVoided = status === "voided";
       const trialStatus = String(row.trial_status || "trial");
       const accountAdded = !!row.account_added;
+      const channelVal = recordContactChannelValue(row);
       tr.dataset.enrollmentNo = row.enrollment_no;
       tr.dataset.voided = isVoided ? "1" : "0";
       tr.dataset.trialStatus = trialStatus;
@@ -3261,6 +3367,11 @@ ADMIN_SCRIPTS = """
         + "<td class='rec-account-added-cell' style='text-align:center;'>"
         + "<input type='checkbox' class='rec-account-added-input' title='手動核對：對方已添加或我方已添加對方'"
         + (accountAdded ? " checked" : "") + " /></td>"
+        + "<td><select class='rec-contact-channel-select' title='參加者實際添加的渠道'>"
+        + "<option value=''" + (channelVal ? "" : " selected") + ">未選擇</option>"
+        + "<option value='whatsapp'" + (channelVal === "whatsapp" ? " selected" : "") + ">WhatsApp</option>"
+        + "<option value='wechat'" + (channelVal === "wechat" ? " selected" : "") + ">微信</option>"
+        + "</select></td>"
         + "<td><input type='number' min='1' class='rec-week-input' style='width:56px;padding:6px 8px;' value='"
         + weekVal + "' placeholder='" + escapeHtml(weekHint) + "' title='" + escapeHtml(weekTitle) + "' /></td>"
         + "<td><input type='text' class='rec-subject-code-input' value='" + codeVal + "' placeholder='可選' /></td>"
@@ -3280,6 +3391,7 @@ ADMIN_SCRIPTS = """
       const pnameInp = tr.querySelector("input.rec-participant-name-input");
       const weekInp = tr.querySelector("input.rec-week-input");
       const accountInp = tr.querySelector("input.rec-account-added-input");
+      const channelSel = tr.querySelector("select.rec-contact-channel-select");
       const en = row.enrollment_no;
       function bindGroupSelect(groupSel) {
         if (!groupSel) return;
@@ -3336,6 +3448,9 @@ ADMIN_SCRIPTS = """
       });
       if (accountInp) accountInp.addEventListener("change", function() {
         toggleRecordAccountAdded(en, accountInp);
+      });
+      if (channelSel) channelSel.addEventListener("change", function() {
+        saveRecordContactChannel(en, channelSel);
       });
       tbody.appendChild(tr);
     });
@@ -3461,12 +3576,16 @@ ADMIN_SCRIPTS = """
     const codeQ = (document.getElementById("recordsFilterSubjectCode")?.value || "").trim().toLowerCase();
     const phoneQ = (document.getElementById("recordsFilterPhone")?.value || "").trim().replace(/\s+/g, "").toLowerCase();
     const accountAdded = (document.getElementById("recordsFilterAccountAdded")?.value || "").trim();
+    const contactChannel = (document.getElementById("recordsFilterContactChannel")?.value || "").trim();
     const filtered = all.filter(row => {
       if (site && String(row.site_id || "") !== site) return false;
       if (group && String(row.allocation_group || "") !== group) return false;
       if (status && recordEffectiveStatus(row) !== status) return false;
       if (accountAdded === "yes" && !recordAccountAddedForFilter(row)) return false;
       if (accountAdded === "no" && recordAccountAddedForFilter(row)) return false;
+      if (contactChannel === "unset" && recordContactChannelValue(row)) return false;
+      if ((contactChannel === "whatsapp" || contactChannel === "wechat")
+          && recordContactChannelValue(row) !== contactChannel) return false;
       if (codeQ) {
         const code = recordSubjectCodeForFilter(row).toLowerCase();
         if (!code.includes(codeQ)) return false;
@@ -3501,7 +3620,7 @@ ADMIN_SCRIPTS = """
   }
 
   function resetRecordsFilter() {
-    const ids = ["recordsFilterSite", "recordsFilterDate", "recordsFilterGroup", "recordsFilterStatus", "recordsFilterSubjectCode", "recordsFilterPhone", "recordsFilterAccountAdded"];
+    const ids = ["recordsFilterSite", "recordsFilterDate", "recordsFilterGroup", "recordsFilterStatus", "recordsFilterSubjectCode", "recordsFilterPhone", "recordsFilterAccountAdded", "recordsFilterContactChannel"];
     ids.forEach(id => {
       const el = document.getElementById(id);
       if (!el) return;
@@ -3847,6 +3966,7 @@ ADMIN_SCRIPTS = """
     const subjectCodeInp = document.getElementById("recordsFilterSubjectCode");
     const phoneInp = document.getElementById("recordsFilterPhone");
     const accountAddedSel = document.getElementById("recordsFilterAccountAdded");
+    const contactChannelSel = document.getElementById("recordsFilterContactChannel");
     const sortSubjectTh = document.getElementById("recordsSortSubjectCode");
     const sortEnrollmentTh = document.getElementById("recordsSortEnrollmentNo");
     const pageSizeSel = document.getElementById("recordsPageSize");
@@ -3857,7 +3977,7 @@ ADMIN_SCRIPTS = """
     window.__recordsSubjectCodeSort = "none";
     window.__recordsEnrollmentNoSort = "none";
     updateRecordsSortHeaders();
-    [siteSel, dateInp, groupSel, statusSel, accountAddedSel].forEach(el => {
+    [siteSel, dateInp, groupSel, statusSel, accountAddedSel, contactChannelSel].forEach(el => {
       if (!el) return;
       el.addEventListener("change", function() {
         window.__recordsCurrentPage = 1;

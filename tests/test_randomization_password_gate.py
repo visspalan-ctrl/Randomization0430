@@ -485,6 +485,114 @@ def test_can_switch_from_static_image_back_to_dynamic():
     assert redirect.headers["location"] == "https://wa.me/back_to_dynamic"
 
 
+def test_control_group_dual_qr_and_contact_channel_selection():
+    client = TestClient(app)
+    # HUMAN: WhatsApp 动态码 + 微信图片码
+    admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "HUMAN",
+            "qr_mode": "dynamic",
+            "qr_value": "https://wa.me/human_dual",
+            "changed_by": "admin",
+            "reason": "dual qr whatsapp",
+        },
+    )
+    file_content = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+        b"\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
+        b"\x00\x00\x00\x0bIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01"
+        b"\x0d\n\x2d\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    uploaded = admin_post(
+        client,
+        "/admin/qr-config/wechat",
+        data={"group": "HUMAN", "changed_by": "admin"},
+        files={"file": ("wechat.png", file_content, "image/png")},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    wechat_path = uploaded.json()["wechat_qr_path"]
+    assert wechat_path.startswith("/uploads/qr/")
+
+    configs = admin_get(client, "/admin/qr-configs").json()
+    human = next(i for i in configs["items"] if i["group_type"] == "HUMAN")
+    assert human["qr_mode"] == "dynamic"
+    assert human["wechat_qr_path"] == wechat_path
+
+    # 强制下一条入 HUMAN：先给 GENAI 入一条，或用小 block；更稳妥是直接改记录分组后测渠道
+    open_batch(client, ["SITE_01"])
+    set_site_password(client, "SITE_01")
+    # 配置 GENAI 动态码，确保随机可完成
+    admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_value": "https://wa.me/genai_dual",
+            "changed_by": "admin",
+        },
+    )
+
+    # 多入几条直到出现 HUMAN
+    human_body = None
+    for i in range(12):
+        r = client.post(
+            "/randomization/trigger",
+            json={
+                "phone_number": f"+85261114{i:03d}",
+                "recruiter_id": "r1",
+                "site_id": "SITE_01",
+                "recruiter_password": "123456",
+            },
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        if body["allocation_group"] == "HUMAN":
+            human_body = body
+            break
+    assert human_body is not None
+    assert human_body["show_dual_qr"] is True
+    assert human_body["require_contact_channel"] is True
+    assert human_body["whatsapp_qr"] == "/r/HUMAN"
+    assert human_body["wechat_qr"] == wechat_path
+    assert human_body["contact_channel"] is None
+
+    enrollment_no = human_body["enrollment_no"]
+    selected = client.post(
+        "/randomization/contact-channel",
+        json={
+            "enrollment_no": enrollment_no,
+            "contact_channel": "wechat",
+            "changed_by": "r1",
+        },
+    )
+    assert selected.status_code == 200, selected.text
+    assert selected.json()["contact_channel"] == "wechat"
+
+    listing = admin_get(client, "/admin/randomization-records").json()
+    item = next(i for i in listing["items"] if i["enrollment_no"] == enrollment_no)
+    assert item["contact_channel"] == "wechat"
+
+    patched = admin_patch(
+        client,
+        "/admin/randomization-records/contact-channel",
+        json={
+            "enrollment_no": enrollment_no,
+            "contact_channel": "whatsapp",
+            "changed_by": "admin",
+        },
+    )
+    assert patched.status_code == 200
+    assert patched.json()["contact_channel"] == "whatsapp"
+
+    h5 = client.get("/h5/enroll")
+    assert h5.status_code == 200
+    assert "dual-qr" in h5.text
+    assert "contactChannel" in h5.text
+
+
 def test_qr_configs_endpoint_returns_groups():
     client = TestClient(app)
     res = admin_get(client, "/admin/qr-configs")

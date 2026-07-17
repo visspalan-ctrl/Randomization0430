@@ -85,7 +85,7 @@ ADMIN_SESSION_VALUE = "ok"
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 TRIAL_STATUS_TRIAL = "trial"
 TRIAL_STATUS_NONTrial = "nontrial"
-H5_FORM_VERSION = "2026-07-09-enroll-v2"
+H5_FORM_VERSION = "2026-07-17-dual-qr-v1"
 ENROLLMENT_MODE_TRIAL = "trial"
 ENROLLMENT_MODE_NONTrial = "nontrial"
 QR_GROUP_TYPES = frozenset({"GENAI", "HUMAN"})
@@ -347,6 +347,9 @@ def ensure_schema_migrations() -> None:
             )
         if qr_cols and "qr_logo_path" not in qr_cols:
             conn.execute(text("ALTER TABLE qr_configs ADD COLUMN qr_logo_path VARCHAR(512)"))
+        qr_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('qr_configs')")).fetchall()]
+        if qr_cols and "wechat_qr_path" not in qr_cols:
+            conn.execute(text("ALTER TABLE qr_configs ADD COLUMN wechat_qr_path VARCHAR(512)"))
         rr_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_records')")).fetchall()]
         if rr_cols and "trial_status" not in rr_cols:
             conn.execute(text("ALTER TABLE randomization_records ADD COLUMN trial_status VARCHAR(16) DEFAULT 'trial'"))
@@ -365,6 +368,9 @@ def ensure_schema_migrations() -> None:
         if rr_cols and "account_added" not in rr_cols:
             conn.execute(text("ALTER TABLE randomization_records ADD COLUMN account_added BOOLEAN DEFAULT 0"))
             conn.execute(text("UPDATE randomization_records SET account_added = 0 WHERE account_added IS NULL"))
+        rr_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_records')")).fetchall()]
+        if rr_cols and "contact_channel" not in rr_cols:
+            conn.execute(text("ALTER TABLE randomization_records ADD COLUMN contact_channel VARCHAR(16)"))
         rs_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_settings')")).fetchall()]
         if rs_cols and "randomization_seed" not in rs_cols:
             conn.execute(text("ALTER TABLE randomization_settings ADD COLUMN randomization_seed INTEGER"))
@@ -532,6 +538,7 @@ def _serialize_qr_config(cfg: QRConfig, request: Request | None = None) -> dict:
         "qr_mode": mode,
         "qr_value": cfg.qr_value,
         "qr_logo_path": cfg.qr_logo_path,
+        "wechat_qr_path": getattr(cfg, "wechat_qr_path", None),
         "version": cfg.version,
         "changed_by": cfg.changed_by,
         "reason": cfg.reason,
@@ -543,13 +550,31 @@ def _serialize_qr_config(cfg: QRConfig, request: Request | None = None) -> dict:
     return item
 
 
-def _participant_qr_fields(cfg: QRConfig | None, group: str) -> dict[str, str]:
+def _participant_qr_fields(cfg: QRConfig | None, group: str) -> dict[str, object]:
     if cfg is None:
-        return {"whatsapp_qr": "", "qr_display_mode": "none"}
+        return {
+            "whatsapp_qr": "",
+            "qr_display_mode": "none",
+            "wechat_qr": "",
+            "show_dual_qr": False,
+            "require_contact_channel": False,
+            "contact_channel_options": [],
+        }
     mode = _infer_qr_mode(cfg.qr_value, cfg.qr_mode)
     if mode == "dynamic":
-        return {"whatsapp_qr": _stable_qr_path(group), "qr_display_mode": "dynamic"}
-    return {"whatsapp_qr": cfg.qr_value, "qr_display_mode": mode}
+        whatsapp_qr: str = _stable_qr_path(group)
+    else:
+        whatsapp_qr = cfg.qr_value
+    wechat_qr = (getattr(cfg, "wechat_qr_path", None) or "").strip()
+    show_dual = bool(whatsapp_qr and wechat_qr)
+    return {
+        "whatsapp_qr": whatsapp_qr,
+        "qr_display_mode": mode,
+        "wechat_qr": wechat_qr,
+        "show_dual_qr": show_dual,
+        "require_contact_channel": show_dual,
+        "contact_channel_options": ["whatsapp", "wechat"] if show_dual else [],
+    }
 
 
 def _make_qr_png(content: str, group: str | None = None, logo_path: Path | None = None) -> bytes:
@@ -632,6 +657,13 @@ class AccountAddedUpdateRequest(BaseModel):
     reason: str = "manual account check"
 
 
+class ContactChannelUpdateRequest(BaseModel):
+    enrollment_no: str
+    contact_channel: Literal["whatsapp", "wechat"]
+    changed_by: str = "recruiter"
+    reason: str = "participant contact channel"
+
+
 class RecordAssignedWeekRequest(BaseModel):
     enrollment_no: str
     assigned_recruitment_week: int | None = None
@@ -712,6 +744,7 @@ def _record_audit_snapshot(record: RandomizationRecord) -> dict[str, object]:
         "subject_code": record.subject_code,
         "assigned_recruitment_week": getattr(record, "assigned_recruitment_week", None),
         "account_added": bool(getattr(record, "account_added", False)),
+        "contact_channel": getattr(record, "contact_channel", None),
     }
 
 
@@ -1219,6 +1252,67 @@ def _h5_randomize_html() -> str:
           background: #fff;
           padding: 4px;
         }
+        .dual-qr {
+          display: none;
+          gap: 12px;
+          margin-top: 10px;
+          flex-wrap: wrap;
+        }
+        .dual-qr.show { display: flex; }
+        .dual-qr-card {
+          flex: 1 1 150px;
+          min-width: 140px;
+          border: 1px solid var(--border);
+          border-radius: 12px;
+          padding: 10px;
+          background: #f8fafc;
+          text-align: center;
+        }
+        .dual-qr-card h4 {
+          margin: 0 0 8px;
+          font-size: 14px;
+          color: #334155;
+        }
+        .dual-qr-card img {
+          max-width: 160px;
+          width: 100%;
+          margin: 0 auto;
+          display: block;
+          border-radius: 8px;
+          border: 1px solid var(--border);
+          background: #fff;
+          padding: 4px;
+        }
+        .channel-pick {
+          display: none;
+          margin-top: 14px;
+          padding: 12px;
+          border: 1px solid #bfdbfe;
+          border-radius: 12px;
+          background: #eff6ff;
+        }
+        .channel-pick.show { display: block; }
+        .channel-pick h4 { margin: 0 0 8px; font-size: 14px; color: #1e3a8a; }
+        .channel-pick .opts {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+        .channel-pick label.opt {
+          flex: 1 1 120px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 10px 12px;
+          border: 1px solid #93c5fd;
+          border-radius: 10px;
+          background: #fff;
+          cursor: pointer;
+          font-size: 14px;
+          font-weight: 600;
+        }
+        .channel-pick label.opt input { width: auto; margin: 0; }
+        .channel-pick button { margin-top: 10px; width: 100%; }
         .highlight-field {
           margin-top: 12px;
           padding: 12px;
@@ -1272,7 +1366,26 @@ def _h5_randomize_html() -> str:
           <div class="group" id="groupRow">分組結果：<span id="groupResult">-</span></div>
           <div class="kv"><strong>二維碼：</strong></div>
           <img id="qrImage" alt="whatsapp-qr" />
+          <div id="dualQr" class="dual-qr">
+            <div class="dual-qr-card">
+              <h4>WhatsApp</h4>
+              <img id="qrWaImage" alt="whatsapp-qr" />
+            </div>
+            <div class="dual-qr-card">
+              <h4>微信 WeChat</h4>
+              <img id="qrWechatImage" alt="wechat-qr" />
+            </div>
+          </div>
           <div class="kv" id="qrLinkText"></div>
+          <div id="channelPick" class="channel-pick">
+            <h4>請選擇參加者實際添加的帳號</h4>
+            <div class="opts">
+              <label class="opt"><input type="radio" name="contactChannel" value="whatsapp" /> WhatsApp</label>
+              <label class="opt"><input type="radio" name="contactChannel" value="wechat" /> 微信 WeChat</label>
+            </div>
+            <button type="button" id="saveChannelBtn">確認添加渠道</button>
+            <div class="kv" id="channelStatus" style="margin-top:8px;"></div>
+          </div>
           <div class="kv ok" id="okText"></div>
           <div class="kv err" id="errText"></div>
         </div>
@@ -1302,9 +1415,12 @@ def _h5_randomize_html() -> str:
 
         function renderResult(data) {
           document.getElementById("errText").textContent = "";
+          const dual = !!data.show_dual_qr && !!(data.wechat_qr);
           document.getElementById("okText").textContent = data.idempotent
             ? "該手機號已隨機化，展示過往結果。"
-            : "隨機化成功，請掃碼加入對應 WhatsApp 帳號。";
+            : (dual
+              ? "隨機化成功。請讓參加者掃碼加入 WhatsApp 或微信，並由招募員確認添加渠道。"
+              : "隨機化成功，請掃碼加入對應 WhatsApp 帳號。");
           document.getElementById("enrollmentNo").textContent = data.enrollment_no || "-";
           document.getElementById("siteName").textContent = data.site_name || data.site_id || "-";
           const gr = document.getElementById("groupResult");
@@ -1315,8 +1431,38 @@ def _h5_randomize_html() -> str:
           const qrUrl = toAbsoluteUrl(qrRaw);
           const qrImg = document.getElementById("qrImage");
           const qrLinkText = document.getElementById("qrLinkText");
+          const dualBox = document.getElementById("dualQr");
+          const channelPick = document.getElementById("channelPick");
+          const channelStatus = document.getElementById("channelStatus");
+          const waImg = document.getElementById("qrWaImage");
+          const wxImg = document.getElementById("qrWechatImage");
           qrLinkText.innerHTML = "";
+          if (channelStatus) channelStatus.textContent = "";
+          window.__lastEnrollmentNo = data.enrollment_no || "";
 
+          if (dual) {
+            qrImg.style.display = "none";
+            dualBox.classList.add("show");
+            if (qrMode === "dynamic") {
+              waImg.src = window.location.origin + "/r/" + (data.allocation_group || "") + "/qr.png?t=" + Date.now();
+            } else {
+              waImg.src = qrUrl;
+            }
+            wxImg.src = toAbsoluteUrl(data.wechat_qr);
+            channelPick.classList.add("show");
+            const existing = data.contact_channel || "";
+            document.querySelectorAll('input[name="contactChannel"]').forEach(function(r) {
+              r.checked = r.value === existing;
+            });
+            if (existing) {
+              channelStatus.textContent = "已選擇：" + (existing === "wechat" ? "微信" : "WhatsApp");
+              channelStatus.className = "kv ok";
+            }
+            return;
+          }
+
+          dualBox.classList.remove("show");
+          channelPick.classList.remove("show");
           if (!qrRaw) {
             qrImg.style.display = "none";
             qrLinkText.textContent = "未配置二維碼";
@@ -1337,6 +1483,41 @@ def _h5_randomize_html() -> str:
             qrImg.style.display = "none";
           }
           qrLinkText.innerHTML = '二維碼連結：<a href="' + qrUrl + '" target="_blank">' + qrRaw + '</a>';
+        }
+
+        async function saveContactChannel() {
+          const enrollmentNo = window.__lastEnrollmentNo || document.getElementById("enrollmentNo").textContent;
+          const picked = document.querySelector('input[name="contactChannel"]:checked');
+          const status = document.getElementById("channelStatus");
+          if (!enrollmentNo || enrollmentNo === "-") {
+            status.textContent = "請先完成隨機化";
+            status.className = "kv err";
+            return;
+          }
+          if (!picked) {
+            status.textContent = "請先選擇 WhatsApp 或微信";
+            status.className = "kv err";
+            return;
+          }
+          const rid = (document.getElementById("rid").value || "").trim() || "recruiter";
+          const res = await fetch("/randomization/contact-channel", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+              enrollment_no: enrollmentNo,
+              contact_channel: picked.value,
+              changed_by: rid,
+              reason: "h5 channel selection"
+            })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            status.textContent = "保存失敗：" + (data.detail || "unknown_error");
+            status.className = "kv err";
+            return;
+          }
+          status.textContent = "已保存：參加者添加的是 " + (picked.value === "wechat" ? "微信" : "WhatsApp");
+          status.className = "kv ok";
         }
 
         async function loadSiteOptions() {
@@ -1397,6 +1578,8 @@ def _h5_randomize_html() -> str:
 
         loadParticipantUiConfig();
         loadSiteOptions();
+        const saveChannelBtn = document.getElementById("saveChannelBtn");
+        if (saveChannelBtn) saveChannelBtn.addEventListener("click", saveContactChannel);
       </script>
     </body>
     </html>
@@ -1869,6 +2052,7 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
             "site_name": existing.site_name,
             "allocation_group": existing.allocation_group,
             **_participant_qr_fields(qr, existing.allocation_group),
+            "contact_channel": getattr(existing, "contact_channel", None),
             "randomized_at": utc_iso(existing.randomized_at),
             "idempotent": True,
         }
@@ -1934,8 +2118,42 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
         "site_name": record.site_name,
         "allocation_group": group,
         **_participant_qr_fields(qr, group),
+        "contact_channel": getattr(record, "contact_channel", None),
         "randomized_at": utc_iso(record.randomized_at),
         "idempotent": False,
+    }
+
+
+@app.post("/randomization/contact-channel")
+def set_contact_channel(payload: ContactChannelUpdateRequest, db: Session = Depends(get_db)):
+    """入組後由招募員選擇參加者實際添加的渠道（WhatsApp / 微信）。"""
+    if payload.contact_channel not in {"whatsapp", "wechat"}:
+        raise HTTPException(status_code=400, detail="invalid_contact_channel")
+    record = db.scalar(select(RandomizationRecord).where(RandomizationRecord.enrollment_no == payload.enrollment_no))
+    if record is None:
+        raise HTTPException(status_code=404, detail="record_not_found")
+    if record.activation_status == "voided":
+        raise HTTPException(status_code=400, detail="record_voided")
+    snapshot = _record_audit_snapshot(record)
+    old_channel = getattr(record, "contact_channel", None)
+    record.contact_channel = payload.contact_channel
+    db.commit()
+    add_audit(
+        db,
+        "contact_channel_selected",
+        {
+            **snapshot,
+            "old_contact_channel": old_channel,
+            "new_contact_channel": payload.contact_channel,
+            "contact_channel": payload.contact_channel,
+            "changed_by": payload.changed_by,
+            "reason": payload.reason,
+        },
+    )
+    return {
+        "ok": True,
+        "enrollment_no": record.enrollment_no,
+        "contact_channel": record.contact_channel,
     }
 
 
@@ -2061,6 +2279,52 @@ if _HAS_MULTIPART:
         db.commit()
         add_audit(db, "qr_config_image_uploaded", {"group": group, "version": cfg.version, "path": qr_value})
         return {"ok": True, "group": group, "version": cfg.version, "qr_value": qr_value}
+
+    @app.post("/admin/qr-config/wechat")
+    async def upload_wechat_qr(
+        group: str = Form(...),
+        changed_by: str = Form(...),
+        reason: str = Form("wechat qr upload"),
+        file: UploadFile = File(...),
+        db: Session = Depends(get_db),
+    ):
+        """上傳微信二維碼圖片（建議用於對照組，與 WhatsApp 動態碼並排展示）。"""
+        if group not in QR_GROUP_TYPES:
+            raise HTTPException(status_code=400, detail="invalid_group")
+        ext = Path(file.filename or "").suffix.lower()
+        if ext not in {".png", ".jpg", ".jpeg", ".webp"}:
+            raise HTTPException(status_code=400, detail="invalid_file_type")
+        saved_name = f"{group.lower()}_wechat_{secrets.token_hex(8)}{ext}"
+        saved_path = UPLOAD_DIR / saved_name
+        content = await file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="empty_file")
+        with open(saved_path, "wb") as f:
+            f.write(content)
+        wechat_path = f"/uploads/qr/{saved_name}"
+        cfg = db.scalar(select(QRConfig).where(QRConfig.group_type == group))
+        if cfg is None:
+            raise HTTPException(status_code=400, detail="configure_whatsapp_qr_first")
+        cfg.wechat_qr_path = wechat_path
+        cfg.changed_by = changed_by
+        cfg.reason = reason
+        cfg.version += 1
+        db.commit()
+        add_audit(db, "wechat_qr_uploaded", {"group": group, "path": wechat_path})
+        return {"ok": True, "group": group, "wechat_qr_path": wechat_path}
+
+    @app.delete("/admin/qr-config/wechat")
+    def delete_wechat_qr(group: str = Query(...), db: Session = Depends(get_db)):
+        if group not in QR_GROUP_TYPES:
+            raise HTTPException(status_code=400, detail="invalid_group")
+        cfg = db.scalar(select(QRConfig).where(QRConfig.group_type == group))
+        if cfg is None or not getattr(cfg, "wechat_qr_path", None):
+            raise HTTPException(status_code=404, detail="wechat_qr_not_configured")
+        cfg.wechat_qr_path = None
+        cfg.version += 1
+        db.commit()
+        add_audit(db, "wechat_qr_removed", {"group": group})
+        return {"ok": True, "group": group}
 
     @app.post("/admin/qr-config/logo")
     async def upload_qr_logo(
@@ -2188,6 +2452,7 @@ def get_randomization_records(db: Session = Depends(get_db)):
                 "site_assigned_recruitment_week": site_week_map.get(r.site_id),
                 "effective_recruitment_week": _record_effective_recruitment_week(r, start_date, site_week_map),
                 "account_added": bool(getattr(r, "account_added", False)),
+                "contact_channel": getattr(r, "contact_channel", None),
             }
             for r in records
         ],
@@ -2216,6 +2481,7 @@ def export_randomization_records_csv(db: Session = Depends(get_db)):
             "assigned_recruitment_week",
             "effective_recruitment_week",
             "account_added",
+            "contact_channel",
         ]
     )
     setting = db.get(RandomizationSetting, 1)
@@ -2242,6 +2508,7 @@ def export_randomization_records_csv(db: Session = Depends(get_db)):
                 getattr(r, "assigned_recruitment_week", None) or "",
                 _record_effective_recruitment_week(r, start_date, site_week_map) or "",
                 "yes" if bool(getattr(r, "account_added", False)) else "no",
+                getattr(r, "contact_channel", None) or "",
             ]
         )
     csv_text = buf.getvalue()
@@ -2532,6 +2799,32 @@ def admin_update_account_added(payload: AccountAddedUpdateRequest, db: Session =
         },
     )
     return {"ok": True, "enrollment_no": record.enrollment_no, "account_added": record.account_added}
+
+
+@app.patch("/admin/randomization-records/contact-channel")
+def admin_update_contact_channel(payload: ContactChannelUpdateRequest, db: Session = Depends(get_db)):
+    if payload.contact_channel not in {"whatsapp", "wechat"}:
+        raise HTTPException(status_code=400, detail="invalid_contact_channel")
+    record = db.scalar(select(RandomizationRecord).where(RandomizationRecord.enrollment_no == payload.enrollment_no))
+    if record is None:
+        raise HTTPException(status_code=404, detail="record_not_found")
+    snapshot = _record_audit_snapshot(record)
+    old_channel = getattr(record, "contact_channel", None)
+    record.contact_channel = payload.contact_channel
+    db.commit()
+    add_audit(
+        db,
+        "admin_contact_channel_updated",
+        {
+            **snapshot,
+            "old_contact_channel": old_channel,
+            "new_contact_channel": payload.contact_channel,
+            "contact_channel": payload.contact_channel,
+            "changed_by": payload.changed_by,
+            "reason": payload.reason,
+        },
+    )
+    return {"ok": True, "enrollment_no": record.enrollment_no, "contact_channel": record.contact_channel}
 
 
 @app.patch("/admin/randomization-records/assigned-week")
