@@ -830,6 +830,13 @@ def test_overview_weekly_tracking_by_site_assigned_week():
         site = db.get(Site, "SITE_01")
         assert site is not None
         assert site.assigned_recruitment_week == 2
+        assert record.assigned_recruitment_week == 2
+
+    listing = admin_get(client, "/admin/randomization-records").json()
+    item = next(i for i in listing["items"] if i["phone_number"] == "+85261113001")
+    assert item["assigned_recruitment_week"] == 2
+    assert item["site_assigned_recruitment_week"] == 2
+    assert item["effective_recruitment_week"] == 2
 
     overview = admin_get(client, "/admin/randomization-records").json()["overview"]
     assert overview["weekly_tracking_mode"] == "site_assigned"

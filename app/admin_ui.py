@@ -1152,7 +1152,7 @@ def panel_records() -> str:
           <button type="button" class="secondary" onclick="exportRecordsCsv()">匯出 CSV</button>
         </div>
       </div>
-      <p class="muted" style="margin:8px 0 0;font-size:12px;">「歸屬周」在入組編號右側；「參加者姓名」在手機號右側；「WhatsApp 號」默認與手機號相同，可單獨修改。「已添加帳號」為手動核對（對方已添加或我方已添加對方），勾選後立即保存。Non-trial 記錄的「分組」可改 GENAI/HUMAN，Trial 記錄分組只讀。其餘修改後點該行「保存修改」或上方「全部保存」。</p>
+      <p class="muted" style="margin:8px 0 0;font-size:12px;">「歸屬周」：若站點已設歸屬周，入組時會自動寫入並在此顯示；可改寫覆蓋。「參加者姓名」在手機號右側；「WhatsApp 號」默認與手機號相同，可單獨修改。「已添加帳號」為手動核對（對方已添加或我方已添加對方），勾選後立即保存。Non-trial 記錄的「分組」可改 GENAI/HUMAN，Trial 記錄分組只讀。其餘修改後點該行「保存修改」或上方「全部保存」。</p>
       <div class="row" style="margin-top:10px;max-width:none;flex-wrap:wrap;">
         <div style="flex:1 1 0;min-width:0;">
           <label>站點</label>
@@ -2956,11 +2956,21 @@ ADMIN_SCRIPTS = """
     return v != null && v !== "" ? String(v) : "";
   }
 
+  function recordSiteAssignedWeek(row) {
+    const v = row.site_assigned_recruitment_week;
+    return v != null && v !== "" ? String(v) : "";
+  }
+
+  /** 列表顯示：記錄自設歸屬周優先，否則帶入站點已選周數。 */
+  function recordAssignedWeekDisplay(row) {
+    return recordAssignedWeekStored(row) || recordSiteAssignedWeek(row);
+  }
+
   function recordAssignedWeekDraftValue(row, draft) {
     if (draft && draft.assigned_recruitment_week !== undefined) {
       return String(draft.assigned_recruitment_week || "");
     }
-    return recordAssignedWeekStored(row);
+    return recordAssignedWeekDisplay(row);
   }
 
   function parseRecordAssignedWeekInput(raw) {
@@ -3019,7 +3029,7 @@ ADMIN_SCRIPTS = """
       const origWa = String(row.whatsapp_number || "");
       const origPname = String(row.participant_name || "");
       const origGroup = String(row.allocation_group || "").toUpperCase();
-      const origWeek = recordAssignedWeekStored(row);
+      const origWeek = recordAssignedWeekDisplay(row);
       const change = { enrollment_no: en, row: row };
       let has = false;
       if (draft.status !== undefined && draft.status !== origStatus) {
@@ -3126,9 +3136,15 @@ ADMIN_SCRIPTS = """
       const waVal = escapeHtml(draft.whatsapp !== undefined ? draft.whatsapp : (row.whatsapp_number || ""));
       const pnameVal = escapeHtml(draft.participant_name !== undefined ? draft.participant_name : (row.participant_name || ""));
       const weekVal = escapeHtml(recordAssignedWeekDraftValue(row, draft));
-      const weekHint = row.effective_recruitment_week != null && row.effective_recruitment_week !== ""
-        ? ("默認第 " + row.effective_recruitment_week + " 周")
-        : "可選";
+      const siteWeek = recordSiteAssignedWeek(row);
+      const weekHint = siteWeek
+        ? ("站點第 " + siteWeek + " 周")
+        : (row.effective_recruitment_week != null && row.effective_recruitment_week !== ""
+          ? ("默認第 " + row.effective_recruitment_week + " 周")
+          : "可選");
+      const weekTitle = siteWeek
+        ? ("站點已設第 " + siteWeek + " 周；可改寫覆蓋，留空仍按站點周統計")
+        : "留空表示按入組日期；填寫後優先用於圖表統計";
       const status = String(row.activation_status || "pending");
       const isVoided = status === "voided";
       const trialStatus = String(row.trial_status || "trial");
@@ -3142,7 +3158,7 @@ ADMIN_SCRIPTS = """
         + "<input type='checkbox' class='rec-account-added-input' title='手動核對：對方已添加或我方已添加對方'"
         + (accountAdded ? " checked" : "") + " /></td>"
         + "<td><input type='number' min='1' class='rec-week-input' style='width:56px;padding:6px 8px;' value='"
-        + weekVal + "' placeholder='" + escapeHtml(weekHint) + "' title='留空表示按站點/入組日期；填寫後優先用於圖表統計' /></td>"
+        + weekVal + "' placeholder='" + escapeHtml(weekHint) + "' title='" + escapeHtml(weekTitle) + "' /></td>"
         + "<td><input type='text' class='rec-subject-code-input' value='" + codeVal + "' placeholder='可選' /></td>"
         + "<td><input type='text' class='rec-phone-input' value='" + phoneVal + "' /></td>"
         + "<td><input type='text' class='rec-whatsapp-input' value='" + waVal + "' title='默認與手機號相同，可單獨修改' /></td>"
@@ -3436,7 +3452,7 @@ ADMIN_SCRIPTS = """
     const origWa = String(row.whatsapp_number || "");
     const origPname = String(row.participant_name || "");
     const origGroup = String(row.allocation_group || "").toUpperCase();
-    const origWeek = recordAssignedWeekStored(row);
+    const origWeek = recordAssignedWeekDisplay(row);
     const change = { enrollment_no: enrollmentNo, row: row };
     let has = false;
     if (statusSel && statusSel.value !== origStatus) {

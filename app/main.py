@@ -1875,6 +1875,9 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
 
     site = db.get(Site, payload.site_id)
     site_name = site.site_name if site else payload.site_id
+    site_week = getattr(site, "assigned_recruitment_week", None) if site is not None else None
+    if site_week is not None and site_week < 1:
+        site_week = None
     nontrial_site = _is_nontrial_recruitment_site(site)
     if nontrial_site:
         group = _next_nontrial_allocation_group(db, setting)
@@ -1907,6 +1910,7 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
         site_name=site_name,
         allocation_group=group,
         trial_status=trial_status,
+        assigned_recruitment_week=site_week,
     )
     db.add(record)
     db.commit()
@@ -2175,6 +2179,7 @@ def get_randomization_records(db: Session = Depends(get_db)):
                 "trial_status": getattr(r, "trial_status", TRIAL_STATUS_TRIAL) or TRIAL_STATUS_TRIAL,
                 "subject_code": r.subject_code,
                 "assigned_recruitment_week": getattr(r, "assigned_recruitment_week", None),
+                "site_assigned_recruitment_week": site_week_map.get(r.site_id),
                 "effective_recruitment_week": _record_effective_recruitment_week(r, start_date, site_week_map),
                 "account_added": bool(getattr(r, "account_added", False)),
             }
