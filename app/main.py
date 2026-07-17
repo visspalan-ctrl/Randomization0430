@@ -1949,7 +1949,13 @@ def update_qr_config(payload: QRUpdateRequest, db: Session = Depends(get_db)):
     if payload.qr_mode == "dynamic":
         if not qr_value:
             raise HTTPException(status_code=400, detail="dynamic_qr_target_required")
-        if qr_value.startswith("/uploads/") or qr_value.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+        lower = qr_value.lower()
+        if (
+            qr_value.startswith("/uploads/")
+            or "/uploads/qr/" in lower
+            or lower.endswith((".png", ".jpg", ".jpeg", ".webp"))
+            or not (lower.startswith("http://") or lower.startswith("https://"))
+        ):
             raise HTTPException(status_code=400, detail="dynamic_qr_target_must_be_url")
     if payload.qr_mode == "static_url" and not qr_value:
         raise HTTPException(status_code=400, detail="static_url_required")

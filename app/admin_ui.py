@@ -1050,9 +1050,10 @@ def panel_qr() -> str:
               <span class="qr-mode-check" aria-hidden="true"></span>
             </div>
             <strong>靜態圖片（上傳）</strong>
-            <span class="qr-mode-desc">上傳已製作好的二維碼圖片檔案，系統直接展示該圖片。若要改回動態碼，請選「動態二維碼」、填寫跳轉 URL 後再儲存。</span>
+            <span class="qr-mode-desc">上傳已製作好的二維碼圖片檔案，系統直接展示該圖片。若要改回動態碼：選「動態二維碼」→ 填寫 https://wa.me/... → 點儲存（若忘了填，儲存時會彈窗提示）。</span>
           </label>
         </div>
+        <p id="qrModeSwitchHint" class="muted" style="display:none;margin:10px 0 0;padding:8px 10px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;color:#9a3412;font-size:12px;"></p>
         <select id="qrMode" style="display:none;" onchange="onQrModeChange()">
           <option value="dynamic" selected>dynamic</option>
           <option value="static_url">static_url</option>
@@ -1090,6 +1091,7 @@ def panel_qr() -> str:
       <label>原因</label>
       <input id="qrReason" value="manual update" />
       <button type="button" onclick="saveQr()">儲存</button>
+      <button type="button" class="secondary" onclick="switchQrToDynamic()">一鍵切換為動態二維碼</button>
       <button type="button" class="secondary" onclick="loadQrCurrent()">讀取當前</button>
 
       <div class="participant-ui-card" style="margin-top:18px;">
@@ -2057,6 +2059,50 @@ ADMIN_SCRIPTS = """
     });
   }
 
+  function isUploadOrImagePath(value) {
+    const v = String(value || "").trim();
+    if (!v) return false;
+    if (v.startsWith("/uploads/")) return true;
+    if (/\\.(png|jpe?g|webp)(\\?.*)?$/i.test(v)) return true;
+    if (v.indexOf("/uploads/qr/") >= 0) return true;
+    return false;
+  }
+
+  function isHttpUrl(value) {
+    return /^https?:\\/\\//i.test(String(value || "").trim());
+  }
+
+  function rememberDynamicQrTarget(group, url) {
+    if (!group || !isHttpUrl(url)) return;
+    window.__lastDynamicQrTarget = window.__lastDynamicQrTarget || {};
+    window.__lastDynamicQrTarget[group] = String(url).trim();
+    try {
+      localStorage.setItem("qr_dynamic_target_" + group, String(url).trim());
+    } catch (e) {}
+  }
+
+  function recalledDynamicQrTarget(group) {
+    const mem = (window.__lastDynamicQrTarget || {})[group];
+    if (mem && isHttpUrl(mem)) return mem;
+    try {
+      const saved = localStorage.getItem("qr_dynamic_target_" + group);
+      if (saved && isHttpUrl(saved)) return saved;
+    } catch (e) {}
+    return "https://wa.me/";
+  }
+
+  function updateQrModeSwitchHint(mode) {
+    const hint = document.getElementById("qrModeSwitchHint");
+    if (!hint) return;
+    if (mode === "dynamic") {
+      hint.style.display = "block";
+      hint.textContent = "已選動態二維碼：請確認下方「跳轉目標」為 https://wa.me/... 連結後點「儲存」。若仍是圖片路徑，儲存時會提示你輸入新連結。";
+      return;
+    }
+    hint.style.display = "none";
+    hint.textContent = "";
+  }
+
   function onQrModeRadioChange(mode) {
     syncQrModeRadio(mode);
     const fileInput = document.getElementById("qrFile");
@@ -2064,13 +2110,17 @@ ADMIN_SCRIPTS = """
       fileInput.value = "";
     }
     const valueEl = document.getElementById("qrValue");
+    const group = document.getElementById("qrGroup")?.value || "";
     if (valueEl && mode === "dynamic") {
       const cur = (valueEl.value || "").trim();
-      if (cur.startsWith("/uploads/") || /\\.(png|jpg|jpeg|webp)$/i.test(cur)) {
-        valueEl.value = "";
+      if (!cur || isUploadOrImagePath(cur)) {
+        const recalled = recalledDynamicQrTarget(group);
+        valueEl.value = recalled === "https://wa.me/" ? "" : recalled;
         valueEl.placeholder = "https://wa.me/...";
+        setTimeout(function() { valueEl.focus(); valueEl.select(); }, 0);
       }
     }
+    updateQrModeSwitchHint(mode);
     onQrModeChange();
   }
 
@@ -2130,6 +2180,7 @@ ADMIN_SCRIPTS = """
       if (!showFile) fileInput.value = "";
     }
     updateQrLivePreview();
+    updateQrModeSwitchHint(mode);
   }
 
   function downloadQrPng() {
@@ -2201,6 +2252,9 @@ ADMIN_SCRIPTS = """
         : "尚未上傳中心 Logo";
     }
     const mode = current.qr_mode || "static_url";
+    if (mode === "dynamic" && current.qr_value) {
+      rememberDynamicQrTarget(group, current.qr_value);
+    }
     onQrModeChange();
     if (mode === "dynamic") {
       text.textContent = "v" + current.version + " · 動態碼 → " + (current.qr_value || "");
@@ -2274,14 +2328,42 @@ ADMIN_SCRIPTS = """
     await loadGroupLabels();
   }
 
+  async function switchQrToDynamic() {
+    syncQrModeRadio("dynamic");
+    updateQrModeSwitchHint("dynamic");
+    onQrModeChange();
+    const group = document.getElementById("qrGroup")?.value || "";
+    const valueEl = document.getElementById("qrValue");
+    const cur = (valueEl?.value || "").trim();
+    if (!isHttpUrl(cur) || isUploadOrImagePath(cur)) {
+      const suggested = recalledDynamicQrTarget(group);
+      const entered = window.prompt(
+        "請輸入動態二維碼跳轉目標 URL（例如 https://wa.me/852xxxxxxxx）",
+        suggested
+      );
+      if (entered == null) {
+        resultBox.textContent = "[取消] 未切換為動態二維碼";
+        return;
+      }
+      const url = String(entered).trim();
+      if (!isHttpUrl(url) || isUploadOrImagePath(url)) {
+        resultBox.textContent = "[ERROR] 跳轉目標須為 http(s) 連結";
+        return;
+      }
+      if (valueEl) valueEl.value = url;
+    }
+    await saveQr();
+  }
+
   async function saveQr() {
     const mode = document.getElementById("qrMode")?.value || "static_url";
+    const group = document.getElementById("qrGroup")?.value;
     const fileInput = document.getElementById("qrFile");
     const hasFile = !!(fileInput && fileInput.files && fileInput.files.length > 0);
     // 僅在「靜態圖片」模式下走上傳；切回動態/靜態 URL 時忽略殘留的已選檔案
     if (mode === "static_image" && hasFile) {
       const fd = new FormData();
-      fd.append("group", document.getElementById("qrGroup").value);
+      fd.append("group", group);
       fd.append("changed_by", document.getElementById("qrBy").value);
       fd.append("reason", document.getElementById("qrReason").value);
       fd.append("file", fileInput.files[0]);
@@ -2300,31 +2382,53 @@ ADMIN_SCRIPTS = """
         return;
       }
     }
-    const qrValue = (document.getElementById("qrValue")?.value || "").trim();
-    if (mode === "dynamic" && !qrValue) {
-      resultBox.textContent = "[ERROR] 動態二維碼請填寫跳轉目標（例如 https://wa.me/...）";
-      return;
-    }
-    if (mode === "dynamic" && (qrValue.startsWith("/uploads/") || /\\.(png|jpg|jpeg|webp)$/i.test(qrValue))) {
-      resultBox.textContent = "[ERROR] 動態模式的跳轉目標須為 URL（不可為已上傳的圖片路徑）";
-      return;
+    let qrValue = (document.getElementById("qrValue")?.value || "").trim();
+    if (mode === "dynamic" && (!qrValue || isUploadOrImagePath(qrValue) || !isHttpUrl(qrValue))) {
+      const suggested = recalledDynamicQrTarget(group);
+      const entered = window.prompt(
+        "切換為動態二維碼：請輸入跳轉目標 URL（例如 https://wa.me/852xxxxxxxx）",
+        isHttpUrl(qrValue) ? qrValue : suggested
+      );
+      if (entered == null) {
+        resultBox.textContent = "[取消] 未切換為動態二維碼";
+        return;
+      }
+      qrValue = String(entered).trim();
+      if (!isHttpUrl(qrValue) || isUploadOrImagePath(qrValue)) {
+        resultBox.textContent = "[ERROR] 跳轉目標須為 http(s) 連結，不能是圖片路徑";
+        return;
+      }
+      const valueEl = document.getElementById("qrValue");
+      if (valueEl) valueEl.value = qrValue;
     }
     if (mode === "static_url" && !qrValue) {
       resultBox.textContent = "[ERROR] 請填寫二維碼連結（URL）";
       return;
     }
     if (fileInput) fileInput.value = "";
-    await api("/admin/qr-config", "POST", {
-      group: document.getElementById("qrGroup").value,
-      qr_mode: mode,
-      qr_value: qrValue,
-      changed_by: document.getElementById("qrBy").value,
-      reason: document.getElementById("qrReason").value
-    });
-    resultBox.textContent = mode === "dynamic"
-      ? "[OK] 已切換為動態二維碼並儲存跳轉目標"
-      : "[OK] 已儲存二維碼設定";
-    await loadQrCurrent();
+    try {
+      const res = await api("/admin/qr-config", "POST", {
+        group: group,
+        qr_mode: mode,
+        qr_value: qrValue,
+        changed_by: document.getElementById("qrBy").value,
+        reason: document.getElementById("qrReason").value || (mode === "dynamic" ? "switch to dynamic" : "manual update")
+      });
+      if (mode === "dynamic") rememberDynamicQrTarget(group, qrValue);
+      await loadQrCurrent();
+      resultBox.textContent = mode === "dynamic"
+        ? "[OK] 已切換為動態二維碼並儲存跳轉目標\\n固定碼: " + (res.stable_qr_path || ("/r/" + group))
+        : "[OK] 已儲存二維碼設定（模式: " + mode + "）";
+    } catch (err) {
+      const detail = err && err.message ? String(err.message) : String(err);
+      if (detail === "dynamic_qr_target_required") {
+        resultBox.textContent = "[ERROR] 動態二維碼請填寫跳轉目標（例如 https://wa.me/...）";
+      } else if (detail === "dynamic_qr_target_must_be_url") {
+        resultBox.textContent = "[ERROR] 動態模式的跳轉目標須為 URL（不可為已上傳的圖片路徑）";
+      } else {
+        resultBox.textContent = "[ERROR] 儲存二維碼失敗\\n" + detail;
+      }
+    }
   }
 
   function overviewStatNum(n, kind, size) {
