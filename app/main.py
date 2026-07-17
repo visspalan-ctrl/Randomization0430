@@ -2245,10 +2245,23 @@ if _HAS_MULTIPART:
         changed_by: str = Form(...),
         reason: str = Form(""),
         file: UploadFile = File(...),
+        confirm_replace_dynamic: str = Form("0"),
         db: Session = Depends(get_db),
     ):
         if group not in QR_GROUP_TYPES:
             raise HTTPException(status_code=400, detail="invalid_group")
+        # 已是動態 WhatsApp 時，主上傳會覆蓋跳轉連結；需明確確認，否則請改走微信上傳
+        cfg = db.scalar(select(QRConfig).where(QRConfig.group_type == group))
+        replace_ok = str(confirm_replace_dynamic or "").strip().lower() in {"1", "true", "yes", "on"}
+        if (
+            cfg is not None
+            and _infer_qr_mode(cfg.qr_value, cfg.qr_mode) == "dynamic"
+            and not replace_ok
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="dynamic_mode_use_wechat_upload",
+            )
         ext = Path(file.filename or "").suffix.lower()
         if ext not in {".png", ".jpg", ".jpeg", ".webp"}:
             raise HTTPException(status_code=400, detail="invalid_file_type")
@@ -2260,7 +2273,6 @@ if _HAS_MULTIPART:
         with open(saved_path, "wb") as f:
             f.write(content)
         qr_value = f"/uploads/qr/{saved_name}"
-        cfg = db.scalar(select(QRConfig).where(QRConfig.group_type == group))
         if cfg is None:
             cfg = QRConfig(
                 group_type=group,
@@ -2305,13 +2317,23 @@ if _HAS_MULTIPART:
         cfg = db.scalar(select(QRConfig).where(QRConfig.group_type == group))
         if cfg is None:
             raise HTTPException(status_code=400, detail="configure_whatsapp_qr_first")
+        # 僅寫入微信圖，絕不改動 WhatsApp/主碼的 qr_mode、qr_value
+        kept_mode = cfg.qr_mode
+        kept_value = cfg.qr_value
         cfg.wechat_qr_path = wechat_path
         cfg.changed_by = changed_by
         cfg.reason = reason
         cfg.version += 1
         db.commit()
         add_audit(db, "wechat_qr_uploaded", {"group": group, "path": wechat_path})
-        return {"ok": True, "group": group, "wechat_qr_path": wechat_path}
+        return {
+            "ok": True,
+            "group": group,
+            "wechat_qr_path": wechat_path,
+            "qr_mode": kept_mode,
+            "qr_value": kept_value,
+            "version": cfg.version,
+        }
 
     @app.delete("/admin/qr-config/wechat")
     def delete_wechat_qr(group: str = Query(...), db: Session = Depends(get_db)):

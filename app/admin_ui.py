@@ -1084,11 +1084,11 @@ def panel_qr() -> str:
         </div>
         <div id="qrLogoCurrent" class="muted" style="margin-top:6px;"></div>
       </div>
-      <label id="qrFileLabel">或上傳圖片</label>
+      <label id="qrFileLabel">上傳靜態主二維碼圖片（會替換 WhatsApp/主碼，不是微信碼）</label>
       <input id="qrFile" type="file" accept="image/png,image/jpeg,image/webp" />
       <div id="qrWechatSection" style="margin-top:14px;padding:12px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;">
         <h4 style="margin:0 0 8px;font-size:13px;color:#334155;">微信二維碼（對照組建議上傳）</h4>
-        <p class="muted" style="margin:0 0 8px;font-size:12px;">上傳後，該組入組結果會同時顯示 WhatsApp 動態碼與微信圖片碼，並要求招募員選擇參加者實際添加的渠道。</p>
+        <p class="muted" style="margin:0 0 8px;font-size:12px;">請用本區上傳微信圖片。只會新增微信碼，<strong>不會改動</strong>上方 WhatsApp 動態跳轉連結。入組結果將雙碼展示，並要求招募員選擇實際添加渠道。</p>
         <input id="qrWechatFile" type="file" accept="image/png,image/jpeg,image/webp" />
         <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
           <button type="button" class="secondary" onclick="uploadWechatQr()">上傳微信二維碼</button>
@@ -2249,6 +2249,7 @@ ADMIN_SCRIPTS = """
       resultBox.textContent = "[ERROR] 請選擇微信二維碼圖片";
       return;
     }
+    const beforeValue = (document.getElementById("qrValue")?.value || "").trim();
     const fd = new FormData();
     fd.append("group", document.getElementById("qrGroup").value);
     fd.append("changed_by", document.getElementById("qrBy").value || "admin");
@@ -2257,7 +2258,15 @@ ADMIN_SCRIPTS = """
     const res = await fetch("/admin/qr-config/wechat", { method: "POST", body: fd });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { resultBox.textContent = "[ERROR] wechat upload\\n" + JSON.stringify(data, null, 2); return; }
-    resultBox.textContent = "[OK] 微信二維碼已上傳（入組結果將雙碼展示）";
+    const keptValue = (data.qr_value || "").trim();
+    const keptMode = data.qr_mode || "";
+    let msg = "[OK] 微信二維碼已上傳（不影響 WhatsApp 動態碼；入組結果將雙碼展示）";
+    if (keptMode === "dynamic" && keptValue) {
+      msg += "\\nWhatsApp 跳轉連結未變：" + keptValue;
+    } else if (beforeValue) {
+      msg += "\\n請核對上方跳轉目標仍為：" + beforeValue;
+    }
+    resultBox.textContent = msg;
     fileInput.value = "";
     await loadQrCurrent();
   }
@@ -2425,17 +2434,37 @@ ADMIN_SCRIPTS = """
     const group = document.getElementById("qrGroup")?.value;
     const fileInput = document.getElementById("qrFile");
     const hasFile = !!(fileInput && fileInput.files && fileInput.files.length > 0);
+    // 動態模式下若誤選了主上傳檔案：禁止覆蓋 WhatsApp 連結
+    if (mode === "dynamic" && hasFile) {
+      if (fileInput) fileInput.value = "";
+      resultBox.textContent = "[ERROR] 當前是動態 WhatsApp 模式。微信圖片請用下方「上傳微信二維碼」；不要用主區「上傳靜態主二維碼圖片」，否則會覆蓋跳轉連結。";
+      return;
+    }
     // 僅在「靜態圖片」模式下走上傳；切回動態/靜態 URL 時忽略殘留的已選檔案
     if (mode === "static_image" && hasFile) {
+      if (!confirm("確定上傳並替換「主二維碼/WhatsApp」為靜態圖片？\\n\\n這不是微信碼上傳。若只想加微信碼，請點「取消」，改用下方「上傳微信二維碼」。")) {
+        resultBox.textContent = "[取消] 未上傳靜態主二維碼";
+        return;
+      }
       const fd = new FormData();
       fd.append("group", group);
       fd.append("changed_by", document.getElementById("qrBy").value);
       fd.append("reason", document.getElementById("qrReason").value);
       fd.append("file", fileInput.files[0]);
+      // 若伺服器當前仍是動態模式，需明確確認才允許覆蓋跳轉連結
+      fd.append("confirm_replace_dynamic", "1");
       const res = await fetch("/admin/qr-config/upload", { method: "POST", body: fd });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { resultBox.textContent = "[ERROR] upload\\n" + JSON.stringify(data, null, 2); return; }
-      resultBox.textContent = "[OK] 已上傳靜態圖片";
+      if (!res.ok) {
+        const detail = data.detail || "";
+        if (detail === "dynamic_mode_use_wechat_upload") {
+          resultBox.textContent = "[ERROR] 當前為動態 WhatsApp 模式。微信圖請用下方「上傳微信二維碼」；不要用主區靜態圖片上傳，否則會覆蓋跳轉連結。";
+          return;
+        }
+        resultBox.textContent = "[ERROR] upload\\n" + JSON.stringify(data, null, 2);
+        return;
+      }
+      resultBox.textContent = "[OK] 已上傳靜態主二維碼圖片（已替換原跳轉連結）";
       fileInput.value = "";
       await loadQrCurrent();
       return;

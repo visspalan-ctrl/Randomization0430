@@ -515,10 +515,29 @@ def test_control_group_dual_qr_and_contact_channel_selection():
     wechat_path = uploaded.json()["wechat_qr_path"]
     assert wechat_path.startswith("/uploads/qr/")
 
+    assert uploaded.json()["qr_mode"] == "dynamic"
+    assert uploaded.json()["qr_value"] == "https://wa.me/human_dual"
+
     configs = admin_get(client, "/admin/qr-configs").json()
     human = next(i for i in configs["items"] if i["group_type"] == "HUMAN")
     assert human["qr_mode"] == "dynamic"
+    assert human["qr_value"] == "https://wa.me/human_dual"
     assert human["wechat_qr_path"] == wechat_path
+
+    # 誤用主上傳（未確認）不得覆蓋動態跳轉連結
+    blocked = admin_post(
+        client,
+        "/admin/qr-config/upload",
+        data={"group": "HUMAN", "changed_by": "admin", "reason": "mistaken main upload"},
+        files={"file": ("main.png", file_content, "image/png")},
+    )
+    assert blocked.status_code == 400
+    assert blocked.json()["detail"] == "dynamic_mode_use_wechat_upload"
+    configs2 = admin_get(client, "/admin/qr-configs").json()
+    human2 = next(i for i in configs2["items"] if i["group_type"] == "HUMAN")
+    assert human2["qr_mode"] == "dynamic"
+    assert human2["qr_value"] == "https://wa.me/human_dual"
+    assert human2["wechat_qr_path"] == wechat_path
 
     # 强制下一条入 HUMAN：先给 GENAI 入一条，或用小 block；更稳妥是直接改记录分组后测渠道
     open_batch(client, ["SITE_01"])
