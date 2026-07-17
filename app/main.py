@@ -1941,12 +1941,22 @@ def update_qr_config(payload: QRUpdateRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="invalid_group")
     if payload.qr_mode not in QR_MODES:
         raise HTTPException(status_code=400, detail="invalid_qr_mode")
+    qr_value = (payload.qr_value or "").strip()
+    if payload.qr_mode == "dynamic":
+        if not qr_value:
+            raise HTTPException(status_code=400, detail="dynamic_qr_target_required")
+        if qr_value.startswith("/uploads/") or qr_value.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+            raise HTTPException(status_code=400, detail="dynamic_qr_target_must_be_url")
+    if payload.qr_mode == "static_url" and not qr_value:
+        raise HTTPException(status_code=400, detail="static_url_required")
+    if payload.qr_mode == "static_image" and not qr_value:
+        raise HTTPException(status_code=400, detail="static_image_path_required")
     cfg = db.scalar(select(QRConfig).where(QRConfig.group_type == payload.group))
     if cfg is None:
         cfg = QRConfig(
             group_type=payload.group,
             qr_mode=payload.qr_mode,
-            qr_value=payload.qr_value,
+            qr_value=qr_value,
             changed_by=payload.changed_by,
             reason=payload.reason,
         )
@@ -1954,7 +1964,7 @@ def update_qr_config(payload: QRUpdateRequest, db: Session = Depends(get_db)):
     else:
         cfg.version += 1
         cfg.qr_mode = payload.qr_mode
-        cfg.qr_value = payload.qr_value
+        cfg.qr_value = qr_value
         cfg.changed_by = payload.changed_by
         cfg.reason = payload.reason
     db.commit()

@@ -433,6 +433,58 @@ def test_qr_config_image_upload_is_supported():
     assert genai["qr_mode"] == "static_image"
 
 
+def test_can_switch_from_static_image_back_to_dynamic():
+    client = TestClient(app)
+    file_content = b"\x89PNG\r\n\x1a\nfakepng"
+    uploaded = admin_post(
+        client,
+        "/admin/qr-config/upload",
+        data={"group": "GENAI", "changed_by": "admin", "reason": "upload image"},
+        files={"file": ("qr.png", file_content, "image/png")},
+    )
+    assert uploaded.status_code == 200
+    image_path = uploaded.json()["qr_value"]
+
+    # 仍用旧图片路径作为 dynamic 目标时应被拒绝
+    rejected = admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_value": image_path,
+            "changed_by": "admin",
+            "reason": "bad switch",
+        },
+    )
+    assert rejected.status_code == 400
+    assert rejected.json()["detail"] == "dynamic_qr_target_must_be_url"
+
+    switched = admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_value": "https://wa.me/back_to_dynamic",
+            "changed_by": "admin",
+            "reason": "switch back to dynamic",
+        },
+    )
+    assert switched.status_code == 200, switched.text
+    assert switched.json()["qr_mode"] == "dynamic"
+    assert switched.json()["stable_qr_path"] == "/r/GENAI"
+
+    configs = admin_get(client, "/admin/qr-configs")
+    genai = next(i for i in configs.json()["items"] if i["group_type"] == "GENAI")
+    assert genai["qr_mode"] == "dynamic"
+    assert genai["qr_value"] == "https://wa.me/back_to_dynamic"
+
+    redirect = client.get("/r/GENAI", follow_redirects=False)
+    assert redirect.status_code == 302
+    assert redirect.headers["location"] == "https://wa.me/back_to_dynamic"
+
+
 def test_qr_configs_endpoint_returns_groups():
     client = TestClient(app)
     res = admin_get(client, "/admin/qr-configs")

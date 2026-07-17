@@ -1050,7 +1050,7 @@ def panel_qr() -> str:
               <span class="qr-mode-check" aria-hidden="true"></span>
             </div>
             <strong>靜態圖片（上傳）</strong>
-            <span class="qr-mode-desc">上傳已製作好的二維碼圖片檔案，系統直接展示該圖片。</span>
+            <span class="qr-mode-desc">上傳已製作好的二維碼圖片檔案，系統直接展示該圖片。若要改回動態碼，請選「動態二維碼」、填寫跳轉 URL 後再儲存。</span>
           </label>
         </div>
         <select id="qrMode" style="display:none;" onchange="onQrModeChange()">
@@ -2059,6 +2059,18 @@ ADMIN_SCRIPTS = """
 
   function onQrModeRadioChange(mode) {
     syncQrModeRadio(mode);
+    const fileInput = document.getElementById("qrFile");
+    if (fileInput && mode !== "static_image") {
+      fileInput.value = "";
+    }
+    const valueEl = document.getElementById("qrValue");
+    if (valueEl && mode === "dynamic") {
+      const cur = (valueEl.value || "").trim();
+      if (cur.startsWith("/uploads/") || /\\.(png|jpg|jpeg|webp)$/i.test(cur)) {
+        valueEl.value = "";
+        valueEl.placeholder = "https://wa.me/...";
+      }
+    }
     onQrModeChange();
   }
 
@@ -2115,6 +2127,7 @@ ADMIN_SCRIPTS = """
       const showFile = mode === "static_image";
       fileLabel.style.display = showFile ? "" : "none";
       fileInput.style.display = showFile ? "" : "none";
+      if (!showFile) fileInput.value = "";
     }
     updateQrLivePreview();
   }
@@ -2262,8 +2275,11 @@ ADMIN_SCRIPTS = """
   }
 
   async function saveQr() {
+    const mode = document.getElementById("qrMode")?.value || "static_url";
     const fileInput = document.getElementById("qrFile");
-    if (fileInput && fileInput.files && fileInput.files.length > 0) {
+    const hasFile = !!(fileInput && fileInput.files && fileInput.files.length > 0);
+    // 僅在「靜態圖片」模式下走上傳；切回動態/靜態 URL 時忽略殘留的已選檔案
+    if (mode === "static_image" && hasFile) {
       const fd = new FormData();
       fd.append("group", document.getElementById("qrGroup").value);
       fd.append("changed_by", document.getElementById("qrBy").value);
@@ -2272,17 +2288,42 @@ ADMIN_SCRIPTS = """
       const res = await fetch("/admin/qr-config/upload", { method: "POST", body: fd });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { resultBox.textContent = "[ERROR] upload\\n" + JSON.stringify(data, null, 2); return; }
-      resultBox.textContent = "[OK] 已上傳";
+      resultBox.textContent = "[OK] 已上傳靜態圖片";
+      fileInput.value = "";
       await loadQrCurrent();
       return;
     }
+    if (mode === "static_image" && !hasFile) {
+      const existing = (document.getElementById("qrValue")?.value || "").trim();
+      if (!existing) {
+        resultBox.textContent = "[ERROR] 靜態圖片模式請先選擇要上傳的圖片";
+        return;
+      }
+    }
+    const qrValue = (document.getElementById("qrValue")?.value || "").trim();
+    if (mode === "dynamic" && !qrValue) {
+      resultBox.textContent = "[ERROR] 動態二維碼請填寫跳轉目標（例如 https://wa.me/...）";
+      return;
+    }
+    if (mode === "dynamic" && (qrValue.startsWith("/uploads/") || /\\.(png|jpg|jpeg|webp)$/i.test(qrValue))) {
+      resultBox.textContent = "[ERROR] 動態模式的跳轉目標須為 URL（不可為已上傳的圖片路徑）";
+      return;
+    }
+    if (mode === "static_url" && !qrValue) {
+      resultBox.textContent = "[ERROR] 請填寫二維碼連結（URL）";
+      return;
+    }
+    if (fileInput) fileInput.value = "";
     await api("/admin/qr-config", "POST", {
       group: document.getElementById("qrGroup").value,
-      qr_mode: document.getElementById("qrMode").value,
-      qr_value: document.getElementById("qrValue").value,
+      qr_mode: mode,
+      qr_value: qrValue,
       changed_by: document.getElementById("qrBy").value,
       reason: document.getElementById("qrReason").value
     });
+    resultBox.textContent = mode === "dynamic"
+      ? "[OK] 已切換為動態二維碼並儲存跳轉目標"
+      : "[OK] 已儲存二維碼設定";
     await loadQrCurrent();
   }
 
