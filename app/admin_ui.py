@@ -11,7 +11,7 @@ from app.models import (
 
 PageId = Literal["settings", "sites", "qr", "records"]
 
-ADMIN_UI_BUILD_ID = "2026-07-18-dual-qr-isolate-v1"
+ADMIN_UI_BUILD_ID = "2026-07-18-wechat-entry-v2"
 
 ADMIN_CSS = """
 :root {
@@ -838,7 +838,7 @@ def render_sidebar(active: PageId) -> str:
       <nav class="nav">
         {_nav_link("settings", active, base + "settings", "⚙", "隨機化設定")}
         {_nav_link("sites", active, base + "sites", "◎", "站點與密碼")}
-        {_nav_link("qr", active, base + "qr", "▣", "WhatsApp 二維碼")}
+        {_nav_link("qr", active, base + "qr", "▣", "二維碼（WhatsApp/微信）")}
         {_nav_link("records", active, base + "records", "☰", "隨機化分組記錄")}
       </nav>
       <div class="sidebar-footer">
@@ -1000,8 +1000,9 @@ def panel_sites() -> str:
 def panel_qr() -> str:
     return """
     <div class="page-header">
-      <h2>WhatsApp 二維碼</h2>
-      <p class="lead">按干預組 / 對照組維護展示用二維碼。推薦使用動態二維碼：固定碼不變，可隨時更換跳轉連結。</p>
+      <h2>二維碼設定（WhatsApp + 微信）</h2>
+      <p class="lead">① 先設定 WhatsApp/主碼（建議動態 wa.me）並儲存；② 再在本頁下方綠色區塊上傳微信圖。對照組可雙碼並排。</p>
+      <p class="muted" style="margin:8px 0 0;font-size:12px;">若看不到「② 微信二維碼」綠色區塊，請 <code>git pull origin main</code> 後重啟，並確認頁腳版本含 <code>wechat-entry</code>。</p>
     </div>
     <div class="card">
       <h3>組別與資源</h3>

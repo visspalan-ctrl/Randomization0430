@@ -618,9 +618,11 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     page = admin_get(client, "/admin/web", params={"page": "qr"})
     assert page.status_code == 200
     html = page.text
-    assert "2026-07-18-dual-qr-isolate-v1" in html
+    assert "2026-07-18-wechat-entry-v2" in html
+    assert "二維碼（WhatsApp/微信）" in html
     assert "上傳微信二維碼" in html
     assert "儲存主碼設定" in html
+    assert "② 微信二維碼" in html
     assert "confirm_replace_dynamic" in html
     assert "REPLACE" in html
     assert "已選擇微信圖片" in html
