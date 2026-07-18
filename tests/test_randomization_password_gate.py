@@ -634,8 +634,8 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
 
     settings = admin_get(client, "/admin/web", params={"page": "settings"})
     assert settings.status_code == 200
-    assert "前往二維碼頁（含微信上傳）" in settings.text
-    assert "/admin/web?page=qr" in settings.text
+    assert "WhatsApp / 微信二維碼在這裡" not in settings.text
+    assert "前往二維碼頁（含微信上傳）" not in settings.text
 
 
 def test_dynamic_qr_target_pool_random_redirect():

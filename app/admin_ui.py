@@ -856,12 +856,6 @@ def panel_settings() -> str:
       <h2>隨機化設定</h2>
       <p class="lead">下方概覽展示服務端當前生效值；在「參數」中修改後儲存，將立即作用於後續隨機化。</p>
     </div>
-    <div class="card" style="border:2px solid #0d9488;background:#f0fdfa;">
-      <h3 style="margin-top:0;color:#0f766e;">WhatsApp / 微信二維碼在這裡 →</h3>
-      <p class="muted" style="margin:0 0 12px;font-size:13px;">本頁沒有上傳微信圖。請打開左側「二維碼（WhatsApp/微信）」，或點下方按鈕。</p>
-      <a class="btn-save-inline" href="/admin/web?page=qr" style="display:inline-block;text-decoration:none;padding:10px 16px;background:#0d9488;color:#fff;border-radius:8px;font-weight:600;">前往二維碼頁（含微信上傳）</a>
-      <p class="muted" style="margin:10px 0 0;font-size:11px;">直接網址：<code>/admin/web?page=qr</code> · UI """ + ADMIN_UI_BUILD_ID + """</p>
-    </div>
     <div class="card">
       <h3>當前參數概覽</h3>
       <div id="settingsOverview" class="muted" style="margin-top:8px;">載入中…</div>
