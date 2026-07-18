@@ -11,7 +11,7 @@ from app.models import (
 
 PageId = Literal["settings", "sites", "qr", "records"]
 
-ADMIN_UI_BUILD_ID = "2026-07-18-wechat-entry-v2"
+ADMIN_UI_BUILD_ID = "2026-07-18-wechat-entry-v3"
 
 ADMIN_CSS = """
 :root {
@@ -856,6 +856,12 @@ def panel_settings() -> str:
       <h2>隨機化設定</h2>
       <p class="lead">下方概覽展示服務端當前生效值；在「參數」中修改後儲存，將立即作用於後續隨機化。</p>
     </div>
+    <div class="card" style="border:2px solid #0d9488;background:#f0fdfa;">
+      <h3 style="margin-top:0;color:#0f766e;">WhatsApp / 微信二維碼在這裡 →</h3>
+      <p class="muted" style="margin:0 0 12px;font-size:13px;">本頁沒有上傳微信圖。請打開左側「二維碼（WhatsApp/微信）」，或點下方按鈕。</p>
+      <a class="btn-save-inline" href="/admin/web?page=qr" style="display:inline-block;text-decoration:none;padding:10px 16px;background:#0d9488;color:#fff;border-radius:8px;font-weight:600;">前往二維碼頁（含微信上傳）</a>
+      <p class="muted" style="margin:10px 0 0;font-size:11px;">直接網址：<code>/admin/web?page=qr</code> · UI """ + ADMIN_UI_BUILD_ID + """</p>
+    </div>
     <div class="card">
       <h3>當前參數概覽</h3>
       <div id="settingsOverview" class="muted" style="margin-top:8px;">載入中…</div>
@@ -1001,8 +1007,8 @@ def panel_qr() -> str:
     return """
     <div class="page-header">
       <h2>二維碼設定（WhatsApp + 微信）</h2>
-      <p class="lead">① 先設定 WhatsApp/主碼（建議動態 wa.me）並儲存；② 再在本頁下方綠色區塊上傳微信圖。對照組可雙碼並排。</p>
-      <p class="muted" style="margin:8px 0 0;font-size:12px;">若看不到「② 微信二維碼」綠色區塊，請 <code>git pull origin main</code> 後重啟，並確認頁腳版本含 <code>wechat-entry</code>。</p>
+      <p class="lead">本頁可設定 WhatsApp 主碼，並上傳微信附加碼（對照組雙碼）。</p>
+      <p class="muted" style="margin:8px 0 0;font-size:12px;">頁面版本：""" + ADMIN_UI_BUILD_ID + """ · 若無綠色「微信」區塊，請在本機執行 <code>./start.sh sync && ./start.sh restart</code></p>
     </div>
     <div class="card">
       <h3>組別與資源</h3>
@@ -1020,10 +1026,22 @@ def panel_qr() -> str:
         <button type="button" class="btn-save-inline secondary" onclick="saveGroupLabels()">儲存</button>
       </div>
 
+      <div id="qrWechatSection" style="margin:16px 0;padding:14px;border:2px solid #0d9488;border-radius:10px;background:#f0fdfa;">
+        <h4 style="margin:0 0 8px;font-size:15px;color:#0f766e;">微信二維碼上傳（附加，不改 WhatsApp 主碼）</h4>
+        <p class="muted" style="margin:0 0 8px;font-size:12px;">請先在下方把主碼設為「動態二維碼」並儲存 <code>https://wa.me/...</code>，再於此選圖上傳。只寫入微信碼，不會改跳轉目標。</p>
+        <input id="qrWechatFile" type="file" accept="image/png,image/jpeg,image/webp" />
+        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+          <button type="button" onclick="uploadWechatQr()">上傳微信二維碼</button>
+          <button type="button" class="secondary" onclick="removeWechatQr()">移除微信二維碼</button>
+        </div>
+        <div id="qrWechatCurrent" class="muted" style="margin-top:6px;">尚未上傳微信二維碼</div>
+        <img id="qrWechatPreview" alt="wechat-preview" style="display:none;max-width:160px;margin-top:8px;border:1px solid #e2e8f0;border-radius:8px;" />
+      </div>
+
       <div class="qr-mode-card">
         <div class="qr-mode-card-header">
           <h4>① WhatsApp / 主二維碼</h4>
-          <p>只設定主碼（通常為動態 wa.me）。加微信請用下方②，不要選「靜態圖片」。</p>
+          <p>只設定主碼（通常為動態 wa.me）。加微信請用上方綠色區塊，不要選「靜態圖片」。</p>
         </div>
         <div class="qr-mode-options" id="qrModeOptions">
           <label class="qr-mode-option">
@@ -1088,19 +1106,7 @@ def panel_qr() -> str:
       <div id="qrStaticImageBlock" style="display:none;margin-top:12px;padding:12px;border:1px solid #fecaca;border-radius:10px;background:#fef2f2;">
         <label id="qrFileLabel" style="color:#991b1b;">上傳靜態主二維碼圖片（會覆蓋動態跳轉目標）</label>
         <input id="qrFile" type="file" accept="image/png,image/jpeg,image/webp" />
-        <p class="muted" style="margin:8px 0 0;font-size:12px;color:#991b1b;">若只想加微信碼，請取消此模式，改用下方「② 微信二維碼」。</p>
-      </div>
-
-      <div id="qrWechatSection" style="margin-top:16px;padding:14px;border:2px solid #0d9488;border-radius:10px;background:#f0fdfa;">
-        <h4 style="margin:0 0 8px;font-size:14px;color:#0f766e;">② 微信二維碼（附加，不改主碼）</h4>
-        <p class="muted" style="margin:0 0 8px;font-size:12px;">請先在上方保持「動態二維碼」並儲存 wa.me，再於此上傳微信圖。只寫入微信碼，<strong>絕不會</strong>改上方跳轉目標。上傳後入組結果雙碼展示。</p>
-        <input id="qrWechatFile" type="file" accept="image/png,image/jpeg,image/webp" />
-        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
-          <button type="button" onclick="uploadWechatQr()">上傳微信二維碼</button>
-          <button type="button" class="secondary" onclick="removeWechatQr()">移除微信二維碼</button>
-        </div>
-        <div id="qrWechatCurrent" class="muted" style="margin-top:6px;">尚未上傳微信二維碼</div>
-        <img id="qrWechatPreview" alt="wechat-preview" style="display:none;max-width:160px;margin-top:8px;border:1px solid #e2e8f0;border-radius:8px;" />
+        <p class="muted" style="margin:8px 0 0;font-size:12px;color:#991b1b;">若只想加微信碼，請取消此模式，改用上方綠色「微信二維碼上傳」。</p>
       </div>
       <label>變更人</label>
       <input id="qrBy" value="admin" />

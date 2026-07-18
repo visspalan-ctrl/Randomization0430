@@ -23,6 +23,7 @@ print_urls() {
   echo "  舊連結:   http://127.0.0.1:${PORT}/h5/randomize"
   echo "  版本 API: http://127.0.0.1:${PORT}/h5/form-info"
   echo "  管理登入: http://127.0.0.1:${PORT}/admin/login"
+  echo "  二維碼頁: http://127.0.0.1:${PORT}/admin/web?page=qr  ← 含微信上傳"
   echo "  日誌:     $LOG"
 }
 
@@ -132,6 +133,30 @@ verify_records_account_column() {
   return 1
 }
 
+verify_wechat_qr_panel() {
+  local html
+  html="$(curl -fsS --max-time 4 -u "${ADMIN_USERNAME:-admin}:${ADMIN_PASSWORD:-admin}" \
+    "http://127.0.0.1:${PORT}/admin/web?page=qr" 2>/dev/null || true)"
+  if [ -z "$html" ]; then
+    echo "  警告: 無法讀取二維碼頁（/admin/web?page=qr）"
+    return 1
+  fi
+  if echo "$html" | grep -q 'id="qrWechatSection"' && echo "$html" | grep -q 'uploadWechatQr'; then
+    echo "  二維碼頁: 已含「微信二維碼上傳」"
+    local ver
+    ver="$(echo "$html" | grep -oE '2026-07-18-wechat-entry-v[0-9]+' | head -1 || true)"
+    if [ -n "$ver" ]; then
+      echo "  二維碼頁版本: $ver"
+    fi
+    echo "  打開: http://127.0.0.1:${PORT}/admin/web?page=qr"
+    return 0
+  fi
+  echo "  警告: 二維碼頁仍是舊版（無微信上傳區）"
+  echo "  請執行: ./start.sh sync && ./start.sh restart"
+  echo "  然後打開: http://127.0.0.1:${PORT}/admin/web?page=qr"
+  return 1
+}
+
 print_local_source_check() {
   echo "本地源碼檢查:"
   echo "  目錄: $ROOT"
@@ -150,6 +175,11 @@ print_local_source_check() {
     echo "  app/admin_ui.py: 含「已添加帳號」勾選列"
   else
     echo "  警告: app/admin_ui.py 不含「已添加帳號」列（代碼過舊）"
+  fi
+  if grep -q 'qrWechatSection' app/admin_ui.py 2>/dev/null && grep -q 'uploadWechatQr' app/admin_ui.py 2>/dev/null; then
+    echo "  app/admin_ui.py: 含微信二維碼上傳區"
+  else
+    echo "  警告: app/admin_ui.py 不含微信上傳（代碼過舊，請 ./start.sh sync）"
   fi
 }
 
@@ -204,7 +234,7 @@ if [ "$CMD" = "diagnose" ]; then
     echo "服務: 運行中"
     verify_h5_form || true
     verify_records_account_column || true
-    verify_records_account_column || true
+    verify_wechat_qr_panel || true
     echo ""
     echo "端口佔用:"
     lsof -nP -iTCP:${PORT} -sTCP:LISTEN 2>/dev/null || echo "  (無)"
@@ -243,6 +273,7 @@ if [ "$CMD" = "status" ]; then
     print_urls
     verify_h5_form || true
     verify_records_account_column || true
+    verify_wechat_qr_panel || true
     if [ -f "$PIDFILE" ]; then
       echo "  PID:      $(cat "$PIDFILE")"
     fi
@@ -294,10 +325,10 @@ if [ "$CMD" = "restart" ] || [ -z "$CMD" ]; then
     if start_terminal; then
       echo "啟動成功（Terminal 前台）"
       print_urls
-    verify_h5_form || true
-    verify_records_account_column || true
-    verify_records_account_column || true
-    echo ""
+      verify_h5_form || true
+      verify_records_account_column || true
+      verify_wechat_qr_panel || true
+      echo ""
       echo "請保持 Terminal 視窗開啟；關閉即停止服務。"
       exit 0
     fi
@@ -309,6 +340,7 @@ if [ "$CMD" = "restart" ] || [ -z "$CMD" ]; then
     print_urls
     verify_h5_form || true
     verify_records_account_column || true
+    verify_wechat_qr_panel || true
     echo "  PID:      $(cat "$PIDFILE")"
     echo ""
     echo "若稍後瀏覽器打不開，請執行: ./start.sh terminal"
@@ -320,6 +352,7 @@ if [ "$CMD" = "restart" ] || [ -z "$CMD" ]; then
     print_urls
     verify_h5_form || true
     verify_records_account_column || true
+    verify_wechat_qr_panel || true
     exit 0
   fi
   echo "啟動失敗。請手動執行: cd \"$ROOT\" && ./start.sh run"
