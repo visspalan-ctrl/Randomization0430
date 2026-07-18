@@ -11,7 +11,7 @@ from app.models import (
 
 PageId = Literal["settings", "sites", "qr", "records"]
 
-ADMIN_UI_BUILD_ID = "2026-07-09-account-added-v1"
+ADMIN_UI_BUILD_ID = "2026-07-18-dual-qr-isolate-v1"
 
 ADMIN_CSS = """
 :root {
@@ -1021,8 +1021,8 @@ def panel_qr() -> str:
 
       <div class="qr-mode-card">
         <div class="qr-mode-card-header">
-          <h4>二維碼模式</h4>
-          <p>選擇一種模式；動態二維碼適合印刷後仍可更換連結。</p>
+          <h4>① WhatsApp / 主二維碼</h4>
+          <p>只設定主碼（通常為動態 wa.me）。加微信請用下方②，不要選「靜態圖片」。</p>
         </div>
         <div class="qr-mode-options" id="qrModeOptions">
           <label class="qr-mode-option">
@@ -1032,7 +1032,7 @@ def panel_qr() -> str:
               <span class="qr-mode-check" aria-hidden="true"></span>
             </div>
             <strong>動態二維碼 <span class="qr-mode-badge">推薦</span></strong>
-            <span class="qr-mode-desc">固定二維碼圖案不變，後台可隨時更換 wa.me 等跳轉連結，適合印刷海報。</span>
+            <span class="qr-mode-desc">固定二維碼圖案不變，後台可隨時更換 wa.me 跳轉連結。與微信雙碼並用時請保持此模式。</span>
           </label>
           <label class="qr-mode-option">
             <input type="radio" name="qrModeRadio" value="static_url" onchange="onQrModeRadioChange(this.value)" />
@@ -1049,8 +1049,8 @@ def panel_qr() -> str:
               <span class="qr-mode-icon" aria-hidden="true">🖼</span>
               <span class="qr-mode-check" aria-hidden="true"></span>
             </div>
-            <strong>靜態圖片（上傳）</strong>
-            <span class="qr-mode-desc">上傳已製作好的二維碼圖片檔案，系統直接展示該圖片。若要改回動態碼：選「動態二維碼」→ 填寫 https://wa.me/... → 點儲存（若忘了填，儲存時會彈窗提示）。</span>
+            <strong>靜態圖片（替換主碼）</strong>
+            <span class="qr-mode-desc">危險：會用圖片<strong>完全替換</strong> WhatsApp/主跳轉連結。這不是微信上傳。要加微信請用下方②。</span>
           </label>
         </div>
         <p id="qrModeSwitchHint" class="muted" style="display:none;margin:10px 0 0;padding:8px 10px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;color:#9a3412;font-size:12px;"></p>
@@ -1084,14 +1084,18 @@ def panel_qr() -> str:
         </div>
         <div id="qrLogoCurrent" class="muted" style="margin-top:6px;"></div>
       </div>
-      <label id="qrFileLabel">上傳靜態主二維碼圖片（會替換 WhatsApp/主碼，不是微信碼）</label>
-      <input id="qrFile" type="file" accept="image/png,image/jpeg,image/webp" />
-      <div id="qrWechatSection" style="margin-top:14px;padding:12px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;">
-        <h4 style="margin:0 0 8px;font-size:13px;color:#334155;">微信二維碼（對照組建議上傳）</h4>
-        <p class="muted" style="margin:0 0 8px;font-size:12px;">請用本區上傳微信圖片。只會新增微信碼，<strong>不會改動</strong>上方 WhatsApp 動態跳轉連結。入組結果將雙碼展示，並要求招募員選擇實際添加渠道。</p>
+      <div id="qrStaticImageBlock" style="display:none;margin-top:12px;padding:12px;border:1px solid #fecaca;border-radius:10px;background:#fef2f2;">
+        <label id="qrFileLabel" style="color:#991b1b;">上傳靜態主二維碼圖片（會覆蓋動態跳轉目標）</label>
+        <input id="qrFile" type="file" accept="image/png,image/jpeg,image/webp" />
+        <p class="muted" style="margin:8px 0 0;font-size:12px;color:#991b1b;">若只想加微信碼，請取消此模式，改用下方「② 微信二維碼」。</p>
+      </div>
+
+      <div id="qrWechatSection" style="margin-top:16px;padding:14px;border:2px solid #0d9488;border-radius:10px;background:#f0fdfa;">
+        <h4 style="margin:0 0 8px;font-size:14px;color:#0f766e;">② 微信二維碼（附加，不改主碼）</h4>
+        <p class="muted" style="margin:0 0 8px;font-size:12px;">請先在上方保持「動態二維碼」並儲存 wa.me，再於此上傳微信圖。只寫入微信碼，<strong>絕不會</strong>改上方跳轉目標。上傳後入組結果雙碼展示。</p>
         <input id="qrWechatFile" type="file" accept="image/png,image/jpeg,image/webp" />
         <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
-          <button type="button" class="secondary" onclick="uploadWechatQr()">上傳微信二維碼</button>
+          <button type="button" onclick="uploadWechatQr()">上傳微信二維碼</button>
           <button type="button" class="secondary" onclick="removeWechatQr()">移除微信二維碼</button>
         </div>
         <div id="qrWechatCurrent" class="muted" style="margin-top:6px;">尚未上傳微信二維碼</div>
@@ -1101,9 +1105,10 @@ def panel_qr() -> str:
       <input id="qrBy" value="admin" />
       <label>原因</label>
       <input id="qrReason" value="manual update" />
-      <button type="button" onclick="saveQr()">儲存</button>
+      <button type="button" onclick="saveQr()">儲存主碼設定</button>
       <button type="button" class="secondary" onclick="switchQrToDynamic()">一鍵切換為動態二維碼</button>
       <button type="button" class="secondary" onclick="loadQrCurrent()">讀取當前</button>
+      <p class="muted" style="margin:8px 0 0;font-size:11px;">QR 面板版本：""" + ADMIN_UI_BUILD_ID + """</p>
 
       <div class="participant-ui-card" style="margin-top:18px;">
         <h4 style="margin-top:0;margin-bottom:8px;font-size:12px;font-weight:600;color:#64748b;">受試者互動頁（/h5/randomize）</h4>
@@ -2116,10 +2121,23 @@ ADMIN_SCRIPTS = """
     if (!hint) return;
     if (mode === "dynamic") {
       hint.style.display = "block";
-      hint.textContent = "已選動態二維碼：請確認下方「跳轉目標」為 https://wa.me/... 連結後點「儲存」。若仍是圖片路徑，儲存時會提示你輸入新連結。";
+      hint.textContent = "已選動態主碼：確認下方 WhatsApp「跳轉目標」為 https://wa.me/... 後點「儲存主碼設定」。加微信請用下方②，不要選靜態圖片。";
+      return;
+    }
+    if (mode === "static_image") {
+      hint.style.display = "block";
+      hint.style.background = "#fef2f2";
+      hint.style.borderColor = "#fecaca";
+      hint.style.color = "#991b1b";
+      hint.textContent = window.__qrServerMode === "dynamic"
+        ? "警告：這會把動態跳轉目標改成圖片路徑。若只想加微信，請改回動態並用下方②「上傳微信二維碼」。"
+        : "靜態圖片模式會用上傳圖完全替換主碼（不是微信附加碼）。";
       return;
     }
     hint.style.display = "none";
+    hint.style.background = "";
+    hint.style.borderColor = "";
+    hint.style.color = "";
     hint.textContent = "";
   }
 
@@ -2185,19 +2203,21 @@ ADMIN_SCRIPTS = """
     syncQrModeRadio(mode);
     const dynamicExtras = document.getElementById("qrDynamicExtras");
     const valueLabel = document.getElementById("qrValueLabel");
-    const fileLabel = document.getElementById("qrFileLabel");
+    const staticBlock = document.getElementById("qrStaticImageBlock");
     const fileInput = document.getElementById("qrFile");
     if (dynamicExtras) dynamicExtras.style.display = mode === "dynamic" ? "block" : "none";
     if (valueLabel) {
       valueLabel.textContent = mode === "dynamic"
-        ? "跳轉目標（可隨時更換）"
-        : (mode === "static_image" ? "當前圖片路徑（上傳後自動填入）" : "二維碼連結（URL）");
+        ? "WhatsApp 跳轉目標（可隨時更換）"
+        : (mode === "static_image" ? "主碼圖片路徑（上傳後自動填入；會覆蓋動態連結）" : "二維碼連結（URL）");
     }
-    if (fileLabel && fileInput) {
+    if (staticBlock) {
       const showFile = mode === "static_image";
-      fileLabel.style.display = showFile ? "" : "none";
-      fileInput.style.display = showFile ? "" : "none";
-      if (!showFile) fileInput.value = "";
+      staticBlock.style.display = showFile ? "block" : "none";
+      if (!showFile && fileInput) fileInput.value = "";
+    } else if (fileInput) {
+      fileInput.style.display = mode === "static_image" ? "" : "none";
+      if (mode !== "static_image") fileInput.value = "";
     }
     updateQrLivePreview();
     updateQrModeSwitchHint(mode);
@@ -2249,7 +2269,22 @@ ADMIN_SCRIPTS = """
       resultBox.textContent = "[ERROR] 請選擇微信二維碼圖片";
       return;
     }
-    const beforeValue = (document.getElementById("qrValue")?.value || "").trim();
+    // 若誤把微信圖放進主碼檔案框，避免後續「儲存主碼」覆蓋
+    const mainFile = document.getElementById("qrFile");
+    if (mainFile) mainFile.value = "";
+    const modeNow = document.getElementById("qrMode")?.value;
+    if (modeNow === "static_image") {
+      resultBox.textContent = "[ERROR] 當前選了「靜態圖片（替換主碼）」。加微信請先切回「動態二維碼」，再點「上傳微信二維碼」。";
+      return;
+    }
+    if (window.__qrServerMode && window.__qrServerMode !== "dynamic") {
+      const ok = confirm("伺服器主碼目前不是動態模式。建議先「一鍵切換為動態二維碼」並儲存 wa.me，再上傳微信。仍要繼續上傳微信圖嗎？");
+      if (!ok) {
+        resultBox.textContent = "[取消] 請先設定動態 WhatsApp 主碼";
+        return;
+      }
+    }
+    const beforeValue = (document.getElementById("qrValue")?.value || "").trim() || (window.__qrServerValue || "");
     const fd = new FormData();
     fd.append("group", document.getElementById("qrGroup").value);
     fd.append("changed_by", document.getElementById("qrBy").value || "admin");
@@ -2257,15 +2292,25 @@ ADMIN_SCRIPTS = """
     fd.append("file", fileInput.files[0]);
     const res = await fetch("/admin/qr-config/wechat", { method: "POST", body: fd });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) { resultBox.textContent = "[ERROR] wechat upload\\n" + JSON.stringify(data, null, 2); return; }
+    if (!res.ok) {
+      const detail = data.detail || "";
+      if (detail === "configure_whatsapp_qr_first") {
+        resultBox.textContent = "[ERROR] 請先儲存 WhatsApp/主碼（動態 wa.me），再上傳微信圖";
+        return;
+      }
+      resultBox.textContent = "[ERROR] wechat upload\\n" + JSON.stringify(data, null, 2);
+      return;
+    }
     const keptValue = (data.qr_value || "").trim();
     const keptMode = data.qr_mode || "";
-    let msg = "[OK] 微信二維碼已上傳（不影響 WhatsApp 動態碼；入組結果將雙碼展示）";
-    if (keptMode === "dynamic" && keptValue) {
-      msg += "\\nWhatsApp 跳轉連結未變：" + keptValue;
-    } else if (beforeValue) {
-      msg += "\\n請核對上方跳轉目標仍為：" + beforeValue;
+    if (beforeValue && keptValue && beforeValue !== keptValue) {
+      resultBox.textContent = "[ERROR] 異常：上傳微信後主碼跳轉目標被改動了（" + beforeValue + " → " + keptValue + "）。請立即用「一鍵切換為動態二維碼」恢復。";
+      await loadQrCurrent();
+      return;
     }
+    let msg = "[OK] 微信二維碼已上傳（主碼跳轉目標未改；入組結果將雙碼展示）";
+    if (keptMode) msg += "\\n主碼模式：" + keptMode;
+    if (keptValue) msg += "\\nWhatsApp 跳轉連結：" + keptValue;
     resultBox.textContent = msg;
     fileInput.value = "";
     await loadQrCurrent();
@@ -2293,6 +2338,8 @@ ADMIN_SCRIPTS = """
       if (img) img.style.display = "none";
       const logoEl = document.getElementById("qrLogoCurrent");
       if (logoEl) logoEl.textContent = "尚未上傳中心 Logo";
+      window.__qrServerMode = "";
+      window.__qrServerValue = "";
       syncQrModeRadio("dynamic");
       onQrModeChange();
       return;
@@ -2300,6 +2347,8 @@ ADMIN_SCRIPTS = """
     const modeSel = document.getElementById("qrMode");
     if (modeSel) modeSel.value = current.qr_mode || "static_url";
     syncQrModeRadio(current.qr_mode || "static_url");
+    window.__qrServerMode = current.qr_mode || "static_url";
+    window.__qrServerValue = current.qr_value || "";
     document.getElementById("qrValue").value = current.qr_value || "";
     const stableInp = document.getElementById("qrStableUrl");
     if (stableInp) stableInp.value = current.stable_qr_url || "";
@@ -2434,15 +2483,31 @@ ADMIN_SCRIPTS = """
     const group = document.getElementById("qrGroup")?.value;
     const fileInput = document.getElementById("qrFile");
     const hasFile = !!(fileInput && fileInput.files && fileInput.files.length > 0);
+    const wechatFile = document.getElementById("qrWechatFile");
+    const hasWechatFile = !!(wechatFile && wechatFile.files && wechatFile.files.length > 0);
+    // 選了微信圖卻點「儲存主碼」：引導到正確按鈕，絕不走上傳主碼
+    if (hasWechatFile) {
+      resultBox.textContent = "[ERROR] 已選擇微信圖片。請點「上傳微信二維碼」，不要點「儲存主碼設定」。";
+      return;
+    }
     // 動態模式下若誤選了主上傳檔案：禁止覆蓋 WhatsApp 連結
     if (mode === "dynamic" && hasFile) {
       if (fileInput) fileInput.value = "";
-      resultBox.textContent = "[ERROR] 當前是動態 WhatsApp 模式。微信圖片請用下方「上傳微信二維碼」；不要用主區「上傳靜態主二維碼圖片」，否則會覆蓋跳轉連結。";
+      resultBox.textContent = "[ERROR] 當前是動態 WhatsApp 模式。微信圖片請用下方「上傳微信二維碼」；不要用「靜態圖片」上傳，否則跳轉目標會變成圖片路徑。";
       return;
     }
     // 僅在「靜態圖片」模式下走上傳；切回動態/靜態 URL 時忽略殘留的已選檔案
     if (mode === "static_image" && hasFile) {
-      if (!confirm("確定上傳並替換「主二維碼/WhatsApp」為靜態圖片？\\n\\n這不是微信碼上傳。若只想加微信碼，請點「取消」，改用下方「上傳微信二維碼」。")) {
+      // 伺服器仍是動態時：預設硬阻擋，避免「存圖片」把 wa.me 蓋成 /uploads/...
+      if (window.__qrServerMode === "dynamic") {
+        const typed = window.prompt(
+          "伺服器當前是動態 WhatsApp。\\n\\n• 若只想加微信：請按取消，改用下方「上傳微信二維碼」。\\n• 若確定要用靜態圖完全替換主碼（跳轉目標會變成圖片路徑）：請輸入 REPLACE"
+        );
+        if (typed == null || String(typed).trim() !== "REPLACE") {
+          resultBox.textContent = "[取消] 未替換主碼。加微信請用「上傳微信二維碼」。";
+          return;
+        }
+      } else if (!confirm("確定上傳並替換「主二維碼/WhatsApp」為靜態圖片？這不是微信碼上傳。")) {
         resultBox.textContent = "[取消] 未上傳靜態主二維碼";
         return;
       }
@@ -2451,20 +2516,21 @@ ADMIN_SCRIPTS = """
       fd.append("changed_by", document.getElementById("qrBy").value);
       fd.append("reason", document.getElementById("qrReason").value);
       fd.append("file", fileInput.files[0]);
-      // 若伺服器當前仍是動態模式，需明確確認才允許覆蓋跳轉連結
-      fd.append("confirm_replace_dynamic", "1");
+      if (window.__qrServerMode === "dynamic") {
+        fd.append("confirm_replace_dynamic", "1");
+      }
       const res = await fetch("/admin/qr-config/upload", { method: "POST", body: fd });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         const detail = data.detail || "";
         if (detail === "dynamic_mode_use_wechat_upload") {
-          resultBox.textContent = "[ERROR] 當前為動態 WhatsApp 模式。微信圖請用下方「上傳微信二維碼」；不要用主區靜態圖片上傳，否則會覆蓋跳轉連結。";
+          resultBox.textContent = "[ERROR] 當前為動態 WhatsApp 模式。加微信請用「上傳微信二維碼」；靜態圖片上傳會覆蓋跳轉連結。";
           return;
         }
         resultBox.textContent = "[ERROR] upload\\n" + JSON.stringify(data, null, 2);
         return;
       }
-      resultBox.textContent = "[OK] 已上傳靜態主二維碼圖片（已替換原跳轉連結）";
+      resultBox.textContent = "[OK] 已用靜態圖替換主碼（跳轉目標現為圖片路徑；不再是動態 wa.me）";
       fileInput.value = "";
       await loadQrCurrent();
       return;

@@ -612,6 +612,22 @@ def test_control_group_dual_qr_and_contact_channel_selection():
     assert "contactChannel" in h5.text
 
 
+def test_admin_qr_panel_isolates_wechat_from_main_upload():
+    """管理端文案/腳本須把微信上傳與主碼靜態圖替換分開，避免跳轉目標被蓋成圖片路徑。"""
+    client = TestClient(app)
+    page = admin_get(client, "/admin/web", params={"page": "qr"})
+    assert page.status_code == 200
+    html = page.text
+    assert "2026-07-18-dual-qr-isolate-v1" in html
+    assert "上傳微信二維碼" in html
+    assert "儲存主碼設定" in html
+    assert "confirm_replace_dynamic" in html
+    assert "REPLACE" in html
+    assert "已選擇微信圖片" in html
+    # 微信上傳成功後應核對主碼未變
+    assert "上傳微信後主碼跳轉目標被改動了" in html
+
+
 def test_qr_configs_endpoint_returns_groups():
     client = TestClient(app)
     res = admin_get(client, "/admin/qr-configs")
