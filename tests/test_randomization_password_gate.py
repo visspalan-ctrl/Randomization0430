@@ -618,12 +618,14 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     page = admin_get(client, "/admin/web", params={"page": "qr"})
     assert page.status_code == 200
     html = page.text
-    assert "2026-07-18-wechat-entry-v3" in html
+    assert "2026-07-18-dynamic-pool-v1" in html
     assert "二維碼（WhatsApp/微信）" in html
     assert "上傳微信二維碼" in html
     assert "儲存主碼設定" in html
     assert "微信二維碼上傳" in html
     assert 'id="qrWechatSection"' in html
+    assert 'id="qrDynamicTargets"' in html
+    assert "qrTarget5" in html
     assert "confirm_replace_dynamic" in html
     assert "REPLACE" in html
     assert "已選擇微信圖片" in html
@@ -634,6 +636,78 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     assert settings.status_code == 200
     assert "前往二維碼頁（含微信上傳）" in settings.text
     assert "/admin/web?page=qr" in settings.text
+
+
+def test_dynamic_qr_target_pool_random_redirect():
+    client = TestClient(app)
+    targets = [
+        "https://wa.me/pool_a",
+        "https://wa.me/pool_b",
+        "https://wa.me/pool_c",
+        "https://wa.me/pool_d",
+        "https://wa.me/pool_e",
+    ]
+    saved = admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_value": targets[0],
+            "qr_targets": targets,
+            "changed_by": "admin",
+            "reason": "pool of 5",
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    body = saved.json()
+    assert body["qr_mode"] == "dynamic"
+    assert body["qr_targets"] == targets
+
+    configs = admin_get(client, "/admin/qr-configs").json()
+    genai = next(i for i in configs["items"] if i["group_type"] == "GENAI")
+    assert genai["qr_targets"] == targets
+    assert genai["qr_targets_count"] == 5
+    assert genai["qr_value"] == targets[0]
+
+    too_many = admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_targets": targets + ["https://wa.me/pool_f"],
+            "changed_by": "admin",
+        },
+    )
+    assert too_many.status_code == 400
+    assert too_many.json()["detail"] == "dynamic_qr_targets_max_5"
+
+    seen = set()
+    for _ in range(80):
+        r = client.get("/r/GENAI", follow_redirects=False)
+        assert r.status_code == 302
+        seen.add(r.headers["location"])
+        if seen == set(targets):
+            break
+    assert seen == set(targets)
+
+    # 單條仍相容
+    single = admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "HUMAN",
+            "qr_mode": "dynamic",
+            "qr_value": "https://wa.me/only_one",
+            "changed_by": "admin",
+        },
+    )
+    assert single.status_code == 200
+    assert single.json()["qr_targets"] == ["https://wa.me/only_one"]
+    r = client.get("/r/HUMAN", follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["location"] == "https://wa.me/only_one"
 
 
 def test_qr_configs_endpoint_returns_groups():

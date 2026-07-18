@@ -11,7 +11,7 @@ from app.models import (
 
 PageId = Literal["settings", "sites", "qr", "records"]
 
-ADMIN_UI_BUILD_ID = "2026-07-18-wechat-entry-v3"
+ADMIN_UI_BUILD_ID = "2026-07-18-dynamic-pool-v1"
 
 ADMIN_CSS = """
 :root {
@@ -1092,6 +1092,20 @@ def panel_qr() -> str:
 
       <label id="qrValueLabel">跳轉目標（可隨時更換）</label>
       <input id="qrValue" placeholder="https://wa.me/..." oninput="onQrValueInput()" />
+      <div id="qrDynamicTargets" style="display:none;margin-top:10px;padding:12px;border:1px solid #bae6fd;border-radius:10px;background:#f0f9ff;">
+        <label style="margin:0 0 6px;display:block;font-weight:600;color:#0369a1;">動態跳轉連結池（最多 5 條）</label>
+        <p class="muted" style="margin:0 0 10px;font-size:12px;">印刷用固定碼不變；每次掃碼會從下方已填連結中<strong>隨機</strong>跳轉一條。至少填 1 條，最多 5 條。</p>
+        <label>連結 1</label>
+        <input id="qrTarget1" placeholder="https://wa.me/..." oninput="onDynamicTargetsInput()" />
+        <label>連結 2（可選）</label>
+        <input id="qrTarget2" placeholder="https://wa.me/..." oninput="onDynamicTargetsInput()" />
+        <label>連結 3（可選）</label>
+        <input id="qrTarget3" placeholder="https://wa.me/..." oninput="onDynamicTargetsInput()" />
+        <label>連結 4（可選）</label>
+        <input id="qrTarget4" placeholder="https://wa.me/..." oninput="onDynamicTargetsInput()" />
+        <label>連結 5（可選）</label>
+        <input id="qrTarget5" placeholder="https://wa.me/..." oninput="onDynamicTargetsInput()" />
+      </div>
       <div id="qrDynamicExtras" style="display:none;margin-top:10px;">
         <label>固定二維碼連結（印刷用，不變）</label>
         <input id="qrStableUrl" readonly />
@@ -2123,12 +2137,42 @@ ADMIN_SCRIPTS = """
     return "https://wa.me/";
   }
 
+  function collectDynamicTargets() {
+    const out = [];
+    const seen = {};
+    for (let i = 1; i <= 5; i++) {
+      const el = document.getElementById("qrTarget" + i);
+      const url = (el && el.value ? el.value : "").trim();
+      if (!url || seen[url]) continue;
+      seen[url] = true;
+      out.push(url);
+    }
+    return out;
+  }
+
+  function fillDynamicTargets(targets) {
+    const list = Array.isArray(targets) ? targets.slice(0, 5) : [];
+    for (let i = 1; i <= 5; i++) {
+      const el = document.getElementById("qrTarget" + i);
+      if (el) el.value = list[i - 1] || "";
+    }
+    const valueEl = document.getElementById("qrValue");
+    if (valueEl) valueEl.value = list[0] || "";
+  }
+
+  function onDynamicTargetsInput() {
+    const targets = collectDynamicTargets();
+    const valueEl = document.getElementById("qrValue");
+    if (valueEl) valueEl.value = targets[0] || "";
+    updateQrLivePreview();
+  }
+
   function updateQrModeSwitchHint(mode) {
     const hint = document.getElementById("qrModeSwitchHint");
     if (!hint) return;
     if (mode === "dynamic") {
       hint.style.display = "block";
-      hint.textContent = "已選動態主碼：確認下方 WhatsApp「跳轉目標」為 https://wa.me/... 後點「儲存主碼設定」。加微信請用下方②，不要選靜態圖片。";
+      hint.textContent = "已選動態主碼：在下方連結池填寫 1–5 條 https://wa.me/...，儲存後掃碼會隨機跳轉其一。加微信請用上方綠色上傳。";
       return;
     }
     if (mode === "static_image") {
@@ -2137,7 +2181,7 @@ ADMIN_SCRIPTS = """
       hint.style.borderColor = "#fecaca";
       hint.style.color = "#991b1b";
       hint.textContent = window.__qrServerMode === "dynamic"
-        ? "警告：這會把動態跳轉目標改成圖片路徑。若只想加微信，請改回動態並用下方②「上傳微信二維碼」。"
+        ? "警告：這會把動態跳轉目標改成圖片路徑。若只想加微信，請改回動態並用上方綠色「上傳微信二維碼」。"
         : "靜態圖片模式會用上傳圖完全替換主碼（不是微信附加碼）。";
       return;
     }
@@ -2154,16 +2198,15 @@ ADMIN_SCRIPTS = """
     if (fileInput && mode !== "static_image") {
       fileInput.value = "";
     }
-    const valueEl = document.getElementById("qrValue");
     const group = document.getElementById("qrGroup")?.value || "";
-    if (valueEl && mode === "dynamic") {
-      const cur = (valueEl.value || "").trim();
-      if (!cur || isUploadOrImagePath(cur)) {
+    if (mode === "dynamic") {
+      const targets = collectDynamicTargets();
+      if (!targets.length) {
         const recalled = recalledDynamicQrTarget(group);
-        valueEl.value = recalled === "https://wa.me/" ? "" : recalled;
-        valueEl.placeholder = "https://wa.me/...";
-        setTimeout(function() { valueEl.focus(); valueEl.select(); }, 0);
+        fillDynamicTargets(recalled === "https://wa.me/" ? [] : [recalled]);
       }
+      const t1 = document.getElementById("qrTarget1");
+      if (t1) setTimeout(function() { t1.focus(); t1.select(); }, 0);
     }
     updateQrModeSwitchHint(mode);
     onQrModeChange();
@@ -2198,10 +2241,12 @@ ADMIN_SCRIPTS = """
         ? "干預組：紅色二維碼"
         : "對照組：藍色二維碼";
     }
-    const target = (document.getElementById("qrValue")?.value || "").trim();
+    const targets = collectDynamicTargets();
     if (hint) {
       hint.innerHTML = "固定碼連結：<strong>" + stableUrl + "</strong>"
-        + (target ? ("<br>當前跳轉目標（儲存後生效）：" + target) : "<br>請填寫跳轉目標後點擊儲存");
+        + (targets.length
+          ? ("<br>跳轉池 " + targets.length + " 條（掃碼隨機其一，儲存後生效）：<br>" + targets.map(function(u, i){ return (i+1) + ". " + u; }).join("<br>"))
+          : "<br>請至少填寫 1 條跳轉連結後點擊儲存");
     }
   }
 
@@ -2209,15 +2254,20 @@ ADMIN_SCRIPTS = """
     const mode = document.getElementById("qrMode")?.value || "static_url";
     syncQrModeRadio(mode);
     const dynamicExtras = document.getElementById("qrDynamicExtras");
+    const dynamicTargets = document.getElementById("qrDynamicTargets");
     const valueLabel = document.getElementById("qrValueLabel");
+    const valueInput = document.getElementById("qrValue");
     const staticBlock = document.getElementById("qrStaticImageBlock");
     const fileInput = document.getElementById("qrFile");
     if (dynamicExtras) dynamicExtras.style.display = mode === "dynamic" ? "block" : "none";
+    if (dynamicTargets) dynamicTargets.style.display = mode === "dynamic" ? "block" : "none";
     if (valueLabel) {
+      valueLabel.style.display = mode === "dynamic" ? "none" : "";
       valueLabel.textContent = mode === "dynamic"
         ? "WhatsApp 跳轉目標（可隨時更換）"
         : (mode === "static_image" ? "主碼圖片路徑（上傳後自動填入；會覆蓋動態連結）" : "二維碼連結（URL）");
     }
+    if (valueInput) valueInput.style.display = mode === "dynamic" ? "none" : "";
     if (staticBlock) {
       const showFile = mode === "static_image";
       staticBlock.style.display = showFile ? "block" : "none";
@@ -2357,6 +2407,11 @@ ADMIN_SCRIPTS = """
     window.__qrServerMode = current.qr_mode || "static_url";
     window.__qrServerValue = current.qr_value || "";
     document.getElementById("qrValue").value = current.qr_value || "";
+    const mode = current.qr_mode || "static_url";
+    const targets = (mode === "dynamic")
+      ? ((current.qr_targets && current.qr_targets.length) ? current.qr_targets : (current.qr_value ? [current.qr_value] : []))
+      : [];
+    fillDynamicTargets(targets);
     const stableInp = document.getElementById("qrStableUrl");
     if (stableInp) stableInp.value = current.stable_qr_url || "";
     const logoEl = document.getElementById("qrLogoCurrent");
@@ -2381,13 +2436,12 @@ ADMIN_SCRIPTS = """
         wechatPrev.style.display = "none";
       }
     }
-    const mode = current.qr_mode || "static_url";
-    if (mode === "dynamic" && current.qr_value) {
-      rememberDynamicQrTarget(group, current.qr_value);
+    if (mode === "dynamic" && targets[0]) {
+      rememberDynamicQrTarget(group, targets[0]);
     }
     onQrModeChange();
     if (mode === "dynamic") {
-      text.textContent = "v" + current.version + " · 動態碼 → " + (current.qr_value || "");
+      text.textContent = "v" + current.version + " · 動態碼池 " + targets.length + " 條 → " + (targets.join(" | ") || "");
       if (img) { img.style.display = "none"; }
       return;
     }
@@ -2463,12 +2517,11 @@ ADMIN_SCRIPTS = """
     updateQrModeSwitchHint("dynamic");
     onQrModeChange();
     const group = document.getElementById("qrGroup")?.value || "";
-    const valueEl = document.getElementById("qrValue");
-    const cur = (valueEl?.value || "").trim();
-    if (!isHttpUrl(cur) || isUploadOrImagePath(cur)) {
+    let targets = collectDynamicTargets();
+    if (!targets.length) {
       const suggested = recalledDynamicQrTarget(group);
       const entered = window.prompt(
-        "請輸入動態二維碼跳轉目標 URL（例如 https://wa.me/852xxxxxxxx）",
+        "請輸入動態二維碼跳轉目標 URL（例如 https://wa.me/852xxxxxxxx；可稍後再加多至 5 條）",
         suggested
       );
       if (entered == null) {
@@ -2480,7 +2533,8 @@ ADMIN_SCRIPTS = """
         resultBox.textContent = "[ERROR] 跳轉目標須為 http(s) 連結";
         return;
       }
-      if (valueEl) valueEl.value = url;
+      fillDynamicTargets([url]);
+      targets = [url];
     }
     await saveQr();
   }
@@ -2550,23 +2604,34 @@ ADMIN_SCRIPTS = """
       }
     }
     let qrValue = (document.getElementById("qrValue")?.value || "").trim();
-    if (mode === "dynamic" && (!qrValue || isUploadOrImagePath(qrValue) || !isHttpUrl(qrValue))) {
-      const suggested = recalledDynamicQrTarget(group);
-      const entered = window.prompt(
-        "切換為動態二維碼：請輸入跳轉目標 URL（例如 https://wa.me/852xxxxxxxx）",
-        isHttpUrl(qrValue) ? qrValue : suggested
-      );
-      if (entered == null) {
-        resultBox.textContent = "[取消] 未切換為動態二維碼";
-        return;
+    let qrTargets = null;
+    if (mode === "dynamic") {
+      qrTargets = collectDynamicTargets();
+      if (!qrTargets.length) {
+        const suggested = recalledDynamicQrTarget(group);
+        const entered = window.prompt(
+          "動態二維碼：請輸入至少 1 條跳轉 URL（例如 https://wa.me/852xxxxxxxx；最多可填 5 條隨機跳轉）",
+          suggested
+        );
+        if (entered == null) {
+          resultBox.textContent = "[取消] 未切換為動態二維碼";
+          return;
+        }
+        const url = String(entered).trim();
+        if (!isHttpUrl(url) || isUploadOrImagePath(url)) {
+          resultBox.textContent = "[ERROR] 跳轉目標須為 http(s) 連結，不能是圖片路徑";
+          return;
+        }
+        fillDynamicTargets([url]);
+        qrTargets = [url];
       }
-      qrValue = String(entered).trim();
-      if (!isHttpUrl(qrValue) || isUploadOrImagePath(qrValue)) {
-        resultBox.textContent = "[ERROR] 跳轉目標須為 http(s) 連結，不能是圖片路徑";
-        return;
+      for (let i = 0; i < qrTargets.length; i++) {
+        if (!isHttpUrl(qrTargets[i]) || isUploadOrImagePath(qrTargets[i])) {
+          resultBox.textContent = "[ERROR] 連結池第 " + (i + 1) + " 條須為 http(s) 連結";
+          return;
+        }
       }
-      const valueEl = document.getElementById("qrValue");
-      if (valueEl) valueEl.value = qrValue;
+      qrValue = qrTargets[0];
     }
     if (mode === "static_url" && !qrValue) {
       resultBox.textContent = "[ERROR] 請填寫二維碼連結（URL）";
@@ -2574,24 +2639,28 @@ ADMIN_SCRIPTS = """
     }
     if (fileInput) fileInput.value = "";
     try {
-      const res = await api("/admin/qr-config", "POST", {
+      const body = {
         group: group,
         qr_mode: mode,
         qr_value: qrValue,
         changed_by: document.getElementById("qrBy").value,
         reason: document.getElementById("qrReason").value || (mode === "dynamic" ? "switch to dynamic" : "manual update")
-      });
+      };
+      if (mode === "dynamic") body.qr_targets = qrTargets;
+      const res = await api("/admin/qr-config", "POST", body);
       if (mode === "dynamic") rememberDynamicQrTarget(group, qrValue);
       await loadQrCurrent();
       resultBox.textContent = mode === "dynamic"
-        ? "[OK] 已切換為動態二維碼並儲存跳轉目標\\n固定碼: " + (res.stable_qr_path || ("/r/" + group))
+        ? ("[OK] 已儲存動態二維碼連結池（" + (qrTargets ? qrTargets.length : 1) + " 條，掃碼隨機跳轉）\\n固定碼: " + (res.stable_qr_path || ("/r/" + group)))
         : "[OK] 已儲存二維碼設定（模式: " + mode + "）";
     } catch (err) {
       const detail = err && err.message ? String(err.message) : String(err);
       if (detail === "dynamic_qr_target_required") {
-        resultBox.textContent = "[ERROR] 動態二維碼請填寫跳轉目標（例如 https://wa.me/...）";
+        resultBox.textContent = "[ERROR] 動態二維碼請至少填寫 1 條跳轉目標（例如 https://wa.me/...）";
       } else if (detail === "dynamic_qr_target_must_be_url") {
         resultBox.textContent = "[ERROR] 動態模式的跳轉目標須為 URL（不可為已上傳的圖片路徑）";
+      } else if (detail === "dynamic_qr_targets_max_5") {
+        resultBox.textContent = "[ERROR] 動態跳轉連結最多 5 條";
       } else {
         resultBox.textContent = "[ERROR] 儲存二維碼失敗\\n" + detail;
       }

@@ -63,6 +63,8 @@ class QRConfig(Base):
     group_type: Mapped[str] = mapped_column(String(16), nullable=False, unique=True)
     qr_mode: Mapped[str] = mapped_column(String(32), default="static_url", nullable=False)
     qr_value: Mapped[str] = mapped_column(String(512), nullable=False)
+    # JSON 陣列：動態模式下最多 5 條跳轉連結，掃碼時隨機其一；qr_value 同步為第一條
+    qr_targets_json: Mapped[str | None] = mapped_column(String(4096), nullable=True)
     qr_logo_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     wechat_qr_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)

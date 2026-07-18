@@ -90,6 +90,7 @@ ENROLLMENT_MODE_TRIAL = "trial"
 ENROLLMENT_MODE_NONTrial = "nontrial"
 QR_GROUP_TYPES = frozenset({"GENAI", "HUMAN"})
 QR_MODES = frozenset({"dynamic", "static_url", "static_image"})
+DYNAMIC_QR_TARGET_MAX = 5
 QR_GROUP_COLORS: dict[str, dict[str, str]] = {
     "GENAI": {"dark": "#dc2626", "light": "#ffffff"},
     "HUMAN": {"dark": "#2563eb", "light": "#ffffff"},
@@ -350,6 +351,9 @@ def ensure_schema_migrations() -> None:
         qr_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('qr_configs')")).fetchall()]
         if qr_cols and "wechat_qr_path" not in qr_cols:
             conn.execute(text("ALTER TABLE qr_configs ADD COLUMN wechat_qr_path VARCHAR(512)"))
+        qr_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('qr_configs')")).fetchall()]
+        if qr_cols and "qr_targets_json" not in qr_cols:
+            conn.execute(text("ALTER TABLE qr_configs ADD COLUMN qr_targets_json VARCHAR(4096)"))
         rr_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_records')")).fetchall()]
         if rr_cols and "trial_status" not in rr_cols:
             conn.execute(text("ALTER TABLE randomization_records ADD COLUMN trial_status VARCHAR(16) DEFAULT 'trial'"))
@@ -494,7 +498,9 @@ class RecruitmentBatchOpenRequest(BaseModel):
 class QRUpdateRequest(BaseModel):
     group: str
     qr_mode: Literal["dynamic", "static_url", "static_image"] = "static_url"
-    qr_value: str
+    qr_value: str = ""
+    # 動態模式可傳 1–5 條連結；掃碼時隨機跳轉其一。未傳則退回 qr_value 單條。
+    qr_targets: list[str] | None = None
     changed_by: str
     reason: str = ""
 
@@ -505,6 +511,71 @@ def _infer_qr_mode(qr_value: str, qr_mode: str | None = None) -> str:
     if qr_value.startswith("/uploads/"):
         return "static_image"
     return "static_url"
+
+
+def _is_http_url(value: str) -> bool:
+    lower = (value or "").strip().lower()
+    return lower.startswith("http://") or lower.startswith("https://")
+
+
+def _is_upload_or_image_path(value: str) -> bool:
+    lower = (value or "").strip().lower()
+    return (
+        lower.startswith("/uploads/")
+        or "/uploads/qr/" in lower
+        or lower.endswith((".png", ".jpg", ".jpeg", ".webp"))
+    )
+
+
+def _normalize_dynamic_targets(raw_targets: list[str] | None, fallback_value: str = "") -> list[str]:
+    """整理動態跳轉池：去空白、去重（保序）、最多 DYNAMIC_QR_TARGET_MAX 條。"""
+    seen: set[str] = set()
+    out: list[str] = []
+    candidates: list[str] = []
+    if raw_targets:
+        candidates.extend(raw_targets)
+    if fallback_value:
+        candidates.append(fallback_value)
+    for item in candidates:
+        url = (item or "").strip()
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        out.append(url)
+        if len(out) >= DYNAMIC_QR_TARGET_MAX:
+            break
+    return out
+
+
+def _validate_dynamic_target_url(url: str) -> None:
+    if not url:
+        raise HTTPException(status_code=400, detail="dynamic_qr_target_required")
+    if _is_upload_or_image_path(url) or not _is_http_url(url):
+        raise HTTPException(status_code=400, detail="dynamic_qr_target_must_be_url")
+
+
+def _targets_from_config(cfg: QRConfig) -> list[str]:
+    raw = getattr(cfg, "qr_targets_json", None)
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                targets = _normalize_dynamic_targets([str(x) for x in parsed], "")
+                if targets:
+                    return targets
+        except (TypeError, json.JSONDecodeError):
+            pass
+    value = (cfg.qr_value or "").strip()
+    return [value] if value else []
+
+
+def _pick_dynamic_target(cfg: QRConfig) -> str:
+    targets = _targets_from_config(cfg)
+    if not targets:
+        raise HTTPException(status_code=404, detail="target_not_configured")
+    if len(targets) == 1:
+        return targets[0]
+    return secrets.choice(targets)
 
 
 def _public_base_url(request: Request | None = None) -> str:
@@ -533,10 +604,12 @@ def _upload_path_from_url(url: str | None) -> Path | None:
 
 def _serialize_qr_config(cfg: QRConfig, request: Request | None = None) -> dict:
     mode = _infer_qr_mode(cfg.qr_value, cfg.qr_mode)
+    targets = _targets_from_config(cfg) if mode == "dynamic" else []
     item = {
         "group_type": cfg.group_type,
         "qr_mode": mode,
         "qr_value": cfg.qr_value,
+        "qr_targets": targets,
         "qr_logo_path": cfg.qr_logo_path,
         "wechat_qr_path": getattr(cfg, "wechat_qr_path", None),
         "version": cfg.version,
@@ -547,6 +620,7 @@ def _serialize_qr_config(cfg: QRConfig, request: Request | None = None) -> dict:
     if mode == "dynamic":
         item["stable_qr_url"] = _stable_qr_url(cfg.group_type, request)
         item["stable_qr_path"] = _stable_qr_path(cfg.group_type)
+        item["qr_targets_count"] = len(targets)
     return item
 
 
@@ -1117,9 +1191,8 @@ def qr_group_redirect(group: str, db: Session = Depends(get_db)):
     cfg = db.scalar(select(QRConfig).where(QRConfig.group_type == group))
     if cfg is None or _infer_qr_mode(cfg.qr_value, cfg.qr_mode) != "dynamic":
         raise HTTPException(status_code=404, detail="dynamic_qr_not_configured")
-    if not cfg.qr_value:
-        raise HTTPException(status_code=404, detail="target_not_configured")
-    return RedirectResponse(url=cfg.qr_value, status_code=302)
+    target = _pick_dynamic_target(cfg)
+    return RedirectResponse(url=target, status_code=302)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -2164,17 +2237,17 @@ def update_qr_config(payload: QRUpdateRequest, db: Session = Depends(get_db)):
     if payload.qr_mode not in QR_MODES:
         raise HTTPException(status_code=400, detail="invalid_qr_mode")
     qr_value = (payload.qr_value or "").strip()
+    targets_json: str | None = None
     if payload.qr_mode == "dynamic":
-        if not qr_value:
+        if payload.qr_targets is not None and len(payload.qr_targets) > DYNAMIC_QR_TARGET_MAX:
+            raise HTTPException(status_code=400, detail="dynamic_qr_targets_max_5")
+        targets = _normalize_dynamic_targets(payload.qr_targets, qr_value)
+        if not targets:
             raise HTTPException(status_code=400, detail="dynamic_qr_target_required")
-        lower = qr_value.lower()
-        if (
-            qr_value.startswith("/uploads/")
-            or "/uploads/qr/" in lower
-            or lower.endswith((".png", ".jpg", ".jpeg", ".webp"))
-            or not (lower.startswith("http://") or lower.startswith("https://"))
-        ):
-            raise HTTPException(status_code=400, detail="dynamic_qr_target_must_be_url")
+        for url in targets:
+            _validate_dynamic_target_url(url)
+        qr_value = targets[0]
+        targets_json = json.dumps(targets, ensure_ascii=False)
     if payload.qr_mode == "static_url" and not qr_value:
         raise HTTPException(status_code=400, detail="static_url_required")
     if payload.qr_mode == "static_image" and not qr_value:
@@ -2185,6 +2258,7 @@ def update_qr_config(payload: QRUpdateRequest, db: Session = Depends(get_db)):
             group_type=payload.group,
             qr_mode=payload.qr_mode,
             qr_value=qr_value,
+            qr_targets_json=targets_json,
             changed_by=payload.changed_by,
             reason=payload.reason,
         )
@@ -2193,14 +2267,25 @@ def update_qr_config(payload: QRUpdateRequest, db: Session = Depends(get_db)):
         cfg.version += 1
         cfg.qr_mode = payload.qr_mode
         cfg.qr_value = qr_value
+        cfg.qr_targets_json = targets_json
         cfg.changed_by = payload.changed_by
         cfg.reason = payload.reason
     db.commit()
     db.refresh(cfg)
-    add_audit(db, "qr_config_updated", {"group": payload.group, "version": cfg.version, "qr_mode": cfg.qr_mode})
+    add_audit(
+        db,
+        "qr_config_updated",
+        {
+            "group": payload.group,
+            "version": cfg.version,
+            "qr_mode": cfg.qr_mode,
+            "qr_targets_count": len(_targets_from_config(cfg)) if payload.qr_mode == "dynamic" else 0,
+        },
+    )
     result = {"ok": True, "group": payload.group, "version": cfg.version, "qr_mode": cfg.qr_mode}
     if payload.qr_mode == "dynamic":
         result["stable_qr_path"] = _stable_qr_path(payload.group)
+        result["qr_targets"] = _targets_from_config(cfg)
     return result
 
 
@@ -2278,6 +2363,7 @@ if _HAS_MULTIPART:
                 group_type=group,
                 qr_mode="static_image",
                 qr_value=qr_value,
+                qr_targets_json=None,
                 changed_by=changed_by,
                 reason=reason,
             )
@@ -2286,6 +2372,7 @@ if _HAS_MULTIPART:
             cfg.version += 1
             cfg.qr_mode = "static_image"
             cfg.qr_value = qr_value
+            cfg.qr_targets_json = None
             cfg.changed_by = changed_by
             cfg.reason = reason
         db.commit()
