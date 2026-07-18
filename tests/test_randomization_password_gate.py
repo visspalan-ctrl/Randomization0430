@@ -485,6 +485,68 @@ def test_can_switch_from_static_image_back_to_dynamic():
     assert redirect.headers["location"] == "https://wa.me/back_to_dynamic"
 
 
+def test_genai_presets_whatsapp_contact_channel():
+    client = TestClient(app)
+    open_batch(client, ["SITE_01"])
+    set_site_password(client, "SITE_01")
+    admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_value": "https://wa.me/genai_preset",
+            "changed_by": "admin",
+        },
+    )
+    admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "HUMAN",
+            "qr_mode": "dynamic",
+            "qr_value": "https://wa.me/human_preset",
+            "changed_by": "admin",
+        },
+    )
+    genai_body = None
+    for i in range(12):
+        r = client.post(
+            "/randomization/trigger",
+            json={
+                "phone_number": f"+85262220{i:03d}",
+                "recruiter_id": "r1",
+                "site_id": "SITE_01",
+                "recruiter_password": "123456",
+            },
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        if body["allocation_group"] == "GENAI":
+            genai_body = body
+            break
+    assert genai_body is not None
+    assert genai_body["contact_channel"] == "whatsapp"
+
+    listing = admin_get(client, "/admin/randomization-records").json()
+    item = next(i for i in listing["items"] if i["enrollment_no"] == genai_body["enrollment_no"])
+    assert item["contact_channel"] == "whatsapp"
+
+    # 冪等重提仍為 WhatsApp
+    again = client.post(
+        "/randomization/trigger",
+        json={
+            "phone_number": genai_body["phone_number"],
+            "recruiter_id": "r1",
+            "site_id": "SITE_01",
+            "recruiter_password": "123456",
+        },
+    )
+    assert again.status_code == 200
+    assert again.json()["contact_channel"] == "whatsapp"
+    assert again.json()["idempotent"] is True
+
+
 def test_control_group_dual_qr_and_contact_channel_selection():
     client = TestClient(app)
     # HUMAN: WhatsApp 动态码 + 微信图片码

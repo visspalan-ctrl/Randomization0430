@@ -1523,12 +1523,17 @@ def _h5_randomize_html() -> str:
             }
             wxImg.src = toAbsoluteUrl(data.wechat_qr);
             channelPick.classList.add("show");
-            const existing = data.contact_channel || "";
+            // 干預組預設 WhatsApp；對照組雙碼時需招募員確認
+            let existing = data.contact_channel || "";
+            if (!existing && data.allocation_group === "GENAI") existing = "whatsapp";
             document.querySelectorAll('input[name="contactChannel"]').forEach(function(r) {
               r.checked = r.value === existing;
             });
             if (existing) {
-              channelStatus.textContent = "已選擇：" + (existing === "wechat" ? "微信" : "WhatsApp");
+              const presetHint = (data.allocation_group === "GENAI" && existing === "whatsapp")
+                ? "（干預組預設）"
+                : "";
+              channelStatus.textContent = "已選擇：" + (existing === "wechat" ? "微信" : "WhatsApp") + presetHint;
               channelStatus.className = "kv ok";
             }
             return;
@@ -2107,6 +2112,14 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
             )
             raise HTTPException(status_code=403, detail="site_mismatch")
         qr = db.scalar(select(QRConfig).where(QRConfig.group_type == existing.allocation_group))
+        # 舊的干預組記錄若尚未填渠道，補預設 WhatsApp
+        if (
+            existing.allocation_group == "GENAI"
+            and not (getattr(existing, "contact_channel", None) or "").strip()
+        ):
+            existing.contact_channel = "whatsapp"
+            db.commit()
+            db.refresh(existing)
         add_audit(
             db,
             "participant_randomized_idempotent",
@@ -2116,6 +2129,7 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
                 enrollment_no=existing.enrollment_no,
                 allocation_group=existing.allocation_group,
                 idempotent=True,
+                contact_channel=getattr(existing, "contact_channel", None),
             ),
         )
         return {
@@ -2168,6 +2182,8 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
         allocation_group=group,
         trial_status=trial_status,
         assigned_recruitment_week=site_week,
+        # 干預組（GENAI）預設添加渠道為 WhatsApp；對照組仍由招募員在雙碼時選擇
+        contact_channel="whatsapp" if group == "GENAI" else None,
     )
     db.add(record)
     db.commit()
@@ -2182,6 +2198,7 @@ def trigger_randomization(payload: RandomizationTriggerRequest, db: Session = De
             enrollment_no=record.enrollment_no,
             allocation_group=group,
             idempotent=False,
+            contact_channel=getattr(record, "contact_channel", None),
         ),
     )
     return {
