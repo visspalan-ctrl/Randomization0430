@@ -88,6 +88,16 @@ class QRTargetDailyHit(Base):
     )
 
 
+class QRTargetStreakState(Base):
+    """動態跳轉連結連續出現狀態：同一連結不可連續出現達上限。"""
+
+    __tablename__ = "qr_target_streak_state"
+    group_type: Mapped[str] = mapped_column(String(16), primary_key=True)
+    last_target_url: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    consecutive_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class GroupLabel(Base):
     __tablename__ = "group_labels"
     group_type: Mapped[str] = mapped_column(String(16), primary_key=True)

@@ -29,6 +29,7 @@ from app.models import (
     GroupLabel,
     QRConfig,
     QRTargetDailyHit,
+    QRTargetStreakState,
     RandomizationRecord,
     RandomizationSetting,
     RecruitmentBatch,
@@ -93,6 +94,8 @@ QR_GROUP_TYPES = frozenset({"GENAI", "HUMAN"})
 QR_MODES = frozenset({"dynamic", "static_url", "static_image"})
 DYNAMIC_QR_TARGET_MAX = 5
 DYNAMIC_QR_TARGET_DAILY_MAX = 10  # 每條連結每個香港日最多出現次數
+# 同一連結最多連續出現次數；達此數後下一次必須換其他連結（不可連續加滿 3 人）
+DYNAMIC_QR_TARGET_MAX_CONSECUTIVE = 2
 QR_GROUP_COLORS: dict[str, dict[str, str]] = {
     "GENAI": {"dark": "#dc2626", "light": "#ffffff"},
     "HUMAN": {"dark": "#2563eb", "light": "#ffffff"},
@@ -609,8 +612,30 @@ def _increment_daily_hit(db: Session, group: str, day_key: str, target_url: str)
     return int(row.hit_count)
 
 
+def _get_streak_state(db: Session, group: str) -> QRTargetStreakState | None:
+    return db.get(QRTargetStreakState, group)
+
+
+def _update_streak_state(db: Session, group: str, chosen: str) -> int:
+    state = db.get(QRTargetStreakState, group)
+    if state is None:
+        state = QRTargetStreakState(group_type=group, last_target_url=chosen, consecutive_count=1)
+        db.add(state)
+        db.commit()
+        db.refresh(state)
+        return 1
+    if state.last_target_url == chosen:
+        state.consecutive_count = int(state.consecutive_count or 0) + 1
+    else:
+        state.last_target_url = chosen
+        state.consecutive_count = 1
+    db.commit()
+    db.refresh(state)
+    return int(state.consecutive_count)
+
+
 def _pick_dynamic_target(cfg: QRConfig, db: Session, day_key: str | None = None) -> str:
-    """從連結池隨機挑選尚未達當日上限的目標，並計入當日出現次數。"""
+    """從連結池挑選目標：避開當日已滿額，且同一連結不可連續達上限後仍再出。"""
     targets = _targets_from_config(cfg)
     if not targets:
         raise HTTPException(status_code=404, detail="target_not_configured")
@@ -619,8 +644,23 @@ def _pick_dynamic_target(cfg: QRConfig, db: Session, day_key: str | None = None)
     available = [u for u in targets if counts.get(u, 0) < DYNAMIC_QR_TARGET_DAILY_MAX]
     if not available:
         raise HTTPException(status_code=429, detail="dynamic_qr_daily_cap_reached")
+
+    # 同一連結已連續出現 MAX_CONSECUTIVE 次後，必須換其他仍可用的連結
+    state = _get_streak_state(db, cfg.group_type)
+    streak_blocked = ""
+    if (
+        state is not None
+        and state.last_target_url
+        and int(state.consecutive_count or 0) >= DYNAMIC_QR_TARGET_MAX_CONSECUTIVE
+    ):
+        streak_blocked = state.last_target_url
+        switched = [u for u in available if u != streak_blocked]
+        if switched:
+            available = switched
+
     chosen = available[0] if len(available) == 1 else secrets.choice(available)
     _increment_daily_hit(db, cfg.group_type, day, chosen)
+    _update_streak_state(db, cfg.group_type, chosen)
     return chosen
 
 
@@ -672,6 +712,7 @@ def _serialize_qr_config(
         item["stable_qr_path"] = _stable_qr_path(cfg.group_type)
         item["qr_targets_count"] = len(targets)
         item["qr_target_daily_cap"] = DYNAMIC_QR_TARGET_DAILY_MAX
+        item["qr_target_max_consecutive"] = DYNAMIC_QR_TARGET_MAX_CONSECUTIVE
         day = hk_date_stamp()
         counts = _daily_hit_counts(db, cfg.group_type, day, targets) if db is not None else {}
         item["qr_targets_daily"] = [
@@ -683,6 +724,14 @@ def _serialize_qr_config(
             for u in targets
         ]
         item["qr_targets_daily_day"] = day
+        if db is not None:
+            streak = _get_streak_state(db, cfg.group_type)
+            if streak is not None and streak.last_target_url:
+                item["qr_target_streak"] = {
+                    "last_url": streak.last_target_url,
+                    "consecutive_count": int(streak.consecutive_count or 0),
+                    "must_switch_next": int(streak.consecutive_count or 0) >= DYNAMIC_QR_TARGET_MAX_CONSECUTIVE,
+                }
     return item
 
 
