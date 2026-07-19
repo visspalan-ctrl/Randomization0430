@@ -11,7 +11,7 @@ from app.models import (
 
 PageId = Literal["settings", "sites", "qr", "records"]
 
-ADMIN_UI_BUILD_ID = "2026-07-18-dynamic-pool-v1"
+ADMIN_UI_BUILD_ID = "2026-07-19-daily-cap-v1"
 
 ADMIN_CSS = """
 :root {
@@ -1088,7 +1088,8 @@ def panel_qr() -> str:
       <input id="qrValue" placeholder="https://wa.me/..." oninput="onQrValueInput()" />
       <div id="qrDynamicTargets" style="display:none;margin-top:10px;padding:12px;border:1px solid #bae6fd;border-radius:10px;background:#f0f9ff;">
         <label style="margin:0 0 6px;display:block;font-weight:600;color:#0369a1;">動態跳轉連結池（最多 5 條）</label>
-        <p class="muted" style="margin:0 0 10px;font-size:12px;">印刷用固定碼不變；每次掃碼會從下方已填連結中<strong>隨機</strong>跳轉一條。至少填 1 條，最多 5 條。</p>
+        <p class="muted" style="margin:0 0 10px;font-size:12px;">印刷用固定碼不變；每次掃碼從下方已填連結中<strong>隨機</strong>跳轉一條。至少 1 條、最多 5 條。<strong>每條連結每個香港日最多出現 10 次</strong>；當日全部達上限後掃碼將暫時無法跳轉，翌日自動重置。</p>
+        <div id="qrTargetsDailyHint" class="muted" style="margin:0 0 10px;font-size:12px;color:#0c4a6e;"></div>
         <label>連結 1</label>
         <input id="qrTarget1" placeholder="https://wa.me/..." oninput="onDynamicTargetsInput()" />
         <label>連結 2（可選）</label>
@@ -2435,10 +2436,26 @@ ADMIN_SCRIPTS = """
     }
     onQrModeChange();
     if (mode === "dynamic") {
-      text.textContent = "v" + current.version + " · 動態碼池 " + targets.length + " 條 → " + (targets.join(" | ") || "");
+      const daily = Array.isArray(current.qr_targets_daily) ? current.qr_targets_daily : [];
+      const cap = current.qr_target_daily_cap || 10;
+      const dailyHint = document.getElementById("qrTargetsDailyHint");
+      if (dailyHint) {
+        if (daily.length) {
+          dailyHint.innerHTML = "今日（香港 " + (current.qr_targets_daily_day || "") + "）出現次數 / 上限 " + cap + "：<br>"
+            + daily.map(function(d, i) {
+              return (i + 1) + ". " + (d.url || "") + " → " + (d.hits_today || 0) + "/" + cap
+                + "（剩 " + (d.remaining_today != null ? d.remaining_today : "?") + "）";
+            }).join("<br>");
+        } else {
+          dailyHint.textContent = "";
+        }
+      }
+      text.textContent = "v" + current.version + " · 動態碼池 " + targets.length + " 條（每條每日≤" + cap + "次） → " + (targets.join(" | ") || "");
       if (img) { img.style.display = "none"; }
       return;
     }
+    const dailyHintClear = document.getElementById("qrTargetsDailyHint");
+    if (dailyHintClear) dailyHintClear.textContent = "";
     text.textContent = "v" + current.version + " · " + (current.qr_value || "");
     const previewUrl = toAbsoluteUrl(current.qr_value || "");
     const isImg = /\\.(png|jpg|jpeg|webp)(\\?.*)?$/i.test(previewUrl) || previewUrl.includes("/uploads/qr/");

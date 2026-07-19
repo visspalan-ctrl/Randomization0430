@@ -680,7 +680,7 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     page = admin_get(client, "/admin/web", params={"page": "qr"})
     assert page.status_code == 200
     html = page.text
-    assert "2026-07-18-dynamic-pool-v1" in html
+    assert "2026-07-19-daily-cap-v1" in html
     assert "二維碼（WhatsApp/微信）" in html
     assert "上傳微信二維碼" in html
     assert "儲存主碼設定" in html
@@ -688,6 +688,7 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     assert 'id="qrWechatSection"' in html
     assert 'id="qrDynamicTargets"' in html
     assert "qrTarget5" in html
+    assert "每條連結每個香港日最多出現 10 次" in html
     assert "confirm_replace_dynamic" in html
     assert "REPLACE" in html
     assert "已選擇微信圖片" in html
@@ -698,6 +699,45 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     assert settings.status_code == 200
     assert "WhatsApp / 微信二維碼在這裡" not in settings.text
     assert "前往二維碼頁（含微信上傳）" not in settings.text
+
+
+def test_dynamic_qr_target_daily_cap_10():
+    client = TestClient(app)
+    targets = [
+        "https://wa.me/cap_a",
+        "https://wa.me/cap_b",
+    ]
+    admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_targets": targets,
+            "changed_by": "admin",
+            "reason": "daily cap",
+        },
+    )
+    counts = {u: 0 for u in targets}
+    for _ in range(20):
+        r = client.get("/r/GENAI", follow_redirects=False)
+        assert r.status_code == 302, r.text
+        loc = r.headers["location"]
+        assert loc in targets
+        counts[loc] += 1
+    assert counts["https://wa.me/cap_a"] == 10
+    assert counts["https://wa.me/cap_b"] == 10
+
+    blocked = client.get("/r/GENAI", follow_redirects=False)
+    assert blocked.status_code == 429
+    assert blocked.json()["detail"] == "dynamic_qr_daily_cap_reached"
+
+    configs = admin_get(client, "/admin/qr-configs").json()
+    genai = next(i for i in configs["items"] if i["group_type"] == "GENAI")
+    assert genai["qr_target_daily_cap"] == 10
+    by_url = {d["url"]: d for d in genai["qr_targets_daily"]}
+    assert by_url["https://wa.me/cap_a"]["hits_today"] == 10
+    assert by_url["https://wa.me/cap_a"]["remaining_today"] == 0
 
 
 def test_dynamic_qr_target_pool_random_redirect():

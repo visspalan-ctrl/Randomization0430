@@ -73,6 +73,21 @@ class QRConfig(Base):
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class QRTargetDailyHit(Base):
+    """動態跳轉連結每日出現次數（按香港日曆日）。"""
+
+    __tablename__ = "qr_target_daily_hits"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    group_type: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    day_key: Mapped[str] = mapped_column(String(8), nullable=False, index=True)  # YYYYMMDD HK
+    target_url: Mapped[str] = mapped_column(String(512), nullable=False)
+    hit_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    __table_args__ = (
+        UniqueConstraint("group_type", "day_key", "target_url", name="uq_qr_target_daily"),
+    )
+
+
 class GroupLabel(Base):
     __tablename__ = "group_labels"
     group_type: Mapped[str] = mapped_column(String(16), primary_key=True)

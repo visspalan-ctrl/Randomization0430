@@ -28,6 +28,7 @@ from app.models import (
     EnrollmentCounter,
     GroupLabel,
     QRConfig,
+    QRTargetDailyHit,
     RandomizationRecord,
     RandomizationSetting,
     RecruitmentBatch,
@@ -91,6 +92,7 @@ ENROLLMENT_MODE_NONTrial = "nontrial"
 QR_GROUP_TYPES = frozenset({"GENAI", "HUMAN"})
 QR_MODES = frozenset({"dynamic", "static_url", "static_image"})
 DYNAMIC_QR_TARGET_MAX = 5
+DYNAMIC_QR_TARGET_DAILY_MAX = 10  # 每條連結每個香港日最多出現次數
 QR_GROUP_COLORS: dict[str, dict[str, str]] = {
     "GENAI": {"dark": "#dc2626", "light": "#ffffff"},
     "HUMAN": {"dark": "#2563eb", "light": "#ffffff"},
@@ -569,13 +571,57 @@ def _targets_from_config(cfg: QRConfig) -> list[str]:
     return [value] if value else []
 
 
-def _pick_dynamic_target(cfg: QRConfig) -> str:
+def _daily_hit_counts(db: Session, group: str, day_key: str, targets: list[str]) -> dict[str, int]:
+    if not targets:
+        return {}
+    rows = db.scalars(
+        select(QRTargetDailyHit).where(
+            QRTargetDailyHit.group_type == group,
+            QRTargetDailyHit.day_key == day_key,
+            QRTargetDailyHit.target_url.in_(targets),
+        )
+    ).all()
+    return {r.target_url: int(r.hit_count or 0) for r in rows}
+
+
+def _increment_daily_hit(db: Session, group: str, day_key: str, target_url: str) -> int:
+    row = db.scalar(
+        select(QRTargetDailyHit).where(
+            QRTargetDailyHit.group_type == group,
+            QRTargetDailyHit.day_key == day_key,
+            QRTargetDailyHit.target_url == target_url,
+        )
+    )
+    if row is None:
+        row = QRTargetDailyHit(
+            group_type=group,
+            day_key=day_key,
+            target_url=target_url,
+            hit_count=1,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return 1
+    row.hit_count = int(row.hit_count or 0) + 1
+    db.commit()
+    db.refresh(row)
+    return int(row.hit_count)
+
+
+def _pick_dynamic_target(cfg: QRConfig, db: Session, day_key: str | None = None) -> str:
+    """從連結池隨機挑選尚未達當日上限的目標，並計入當日出現次數。"""
     targets = _targets_from_config(cfg)
     if not targets:
         raise HTTPException(status_code=404, detail="target_not_configured")
-    if len(targets) == 1:
-        return targets[0]
-    return secrets.choice(targets)
+    day = day_key or hk_date_stamp()
+    counts = _daily_hit_counts(db, cfg.group_type, day, targets)
+    available = [u for u in targets if counts.get(u, 0) < DYNAMIC_QR_TARGET_DAILY_MAX]
+    if not available:
+        raise HTTPException(status_code=429, detail="dynamic_qr_daily_cap_reached")
+    chosen = available[0] if len(available) == 1 else secrets.choice(available)
+    _increment_daily_hit(db, cfg.group_type, day, chosen)
+    return chosen
 
 
 def _public_base_url(request: Request | None = None) -> str:
@@ -602,7 +648,11 @@ def _upload_path_from_url(url: str | None) -> Path | None:
     return path if path.is_file() else None
 
 
-def _serialize_qr_config(cfg: QRConfig, request: Request | None = None) -> dict:
+def _serialize_qr_config(
+    cfg: QRConfig,
+    request: Request | None = None,
+    db: Session | None = None,
+) -> dict:
     mode = _infer_qr_mode(cfg.qr_value, cfg.qr_mode)
     targets = _targets_from_config(cfg) if mode == "dynamic" else []
     item = {
@@ -621,6 +671,18 @@ def _serialize_qr_config(cfg: QRConfig, request: Request | None = None) -> dict:
         item["stable_qr_url"] = _stable_qr_url(cfg.group_type, request)
         item["stable_qr_path"] = _stable_qr_path(cfg.group_type)
         item["qr_targets_count"] = len(targets)
+        item["qr_target_daily_cap"] = DYNAMIC_QR_TARGET_DAILY_MAX
+        day = hk_date_stamp()
+        counts = _daily_hit_counts(db, cfg.group_type, day, targets) if db is not None else {}
+        item["qr_targets_daily"] = [
+            {
+                "url": u,
+                "hits_today": int(counts.get(u, 0)),
+                "remaining_today": max(0, DYNAMIC_QR_TARGET_DAILY_MAX - int(counts.get(u, 0))),
+            }
+            for u in targets
+        ]
+        item["qr_targets_daily_day"] = day
     return item
 
 
@@ -1191,7 +1253,7 @@ def qr_group_redirect(group: str, db: Session = Depends(get_db)):
     cfg = db.scalar(select(QRConfig).where(QRConfig.group_type == group))
     if cfg is None or _infer_qr_mode(cfg.qr_value, cfg.qr_mode) != "dynamic":
         raise HTTPException(status_code=404, detail="dynamic_qr_not_configured")
-    target = _pick_dynamic_target(cfg)
+    target = _pick_dynamic_target(cfg, db)
     return RedirectResponse(url=target, status_code=302)
 
 
@@ -2309,7 +2371,7 @@ def update_qr_config(payload: QRUpdateRequest, db: Session = Depends(get_db)):
 @app.get("/admin/qr-configs")
 def get_qr_configs(request: Request, db: Session = Depends(get_db)):
     items = db.scalars(select(QRConfig).order_by(QRConfig.group_type.asc())).all()
-    return {"items": [_serialize_qr_config(i, request) for i in items]}
+    return {"items": [_serialize_qr_config(i, request, db) for i in items]}
 
 
 @app.get("/admin/group-labels")
