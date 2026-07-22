@@ -680,16 +680,18 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     page = admin_get(client, "/admin/web", params={"page": "qr"})
     assert page.status_code == 200
     html = page.text
-    assert "2026-07-22-daily-cap-setting-v1" in html
+    assert "2026-07-22-per-link-daily-cap-v1" in html
     assert "二維碼（WhatsApp/微信）" in html
     assert "上傳微信二維碼" in html
     assert "儲存主碼設定" in html
     assert "微信二維碼上傳" in html
     assert 'id="qrWechatSection"' in html
     assert 'id="qrDynamicTargets"' in html
-    assert 'id="qrTargetDailyCap"' in html
+    assert 'id="qrTargetCap1"' in html
+    assert 'id="qrTargetCap5"' in html
+    assert 'id="qrTargetDailyCap"' not in html
     assert "qrTarget5" in html
-    assert "每條連結當日最多出現次數" in html
+    assert "每條連結各自設定" in html
     assert "同一連結不可連續出現 3 次" in html
     assert "confirm_replace_dynamic" in html
     assert "REPLACE" in html
@@ -750,6 +752,7 @@ def test_dynamic_qr_target_cannot_streak_three_times():
 
 
 def test_dynamic_qr_target_daily_cap_is_configurable():
+    """組級 target_daily_cap 仍可作為舊 API / 單條未指定時的回退。"""
     client = TestClient(app)
     targets = ["https://wa.me/cfg_a", "https://wa.me/cfg_b"]
     saved = admin_post(
@@ -766,6 +769,11 @@ def test_dynamic_qr_target_daily_cap_is_configurable():
     )
     assert saved.status_code == 200, saved.text
     assert saved.json()["target_daily_cap"] == 3
+    items = saved.json()["qr_target_items"]
+    assert {it["url"]: it["daily_cap"] for it in items} == {
+        "https://wa.me/cfg_a": 3,
+        "https://wa.me/cfg_b": 3,
+    }
 
     counts = {u: 0 for u in targets}
     for _ in range(6):
@@ -796,6 +804,69 @@ def test_dynamic_qr_target_daily_cap_is_configurable():
     genai = next(i for i in configs["items"] if i["group_type"] == "GENAI")
     assert genai["target_daily_cap"] == 3
     assert genai["qr_target_daily_cap"] == 3
+
+
+def test_dynamic_qr_per_link_daily_cap():
+    """每條連結可設定不同的當日出現上限。"""
+    client = TestClient(app)
+    items = [
+        {"url": "https://wa.me/per_a", "daily_cap": 2},
+        {"url": "https://wa.me/per_b", "daily_cap": 5},
+    ]
+    saved = admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_target_items": items,
+            "changed_by": "admin",
+            "reason": "per-link daily cap",
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    body = saved.json()
+    assert body["qr_targets"] == ["https://wa.me/per_a", "https://wa.me/per_b"]
+    assert {it["url"]: it["daily_cap"] for it in body["qr_target_items"]} == {
+        "https://wa.me/per_a": 2,
+        "https://wa.me/per_b": 5,
+    }
+
+    counts = {"https://wa.me/per_a": 0, "https://wa.me/per_b": 0}
+    for _ in range(7):
+        r = client.get("/r/GENAI", follow_redirects=False)
+        assert r.status_code == 302, r.text
+        counts[r.headers["location"]] += 1
+    assert counts["https://wa.me/per_a"] == 2
+    assert counts["https://wa.me/per_b"] == 5
+
+    blocked = client.get("/r/GENAI", follow_redirects=False)
+    assert blocked.status_code == 429
+    assert blocked.json()["detail"] == "dynamic_qr_daily_cap_reached"
+
+    configs = admin_get(client, "/admin/qr-configs").json()
+    genai = next(i for i in configs["items"] if i["group_type"] == "GENAI")
+    by_url = {d["url"]: d for d in genai["qr_targets_daily"]}
+    assert by_url["https://wa.me/per_a"]["daily_cap"] == 2
+    assert by_url["https://wa.me/per_a"]["hits_today"] == 2
+    assert by_url["https://wa.me/per_a"]["remaining_today"] == 0
+    assert by_url["https://wa.me/per_b"]["daily_cap"] == 5
+    assert by_url["https://wa.me/per_b"]["hits_today"] == 5
+
+    bad = admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_target_items": [
+                {"url": "https://wa.me/bad", "daily_cap": 0},
+            ],
+            "changed_by": "admin",
+        },
+    )
+    assert bad.status_code == 400
+    assert bad.json()["detail"] == "invalid_target_daily_cap"
 
 
 def test_dynamic_qr_target_daily_cap_10():

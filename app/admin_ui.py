@@ -11,7 +11,7 @@ from app.models import (
 
 PageId = Literal["settings", "sites", "qr", "records"]
 
-ADMIN_UI_BUILD_ID = "2026-07-22-daily-cap-setting-v1"
+ADMIN_UI_BUILD_ID = "2026-07-22-per-link-daily-cap-v1"
 
 ADMIN_CSS = """
 :root {
@@ -1088,21 +1088,58 @@ def panel_qr() -> str:
       <input id="qrValue" placeholder="https://wa.me/..." oninput="onQrValueInput()" />
       <div id="qrDynamicTargets" style="display:none;margin-top:10px;padding:12px;border:1px solid #bae6fd;border-radius:10px;background:#f0f9ff;">
         <label style="margin:0 0 6px;display:block;font-weight:600;color:#0369a1;">動態跳轉連結池（最多 5 條）</label>
-        <p class="muted" style="margin:0 0 10px;font-size:12px;">印刷用固定碼不變；每次掃碼從下方已填連結中<strong>隨機</strong>跳轉一條。至少 1 條、最多 5 條。每條連結每個香港日出現次數上限可在下方設定；且<strong>同一連結不可連續出現 3 次</strong>（連續 2 次後必須換其他連結）。當日全部達上限後掃碼將暫時無法跳轉，翌日自動重置。</p>
-        <label for="qrTargetDailyCap">每條連結當日最多出現次數（香港日）</label>
-        <input id="qrTargetDailyCap" type="number" min="1" max="200" value="10" style="max-width:140px;" />
-        <p class="muted" style="margin:4px 0 10px;font-size:12px;">預設 10；可改 1–200。與「儲存主碼設定」一併生效。</p>
+        <p class="muted" style="margin:0 0 10px;font-size:12px;">印刷用固定碼不變；每次掃碼從下方已填連結中<strong>隨機</strong>跳轉一條。至少 1 條、最多 5 條。<strong>每條連結各自設定</strong>當日出現上限（香港日，預設 10，可改 1–200）；且<strong>同一連結不可連續出現 3 次</strong>（連續 2 次後必須換其他連結）。當日全部達上限後掃碼將暫時無法跳轉，翌日自動重置。</p>
         <div id="qrTargetsDailyHint" class="muted" style="margin:0 0 10px;font-size:12px;color:#0c4a6e;"></div>
-        <label>連結 1</label>
-        <input id="qrTarget1" placeholder="https://wa.me/..." oninput="onDynamicTargetsInput()" />
-        <label>連結 2（可選）</label>
-        <input id="qrTarget2" placeholder="https://wa.me/..." oninput="onDynamicTargetsInput()" />
-        <label>連結 3（可選）</label>
-        <input id="qrTarget3" placeholder="https://wa.me/..." oninput="onDynamicTargetsInput()" />
-        <label>連結 4（可選）</label>
-        <input id="qrTarget4" placeholder="https://wa.me/..." oninput="onDynamicTargetsInput()" />
-        <label>連結 5（可選）</label>
-        <input id="qrTarget5" placeholder="https://wa.me/..." oninput="onDynamicTargetsInput()" />
+        <div style="display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin:0 0 8px;">
+          <div style="flex:1 1 16rem;min-width:12rem;">
+            <label for="qrTarget1">連結 1</label>
+            <input id="qrTarget1" placeholder="https://wa.me/..." oninput="onDynamicTargetsInput()" />
+          </div>
+          <div style="flex:0 0 auto;">
+            <label for="qrTargetCap1">當日上限</label>
+            <input id="qrTargetCap1" type="number" min="1" max="200" value="10" style="max-width:100px;" />
+          </div>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin:0 0 8px;">
+          <div style="flex:1 1 16rem;min-width:12rem;">
+            <label for="qrTarget2">連結 2（可選）</label>
+            <input id="qrTarget2" placeholder="https://wa.me/..." oninput="onDynamicTargetsInput()" />
+          </div>
+          <div style="flex:0 0 auto;">
+            <label for="qrTargetCap2">當日上限</label>
+            <input id="qrTargetCap2" type="number" min="1" max="200" value="10" style="max-width:100px;" />
+          </div>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin:0 0 8px;">
+          <div style="flex:1 1 16rem;min-width:12rem;">
+            <label for="qrTarget3">連結 3（可選）</label>
+            <input id="qrTarget3" placeholder="https://wa.me/..." oninput="onDynamicTargetsInput()" />
+          </div>
+          <div style="flex:0 0 auto;">
+            <label for="qrTargetCap3">當日上限</label>
+            <input id="qrTargetCap3" type="number" min="1" max="200" value="10" style="max-width:100px;" />
+          </div>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin:0 0 8px;">
+          <div style="flex:1 1 16rem;min-width:12rem;">
+            <label for="qrTarget4">連結 4（可選）</label>
+            <input id="qrTarget4" placeholder="https://wa.me/..." oninput="onDynamicTargetsInput()" />
+          </div>
+          <div style="flex:0 0 auto;">
+            <label for="qrTargetCap4">當日上限</label>
+            <input id="qrTargetCap4" type="number" min="1" max="200" value="10" style="max-width:100px;" />
+          </div>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin:0 0 8px;">
+          <div style="flex:1 1 16rem;min-width:12rem;">
+            <label for="qrTarget5">連結 5（可選）</label>
+            <input id="qrTarget5" placeholder="https://wa.me/..." oninput="onDynamicTargetsInput()" />
+          </div>
+          <div style="flex:0 0 auto;">
+            <label for="qrTargetCap5">當日上限</label>
+            <input id="qrTargetCap5" type="number" min="1" max="200" value="10" style="max-width:100px;" />
+          </div>
+        </div>
       </div>
       <div id="qrDynamicExtras" style="display:none;margin-top:10px;">
         <label>固定二維碼連結（印刷用，不變）</label>
@@ -2135,7 +2172,7 @@ ADMIN_SCRIPTS = """
     return "https://wa.me/";
   }
 
-  function collectDynamicTargets() {
+  function collectDynamicTargetItems() {
     const out = [];
     const seen = {};
     for (let i = 1; i <= 5; i++) {
@@ -2143,16 +2180,40 @@ ADMIN_SCRIPTS = """
       const url = (el && el.value ? el.value : "").trim();
       if (!url || seen[url]) continue;
       seen[url] = true;
-      out.push(url);
+      const capEl = document.getElementById("qrTargetCap" + i);
+      const capRaw = capEl ? Number(capEl.value) : NaN;
+      if (!Number.isFinite(capRaw) || capRaw < 1 || capRaw > 200) {
+        return { error: "連結 " + i + " 的當日上限須為 1–200 的整數" };
+      }
+      out.push({ url: url, daily_cap: Math.floor(capRaw) });
     }
-    return out;
+    return { items: out };
   }
 
-  function fillDynamicTargets(targets) {
+  function collectDynamicTargets() {
+    const got = collectDynamicTargetItems();
+    if (got.error) return [];
+    return (got.items || []).map(function(it) { return it.url; });
+  }
+
+  function fillDynamicTargets(targets, items) {
     const list = Array.isArray(targets) ? targets.slice(0, 5) : [];
+    const itemByUrl = {};
+    if (Array.isArray(items)) {
+      items.forEach(function(it) {
+        if (it && it.url) itemByUrl[String(it.url)] = it;
+      });
+    }
     for (let i = 1; i <= 5; i++) {
       const el = document.getElementById("qrTarget" + i);
-      if (el) el.value = list[i - 1] || "";
+      const url = list[i - 1] || "";
+      if (el) el.value = url;
+      const capEl = document.getElementById("qrTargetCap" + i);
+      if (capEl) {
+        const fromItem = url && itemByUrl[url] ? itemByUrl[url].daily_cap : null;
+        const capVal = (fromItem != null && Number(fromItem) >= 1) ? Number(fromItem) : 10;
+        capEl.value = String(capVal);
+      }
     }
     const valueEl = document.getElementById("qrValue");
     if (valueEl) valueEl.value = list[0] || "";
@@ -2409,12 +2470,10 @@ ADMIN_SCRIPTS = """
     const targets = (mode === "dynamic")
       ? ((current.qr_targets && current.qr_targets.length) ? current.qr_targets : (current.qr_value ? [current.qr_value] : []))
       : [];
-    fillDynamicTargets(targets);
-    const dailyCapInp = document.getElementById("qrTargetDailyCap");
-    if (dailyCapInp) {
-      const capVal = current.target_daily_cap || current.qr_target_daily_cap || 10;
-      dailyCapInp.value = String(capVal);
-    }
+    const targetItems = (mode === "dynamic" && Array.isArray(current.qr_target_items))
+      ? current.qr_target_items
+      : (Array.isArray(current.qr_targets_daily) ? current.qr_targets_daily : []);
+    fillDynamicTargets(targets, targetItems);
     const stableInp = document.getElementById("qrStableUrl");
     if (stableInp) stableInp.value = current.stable_qr_url || "";
     const logoEl = document.getElementById("qrLogoCurrent");
@@ -2445,12 +2504,12 @@ ADMIN_SCRIPTS = """
     onQrModeChange();
     if (mode === "dynamic") {
       const daily = Array.isArray(current.qr_targets_daily) ? current.qr_targets_daily : [];
-      const cap = current.qr_target_daily_cap || 10;
       const dailyHint = document.getElementById("qrTargetsDailyHint");
       if (dailyHint) {
         if (daily.length) {
-          dailyHint.innerHTML = "今日（香港 " + (current.qr_targets_daily_day || "") + "）出現次數 / 上限 " + cap + "：<br>"
+          dailyHint.innerHTML = "今日（香港 " + (current.qr_targets_daily_day || "") + "）各連結出現次數 / 各自上限：<br>"
             + daily.map(function(d, i) {
+              const cap = (d.daily_cap != null) ? d.daily_cap : (current.qr_target_daily_cap || 10);
               return (i + 1) + ". " + (d.url || "") + " → " + (d.hits_today || 0) + "/" + cap
                 + "（剩 " + (d.remaining_today != null ? d.remaining_today : "?") + "）";
             }).join("<br>");
@@ -2458,7 +2517,7 @@ ADMIN_SCRIPTS = """
           dailyHint.textContent = "";
         }
       }
-      text.textContent = "v" + current.version + " · 動態碼池 " + targets.length + " 條（每條每日≤" + cap + "次） → " + (targets.join(" | ") || "");
+      text.textContent = "v" + current.version + " · 動態碼池 " + targets.length + " 條（每條可設獨立每日上限） → " + (targets.join(" | ") || "");
       if (img) { img.style.display = "none"; }
       return;
     }
@@ -2624,9 +2683,15 @@ ADMIN_SCRIPTS = """
     }
     let qrValue = (document.getElementById("qrValue")?.value || "").trim();
     let qrTargets = null;
-    let targetDailyCap = null;
+    let qrTargetItems = null;
     if (mode === "dynamic") {
-      qrTargets = collectDynamicTargets();
+      let collected = collectDynamicTargetItems();
+      if (collected.error) {
+        resultBox.textContent = "[ERROR] " + collected.error;
+        return;
+      }
+      qrTargetItems = collected.items || [];
+      qrTargets = qrTargetItems.map(function(it) { return it.url; });
       if (!qrTargets.length) {
         const suggested = recalledDynamicQrTarget(group);
         const entered = window.prompt(
@@ -2642,23 +2707,23 @@ ADMIN_SCRIPTS = """
           resultBox.textContent = "[ERROR] 跳轉目標須為 http(s) 連結，不能是圖片路徑";
           return;
         }
-        fillDynamicTargets([url]);
-        qrTargets = [url];
+        fillDynamicTargets([url], [{ url: url, daily_cap: 10 }]);
+        collected = collectDynamicTargetItems();
+        if (collected.error) {
+          resultBox.textContent = "[ERROR] " + collected.error;
+          return;
+        }
+        qrTargetItems = collected.items || [];
+        qrTargets = qrTargetItems.map(function(it) { return it.url; });
       }
-      for (let i = 0; i < qrTargets.length; i++) {
-        if (!isHttpUrl(qrTargets[i]) || isUploadOrImagePath(qrTargets[i])) {
+      for (let i = 0; i < qrTargetItems.length; i++) {
+        const it = qrTargetItems[i];
+        if (!isHttpUrl(it.url) || isUploadOrImagePath(it.url)) {
           resultBox.textContent = "[ERROR] 連結池第 " + (i + 1) + " 條須為 http(s) 連結";
           return;
         }
       }
       qrValue = qrTargets[0];
-      const capEl = document.getElementById("qrTargetDailyCap");
-      const capRaw = capEl ? Number(capEl.value) : NaN;
-      if (!Number.isFinite(capRaw) || capRaw < 1 || capRaw > 200) {
-        resultBox.textContent = "[ERROR] 當日最多出現次數須為 1–200 的整數";
-        return;
-      }
-      targetDailyCap = Math.floor(capRaw);
     }
     if (mode === "static_url" && !qrValue) {
       resultBox.textContent = "[ERROR] 請填寫二維碼連結（URL）";
@@ -2674,14 +2739,15 @@ ADMIN_SCRIPTS = """
         reason: document.getElementById("qrReason").value || (mode === "dynamic" ? "switch to dynamic" : "manual update")
       };
       if (mode === "dynamic") {
+        body.qr_target_items = qrTargetItems;
         body.qr_targets = qrTargets;
-        body.target_daily_cap = targetDailyCap;
       }
       const res = await api("/admin/qr-config", "POST", body);
       if (mode === "dynamic") rememberDynamicQrTarget(group, qrValue);
       await loadQrCurrent();
+      const capsSummary = (qrTargetItems || []).map(function(it) { return it.daily_cap; }).join("/");
       resultBox.textContent = mode === "dynamic"
-        ? ("[OK] 已儲存動態二維碼連結池（" + (qrTargets ? qrTargets.length : 1) + " 條；每條每日≤" + targetDailyCap + " 次）\\n固定碼: " + (res.stable_qr_path || ("/r/" + group)))
+        ? ("[OK] 已儲存動態二維碼連結池（" + (qrTargets ? qrTargets.length : 1) + " 條；各連結當日上限 " + capsSummary + "）\\n固定碼: " + (res.stable_qr_path || ("/r/" + group)))
         : "[OK] 已儲存二維碼設定（模式: " + mode + "）";
     } catch (err) {
       const detail = err && err.message ? String(err.message) : String(err);
@@ -2692,7 +2758,7 @@ ADMIN_SCRIPTS = """
       } else if (detail === "dynamic_qr_targets_max_5") {
         resultBox.textContent = "[ERROR] 動態跳轉連結最多 5 條";
       } else if (detail === "invalid_target_daily_cap") {
-        resultBox.textContent = "[ERROR] 當日最多出現次數須為 1–200 的整數";
+        resultBox.textContent = "[ERROR] 當日出現上限須為 1–200 的整數（每條連結各自設定）";
       } else {
         resultBox.textContent = "[ERROR] 儲存二維碼失敗\\n" + detail;
       }

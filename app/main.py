@@ -514,13 +514,19 @@ class RecruitmentBatchOpenRequest(BaseModel):
     max_active_sites: int = RECRUITMENT_BATCH_MAX_ACTIVE_SITES
 
 
+class QRTargetItem(BaseModel):
+    url: str
+    daily_cap: int | None = None
+
+
 class QRUpdateRequest(BaseModel):
     group: str
     qr_mode: Literal["dynamic", "static_url", "static_image"] = "static_url"
     qr_value: str = ""
-    # 動態模式可傳 1–5 條連結；掃碼時隨機跳轉其一。未傳則退回 qr_value 單條。
+    # 兼容舊版：純 URL 列表；優先使用 qr_target_items（每條可帶獨立每日上限）
     qr_targets: list[str] | None = None
-    # 每條連結每個香港日最多出現次數；僅動態模式生效
+    qr_target_items: list[QRTargetItem] | None = None
+    # 組級預設每日上限（當某條未單獨設定時回退）；仍保留兼容
     target_daily_cap: int | None = None
     changed_by: str
     reason: str = ""
@@ -548,61 +554,6 @@ def _is_upload_or_image_path(value: str) -> bool:
     )
 
 
-def _normalize_dynamic_targets(raw_targets: list[str] | None, fallback_value: str = "") -> list[str]:
-    """整理動態跳轉池：去空白、去重（保序）、最多 DYNAMIC_QR_TARGET_MAX 條。"""
-    seen: set[str] = set()
-    out: list[str] = []
-    candidates: list[str] = []
-    if raw_targets:
-        candidates.extend(raw_targets)
-    if fallback_value:
-        candidates.append(fallback_value)
-    for item in candidates:
-        url = (item or "").strip()
-        if not url or url in seen:
-            continue
-        seen.add(url)
-        out.append(url)
-        if len(out) >= DYNAMIC_QR_TARGET_MAX:
-            break
-    return out
-
-
-def _validate_dynamic_target_url(url: str) -> None:
-    if not url:
-        raise HTTPException(status_code=400, detail="dynamic_qr_target_required")
-    if _is_upload_or_image_path(url) or not _is_http_url(url):
-        raise HTTPException(status_code=400, detail="dynamic_qr_target_must_be_url")
-
-
-def _targets_from_config(cfg: QRConfig) -> list[str]:
-    raw = getattr(cfg, "qr_targets_json", None)
-    if raw:
-        try:
-            parsed = json.loads(raw)
-            if isinstance(parsed, list):
-                targets = _normalize_dynamic_targets([str(x) for x in parsed], "")
-                if targets:
-                    return targets
-        except (TypeError, json.JSONDecodeError):
-            pass
-    value = (cfg.qr_value or "").strip()
-    return [value] if value else []
-
-
-def _daily_cap_from_config(cfg: QRConfig) -> int:
-    raw = getattr(cfg, "target_daily_cap", None)
-    try:
-        cap = int(raw) if raw is not None else DYNAMIC_QR_TARGET_DAILY_MAX_DEFAULT
-    except (TypeError, ValueError):
-        cap = DYNAMIC_QR_TARGET_DAILY_MAX_DEFAULT
-    if cap < 1:
-        return 1
-    if cap > DYNAMIC_QR_TARGET_DAILY_MAX_LIMIT:
-        return DYNAMIC_QR_TARGET_DAILY_MAX_LIMIT
-    return cap
-
-
 def _normalize_target_daily_cap(value: int | None, *, required: bool = False) -> int | None:
     if value is None:
         if required:
@@ -615,6 +566,107 @@ def _normalize_target_daily_cap(value: int | None, *, required: bool = False) ->
     if cap < 1 or cap > DYNAMIC_QR_TARGET_DAILY_MAX_LIMIT:
         raise HTTPException(status_code=400, detail="invalid_target_daily_cap")
     return cap
+
+
+def _daily_cap_from_config(cfg: QRConfig) -> int:
+    """組級預設每日上限（單條未指定時回退）。"""
+    raw = getattr(cfg, "target_daily_cap", None)
+    try:
+        cap = int(raw) if raw is not None else DYNAMIC_QR_TARGET_DAILY_MAX_DEFAULT
+    except (TypeError, ValueError):
+        cap = DYNAMIC_QR_TARGET_DAILY_MAX_DEFAULT
+    if cap < 1:
+        return 1
+    if cap > DYNAMIC_QR_TARGET_DAILY_MAX_LIMIT:
+        return DYNAMIC_QR_TARGET_DAILY_MAX_LIMIT
+    return cap
+
+
+def _parse_target_entry(item: object, default_cap: int) -> dict[str, object] | None:
+    if isinstance(item, str):
+        url = item.strip()
+        if not url:
+            return None
+        return {"url": url, "daily_cap": default_cap}
+    if isinstance(item, dict):
+        url = str(item.get("url") or "").strip()
+        if not url:
+            return None
+        cap_raw = item.get("daily_cap", default_cap)
+        try:
+            cap = int(cap_raw) if cap_raw is not None else default_cap
+        except (TypeError, ValueError):
+            cap = default_cap
+        if cap < 1:
+            cap = 1
+        if cap > DYNAMIC_QR_TARGET_DAILY_MAX_LIMIT:
+            cap = DYNAMIC_QR_TARGET_DAILY_MAX_LIMIT
+        return {"url": url, "daily_cap": cap}
+    return None
+
+
+def _normalize_dynamic_target_entries(
+    raw_items: list[object] | None,
+    fallback_value: str = "",
+    default_cap: int = DYNAMIC_QR_TARGET_DAILY_MAX_DEFAULT,
+) -> list[dict[str, object]]:
+    """整理動態跳轉池條目：{url, daily_cap}，去重保序，最多 DYNAMIC_QR_TARGET_MAX。"""
+    seen: set[str] = set()
+    out: list[dict[str, object]] = []
+    candidates: list[object] = []
+    if raw_items:
+        candidates.extend(raw_items)
+    if fallback_value:
+        candidates.append(fallback_value)
+    for item in candidates:
+        entry = _parse_target_entry(item, default_cap)
+        if entry is None:
+            continue
+        url = str(entry["url"])
+        if url in seen:
+            continue
+        seen.add(url)
+        out.append(entry)
+        if len(out) >= DYNAMIC_QR_TARGET_MAX:
+            break
+    return out
+
+
+def _normalize_dynamic_targets(raw_targets: list[str] | None, fallback_value: str = "") -> list[str]:
+    """兼容舊呼叫：僅回傳 URL 列表。"""
+    return [
+        str(e["url"])
+        for e in _normalize_dynamic_target_entries(raw_targets, fallback_value)
+    ]
+
+
+def _validate_dynamic_target_url(url: str) -> None:
+    if not url:
+        raise HTTPException(status_code=400, detail="dynamic_qr_target_required")
+    if _is_upload_or_image_path(url) or not _is_http_url(url):
+        raise HTTPException(status_code=400, detail="dynamic_qr_target_must_be_url")
+
+
+def _target_entries_from_config(cfg: QRConfig) -> list[dict[str, object]]:
+    default_cap = _daily_cap_from_config(cfg)
+    raw = getattr(cfg, "qr_targets_json", None)
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                entries = _normalize_dynamic_target_entries(parsed, "", default_cap)
+                if entries:
+                    return entries
+        except (TypeError, json.JSONDecodeError):
+            pass
+    value = (cfg.qr_value or "").strip()
+    if value:
+        return [{"url": value, "daily_cap": default_cap}]
+    return []
+
+
+def _targets_from_config(cfg: QRConfig) -> list[str]:
+    return [str(e["url"]) for e in _target_entries_from_config(cfg)]
 
 
 def _daily_hit_counts(db: Session, group: str, day_key: str, targets: list[str]) -> dict[str, int]:
@@ -679,13 +731,17 @@ def _update_streak_state(db: Session, group: str, chosen: str) -> int:
 
 def _pick_dynamic_target(cfg: QRConfig, db: Session, day_key: str | None = None) -> str:
     """從連結池挑選目標：避開當日已滿額，且同一連結不可連續達上限後仍再出。"""
-    targets = _targets_from_config(cfg)
-    if not targets:
+    entries = _target_entries_from_config(cfg)
+    if not entries:
         raise HTTPException(status_code=404, detail="target_not_configured")
     day = day_key or hk_date_stamp()
-    daily_cap = _daily_cap_from_config(cfg)
+    targets = [str(e["url"]) for e in entries]
     counts = _daily_hit_counts(db, cfg.group_type, day, targets)
-    available = [u for u in targets if counts.get(u, 0) < daily_cap]
+    available = [
+        str(e["url"])
+        for e in entries
+        if counts.get(str(e["url"]), 0) < int(e["daily_cap"])
+    ]
     if not available:
         raise HTTPException(status_code=429, detail="dynamic_qr_daily_cap_reached")
 
@@ -738,12 +794,15 @@ def _serialize_qr_config(
     db: Session | None = None,
 ) -> dict:
     mode = _infer_qr_mode(cfg.qr_value, cfg.qr_mode)
-    targets = _targets_from_config(cfg) if mode == "dynamic" else []
+    entries = _target_entries_from_config(cfg) if mode == "dynamic" else []
+    targets = [str(e["url"]) for e in entries]
+    default_cap = _daily_cap_from_config(cfg)
     item = {
         "group_type": cfg.group_type,
         "qr_mode": mode,
         "qr_value": cfg.qr_value,
         "qr_targets": targets,
+        "qr_target_items": entries,
         "qr_logo_path": cfg.qr_logo_path,
         "wechat_qr_path": getattr(cfg, "wechat_qr_path", None),
         "version": cfg.version,
@@ -752,22 +811,22 @@ def _serialize_qr_config(
         "changed_at": utc_iso(cfg.changed_at),
     }
     if mode == "dynamic":
-        daily_cap = _daily_cap_from_config(cfg)
         item["stable_qr_url"] = _stable_qr_url(cfg.group_type, request)
         item["stable_qr_path"] = _stable_qr_path(cfg.group_type)
         item["qr_targets_count"] = len(targets)
-        item["qr_target_daily_cap"] = daily_cap
-        item["target_daily_cap"] = daily_cap
+        item["qr_target_daily_cap"] = default_cap
+        item["target_daily_cap"] = default_cap
         item["qr_target_max_consecutive"] = DYNAMIC_QR_TARGET_MAX_CONSECUTIVE
         day = hk_date_stamp()
         counts = _daily_hit_counts(db, cfg.group_type, day, targets) if db is not None else {}
         item["qr_targets_daily"] = [
             {
-                "url": u,
-                "hits_today": int(counts.get(u, 0)),
-                "remaining_today": max(0, daily_cap - int(counts.get(u, 0))),
+                "url": str(e["url"]),
+                "daily_cap": int(e["daily_cap"]),
+                "hits_today": int(counts.get(str(e["url"]), 0)),
+                "remaining_today": max(0, int(e["daily_cap"]) - int(counts.get(str(e["url"]), 0))),
             }
-            for u in targets
+            for e in entries
         ]
         item["qr_targets_daily_day"] = day
         if db is not None:
@@ -2414,18 +2473,34 @@ def update_qr_config(payload: QRUpdateRequest, db: Session = Depends(get_db)):
     targets_json: str | None = None
     daily_cap_to_set: int | None = None
     if payload.qr_mode == "dynamic":
-        if payload.qr_targets is not None and len(payload.qr_targets) > DYNAMIC_QR_TARGET_MAX:
-            raise HTTPException(status_code=400, detail="dynamic_qr_targets_max_5")
-        targets = _normalize_dynamic_targets(payload.qr_targets, qr_value)
-        if not targets:
-            raise HTTPException(status_code=400, detail="dynamic_qr_target_required")
-        for url in targets:
-            _validate_dynamic_target_url(url)
-        qr_value = targets[0]
-        targets_json = json.dumps(targets, ensure_ascii=False)
-        # 動態模式：未傳則保留原值 / 新建用預設
+        daily_cap_to_set = None
         if payload.target_daily_cap is not None:
             daily_cap_to_set = _normalize_target_daily_cap(payload.target_daily_cap, required=True)
+        # 單條未帶 daily_cap 時的回退：組級傳入值 → 預設 10
+        default_cap = (
+            int(daily_cap_to_set)
+            if daily_cap_to_set is not None
+            else DYNAMIC_QR_TARGET_DAILY_MAX_DEFAULT
+        )
+        raw_items: list[object] = []
+        if payload.qr_target_items:
+            if len(payload.qr_target_items) > DYNAMIC_QR_TARGET_MAX:
+                raise HTTPException(status_code=400, detail="dynamic_qr_targets_max_5")
+            for it in payload.qr_target_items:
+                if it.daily_cap is not None:
+                    _normalize_target_daily_cap(it.daily_cap, required=True)
+                raw_items.append({"url": it.url, "daily_cap": it.daily_cap})
+        elif payload.qr_targets is not None:
+            if len(payload.qr_targets) > DYNAMIC_QR_TARGET_MAX:
+                raise HTTPException(status_code=400, detail="dynamic_qr_targets_max_5")
+            raw_items.extend(payload.qr_targets)
+        entries = _normalize_dynamic_target_entries(raw_items, qr_value, int(default_cap))
+        if not entries:
+            raise HTTPException(status_code=400, detail="dynamic_qr_target_required")
+        for entry in entries:
+            _validate_dynamic_target_url(str(entry["url"]))
+        qr_value = str(entries[0]["url"])
+        targets_json = json.dumps(entries, ensure_ascii=False)
     if payload.qr_mode == "static_url" and not qr_value:
         raise HTTPException(status_code=400, detail="static_url_required")
     if payload.qr_mode == "static_image" and not qr_value:
@@ -2472,8 +2547,10 @@ def update_qr_config(payload: QRUpdateRequest, db: Session = Depends(get_db)):
     )
     result = {"ok": True, "group": payload.group, "version": cfg.version, "qr_mode": cfg.qr_mode}
     if payload.qr_mode == "dynamic":
+        entries = _target_entries_from_config(cfg)
         result["stable_qr_path"] = _stable_qr_path(payload.group)
-        result["qr_targets"] = _targets_from_config(cfg)
+        result["qr_targets"] = [str(e["url"]) for e in entries]
+        result["qr_target_items"] = entries
         result["target_daily_cap"] = _daily_cap_from_config(cfg)
         result["qr_target_daily_cap"] = result["target_daily_cap"]
     return result
