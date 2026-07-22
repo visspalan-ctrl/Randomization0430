@@ -131,6 +131,8 @@ class RandomizationRecord(Base):
     assigned_recruitment_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
     account_added: Mapped[bool] = mapped_column(Boolean, default=False)
     contact_channel: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # 動態連結池渠道名（例如「渠道A」），與 QR 跳轉池 name 對應
+    channel_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     activation_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 

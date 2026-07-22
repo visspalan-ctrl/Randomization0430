@@ -680,7 +680,7 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     page = admin_get(client, "/admin/web", params={"page": "qr"})
     assert page.status_code == 200
     html = page.text
-    assert "2026-07-22-qr-channel-name-stats-v1" in html
+    assert "2026-07-22-records-channel-name-v1" in html
     assert "二維碼（WhatsApp/微信）" in html
     assert "上傳微信二維碼" in html
     assert "儲存主碼設定" in html
@@ -702,6 +702,16 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     assert "已選擇微信圖片" in html
     # 微信上傳成功後應核對主碼未變
     assert "上傳微信後主碼跳轉目標被改動了" in html
+
+    records_page = admin_get(client, "/admin/web", params={"page": "records"})
+    assert records_page.status_code == 200
+    records_html = records_page.text
+    assert "2026-07-22-records-channel-name-v1" in records_html
+    assert 'id="recordsFilterChannelName"' in records_html
+    assert 'id="recordsChannelCounts"' in records_html
+    assert "rec-channel-name-input" in records_html
+    assert "渠道名" in records_html
+    assert "/admin/randomization-records/channel-name" in records_html
 
     settings = admin_get(client, "/admin/web", params={"page": "settings"})
     assert settings.status_code == 200
@@ -986,6 +996,84 @@ def test_dynamic_qr_channel_name_and_stats():
     daily = {d["name"]: d for d in genai["qr_targets_daily"]}
     assert daily["渠道甲"]["channel"] == "渠道甲"
     assert daily["渠道乙"]["url"] == "https://wa.me/ch_b"
+
+
+def test_records_list_channel_name_edit_and_options():
+    """記錄列表可填渠道名，並返回該組動態連結池的渠道選項與數量統計。"""
+    client = TestClient(app)
+    open_batch(client, ["SITE_01"])
+    set_site_password(client, "SITE_01")
+    admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_target_items": [
+                {"url": "https://wa.me/rec_a", "name": "列表渠道A", "daily_cap": 10},
+                {"url": "https://wa.me/rec_b", "name": "列表渠道B", "daily_cap": 10},
+            ],
+            "changed_by": "admin",
+            "reason": "records channel options",
+        },
+    )
+    enrollment_no = None
+    for i in range(12):
+        r = client.post(
+            "/randomization/trigger",
+            json={
+                "phone_number": f"+85260009{i:03d}",
+                "recruiter_id": "r1",
+                "site_id": "SITE_01",
+                "recruiter_password": "123456",
+            },
+        )
+        assert r.status_code == 200, r.text
+        if r.json()["allocation_group"] == "GENAI":
+            enrollment_no = r.json()["enrollment_no"]
+            break
+    assert enrollment_no is not None
+
+    listing = admin_get(client, "/admin/randomization-records").json()
+    assert "列表渠道A" in listing["channel_options"]["GENAI"]
+    assert "列表渠道B" in listing["channel_options"]["GENAI"]
+    item = next(i for i in listing["items"] if i["enrollment_no"] == enrollment_no)
+    assert item.get("channel_name") in (None, "")
+
+    patched = admin_patch(
+        client,
+        "/admin/randomization-records/channel-name",
+        json={
+            "enrollment_no": enrollment_no,
+            "channel_name": "列表渠道A",
+            "changed_by": "admin",
+            "reason": "manual channel name",
+        },
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["channel_name"] == "列表渠道A"
+
+    listing2 = admin_get(client, "/admin/randomization-records").json()
+    item2 = next(i for i in listing2["items"] if i["enrollment_no"] == enrollment_no)
+    assert item2["channel_name"] == "列表渠道A"
+    counts = {d["name"]: d["count"] for d in listing2["channel_counts"]}
+    assert counts.get("列表渠道A", 0) >= 1
+
+    cleared = admin_patch(
+        client,
+        "/admin/randomization-records/channel-name",
+        json={
+            "enrollment_no": enrollment_no,
+            "channel_name": "  ",
+            "changed_by": "admin",
+        },
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["channel_name"] in (None, "")
+
+    exported = admin_get(client, "/admin/randomization-records.csv")
+    assert exported.status_code == 200
+    assert "channel_name" in exported.text
 
 
 def test_dynamic_qr_target_daily_cap_10():

@@ -409,6 +409,9 @@ def ensure_schema_migrations() -> None:
         rr_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_records')")).fetchall()]
         if rr_cols and "contact_channel" not in rr_cols:
             conn.execute(text("ALTER TABLE randomization_records ADD COLUMN contact_channel VARCHAR(16)"))
+        rr_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_records')")).fetchall()]
+        if rr_cols and "channel_name" not in rr_cols:
+            conn.execute(text("ALTER TABLE randomization_records ADD COLUMN channel_name VARCHAR(64)"))
         rs_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_settings')")).fetchall()]
         if rs_cols and "randomization_seed" not in rs_cols:
             conn.execute(text("ALTER TABLE randomization_settings ADD COLUMN randomization_seed INTEGER"))
@@ -1085,6 +1088,13 @@ class ContactChannelUpdateRequest(BaseModel):
     reason: str = "participant contact channel"
 
 
+class ChannelNameUpdateRequest(BaseModel):
+    enrollment_no: str
+    channel_name: str = ""
+    changed_by: str
+    reason: str = "manual channel name (list)"
+
+
 class RecordAssignedWeekRequest(BaseModel):
     enrollment_no: str
     assigned_recruitment_week: int | None = None
@@ -1166,6 +1176,7 @@ def _record_audit_snapshot(record: RandomizationRecord) -> dict[str, object]:
         "assigned_recruitment_week": getattr(record, "assigned_recruitment_week", None),
         "account_added": bool(getattr(record, "account_added", False)),
         "contact_channel": getattr(record, "contact_channel", None),
+        "channel_name": getattr(record, "channel_name", None),
     }
 
 
@@ -2961,8 +2972,28 @@ def get_randomization_records(db: Session = Depends(get_db)):
     }
     start_date = _recruitment_start_date(setting)
     overview = _recruitment_overview(setting, db)
+    channel_options: dict[str, list[str]] = {"GENAI": [], "HUMAN": []}
+    for cfg in db.scalars(select(QRConfig)).all():
+        mode = _infer_qr_mode(cfg.qr_value, cfg.qr_mode)
+        if mode != "dynamic":
+            continue
+        names = [str(e.get("name") or "").strip() for e in _target_entries_from_config(cfg)]
+        channel_options[cfg.group_type] = [n for n in names if n]
+    channel_counts: dict[str, int] = {}
+    for r in records:
+        if str(r.activation_status or "") == "voided":
+            continue
+        name = str(getattr(r, "channel_name", None) or "").strip()
+        if not name:
+            continue
+        channel_counts[name] = int(channel_counts.get(name, 0)) + 1
     return {
         "overview": overview,
+        "channel_options": channel_options,
+        "channel_counts": [
+            {"name": name, "count": count}
+            for name, count in sorted(channel_counts.items(), key=lambda x: (-x[1], x[0]))
+        ],
         "items": [
             {
                 "enrollment_no": r.enrollment_no,
@@ -2982,6 +3013,7 @@ def get_randomization_records(db: Session = Depends(get_db)):
                 "effective_recruitment_week": _record_effective_recruitment_week(r, start_date, site_week_map),
                 "account_added": bool(getattr(r, "account_added", False)),
                 "contact_channel": getattr(r, "contact_channel", None),
+                "channel_name": getattr(r, "channel_name", None),
             }
             for r in records
         ],
@@ -3011,6 +3043,7 @@ def export_randomization_records_csv(db: Session = Depends(get_db)):
             "effective_recruitment_week",
             "account_added",
             "contact_channel",
+            "channel_name",
         ]
     )
     setting = db.get(RandomizationSetting, 1)
@@ -3038,6 +3071,7 @@ def export_randomization_records_csv(db: Session = Depends(get_db)):
                 _record_effective_recruitment_week(r, start_date, site_week_map) or "",
                 "yes" if bool(getattr(r, "account_added", False)) else "no",
                 getattr(r, "contact_channel", None) or "",
+                getattr(r, "channel_name", None) or "",
             ]
         )
     csv_text = buf.getvalue()
@@ -3354,6 +3388,31 @@ def admin_update_contact_channel(payload: ContactChannelUpdateRequest, db: Sessi
         },
     )
     return {"ok": True, "enrollment_no": record.enrollment_no, "contact_channel": record.contact_channel}
+
+
+@app.patch("/admin/randomization-records/channel-name")
+def admin_update_channel_name(payload: ChannelNameUpdateRequest, db: Session = Depends(get_db)):
+    record = db.scalar(select(RandomizationRecord).where(RandomizationRecord.enrollment_no == payload.enrollment_no))
+    if record is None:
+        raise HTTPException(status_code=404, detail="record_not_found")
+    new_name = _normalize_channel_name(payload.channel_name) or None
+    snapshot = _record_audit_snapshot(record)
+    old_name = getattr(record, "channel_name", None)
+    record.channel_name = new_name
+    db.commit()
+    add_audit(
+        db,
+        "admin_channel_name_updated",
+        {
+            **snapshot,
+            "old_channel_name": old_name,
+            "new_channel_name": new_name,
+            "channel_name": new_name,
+            "changed_by": payload.changed_by,
+            "reason": payload.reason,
+        },
+    )
+    return {"ok": True, "enrollment_no": record.enrollment_no, "channel_name": record.channel_name}
 
 
 @app.patch("/admin/randomization-records/assigned-week")

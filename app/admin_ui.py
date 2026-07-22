@@ -11,7 +11,7 @@ from app.models import (
 
 PageId = Literal["settings", "sites", "qr", "records"]
 
-ADMIN_UI_BUILD_ID = "2026-07-22-qr-channel-name-stats-v1"
+ADMIN_UI_BUILD_ID = "2026-07-22-records-channel-name-v1"
 QR_TARGET_POOL_MAX = 30
 
 ADMIN_CSS = """
@@ -1192,7 +1192,7 @@ def panel_records() -> str:
           <button type="button" class="secondary" onclick="exportRecordsCsv()">匯出 CSV</button>
         </div>
       </div>
-      <p class="muted" style="margin:8px 0 0;font-size:12px;">多人可同時打開本頁改不同行；保存互不鎖定整表。重新整理前請先保存自己的修改（有未保存草稿時會提示）。「歸屬周」：若站點已設歸屬周，入組時會自動寫入並在此顯示；可改寫覆蓋。「參加者姓名」在手機號右側；「WhatsApp 號」默認與手機號相同，可單獨修改。「已添加帳號」為手動核對（對方已添加或我方已添加對方），勾選後立即保存。Non-trial 記錄的「分組」可改 GENAI/HUMAN，Trial 記錄分組只讀。其餘修改後點該行「保存修改」或上方「全部保存」。</p>
+      <p class="muted" style="margin:8px 0 0;font-size:12px;">多人可同時打開本頁改不同行；保存互不鎖定整表。重新整理前請先保存自己的修改（有未保存草稿時會提示）。「渠道名」對應二維碼連結池中的渠道命名（如「渠道A」），可從下拉選擇或手填。「歸屬周」：若站點已設歸屬周，入組時會自動寫入並在此顯示；可改寫覆蓋。「參加者姓名」在手機號右側；「WhatsApp 號」默認與手機號相同，可單獨修改。「已添加帳號」為手動核對（對方已添加或我方已添加對方），勾選後立即保存。Non-trial 記錄的「分組」可改 GENAI/HUMAN，Trial 記錄分組只讀。其餘修改後點該行「保存修改」或上方「全部保存」。</p>
       <div class="row" style="margin-top:10px;max-width:none;flex-wrap:wrap;">
         <div style="flex:1 1 0;min-width:0;">
           <label>站點</label>
@@ -1244,10 +1244,18 @@ def panel_records() -> str:
             <option value="unset">未選擇</option>
           </select>
         </div>
+        <div style="flex:1 1 0;min-width:0;">
+          <label>渠道名</label>
+          <select id="recordsFilterChannelName">
+            <option value="">全部</option>
+            <option value="unset">未填</option>
+          </select>
+        </div>
       </div>
+      <div id="recordsChannelCounts" class="muted" style="margin-top:10px;font-size:12px;color:#0c4a6e;"></div>
       <div class="table-wrap" style="margin-top:12px;">
         <table class="data" id="recordsTable">
-          <thead><tr><th>頁內序號</th><th class="sortable-th" id="recordsSortEnrollmentNo" title="點擊按入組編號排序">入組編號<span id="recordsSortEnrollmentNoIcon" class="sort-indicator"></span></th><th title="手動核對：對方已添加或我方已添加對方">已添加帳號</th><th title="參加者實際添加的渠道">添加渠道</th><th>歸屬周</th><th class="sortable-th" id="recordsSortSubjectCode" title="點擊按受試者編碼排序">受試者編碼<span id="recordsSortSubjectCodeIcon" class="sort-indicator"></span></th><th>手機號</th><th>WhatsApp 號</th><th>參加者姓名</th><th>站點</th><th>招募員姓名</th><th>分組</th><th>狀態</th><th>時間（香港時間）</th><th>操作</th></tr></thead>
+          <thead><tr><th>頁內序號</th><th class="sortable-th" id="recordsSortEnrollmentNo" title="點擊按入組編號排序">入組編號<span id="recordsSortEnrollmentNoIcon" class="sort-indicator"></span></th><th title="手動核對：對方已添加或我方已添加對方">已添加帳號</th><th title="參加者實際添加的渠道">添加渠道</th><th title="對應二維碼連結池渠道名稱">渠道名</th><th>歸屬周</th><th class="sortable-th" id="recordsSortSubjectCode" title="點擊按受試者編碼排序">受試者編碼<span id="recordsSortSubjectCodeIcon" class="sort-indicator"></span></th><th>手機號</th><th>WhatsApp 號</th><th>參加者姓名</th><th>站點</th><th>招募員姓名</th><th>分組</th><th>狀態</th><th>時間（香港時間）</th><th>操作</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -3599,6 +3607,35 @@ ADMIN_SCRIPTS = """
     return v === "wechat" || v === "whatsapp" ? v : "";
   }
 
+  function recordChannelNameOptions(row) {
+    const opts = window.__recordsChannelOptions || {};
+    const group = String((row && row.allocation_group) || "").toUpperCase();
+    const list = opts[group] || [];
+    return Array.isArray(list) ? list.filter(Boolean) : [];
+  }
+
+  function recordChannelNameForFilter(row) {
+    const en = row.enrollment_no;
+    const draft = (window.__recordsDrafts || {})[en];
+    if (draft && draft.channel_name !== undefined) return String(draft.channel_name || "").trim();
+    return String(row.channel_name || "").trim();
+  }
+
+  function renderRecordsChannelCounts(counts) {
+    const el = document.getElementById("recordsChannelCounts");
+    if (!el) return;
+    const list = Array.isArray(counts) ? counts : [];
+    if (!list.length) {
+      el.textContent = "渠道名統計：尚無已填渠道名的入組記錄";
+      return;
+    }
+    const total = list.reduce(function(s, d) { return s + (Number(d.count) || 0); }, 0);
+    el.innerHTML = "<strong>入組記錄·渠道名數量</strong>（有效記錄，合計 " + total + "）<br>"
+      + list.map(function(d, i) {
+        return (i + 1) + ". <strong>" + escapeHtml(d.name || "") + "</strong>：" + (d.count || 0);
+      }).join("　");
+  }
+
   async function saveRecordContactChannel(enrollmentNo, selectEl) {
     const row = recordsFindItem(enrollmentNo);
     if (!row || !selectEl) return;
@@ -3677,6 +3714,7 @@ ADMIN_SCRIPTS = """
       const waInp = tr.querySelector("input.rec-whatsapp-input");
       const pnameInp = tr.querySelector("input.rec-participant-name-input");
       const weekInp = tr.querySelector("input.rec-week-input");
+      const channelNameInp = tr.querySelector("input.rec-channel-name-input");
       const draft = window.__recordsDrafts[enrollmentNo] || {};
       if (sel) draft.status = sel.value;
       if (codeInp) draft.subject_code = codeInp.value;
@@ -3686,6 +3724,7 @@ ADMIN_SCRIPTS = """
       const groupSel = tr.querySelector("select.rec-group-select");
       if (groupSel) draft.allocation_group = groupSel.value;
       if (weekInp) draft.assigned_recruitment_week = weekInp.value;
+      if (channelNameInp) draft.channel_name = channelNameInp.value;
       window.__recordsDrafts[enrollmentNo] = draft;
     });
   }
@@ -3713,6 +3752,7 @@ ADMIN_SCRIPTS = """
       const origPname = String(row.participant_name || "");
       const origGroup = String(row.allocation_group || "").toUpperCase();
       const origWeek = recordAssignedWeekDisplay(row);
+      const origChannelName = String(row.channel_name || "");
       const change = { enrollment_no: en, row: row };
       let has = false;
       if (draft.status !== undefined && draft.status !== origStatus) {
@@ -3744,6 +3784,10 @@ ADMIN_SCRIPTS = """
       }
       if (draft.assigned_recruitment_week !== undefined && String(draft.assigned_recruitment_week || "").trim() !== origWeek) {
         change.assigned_recruitment_week = draft.assigned_recruitment_week;
+        has = true;
+      }
+      if (draft.channel_name !== undefined && String(draft.channel_name || "").trim() !== origChannelName) {
+        change.channel_name = draft.channel_name;
         has = true;
       }
       if (has) changes.push(change);
@@ -3801,7 +3845,9 @@ ADMIN_SCRIPTS = """
     const data = await api("/admin/randomization-records", "GET");
     if (!data || !data.overview) throw new Error("invalid_records_response");
     renderRecordsOverview(data.overview);
+    window.__recordsChannelOptions = data.channel_options || {};
     window.__recordsItems = data.items || [];
+    renderRecordsChannelCounts(data.channel_counts || []);
     refillRecordsFilterOptions(window.__recordsItems);
     applyRecordsFilter();
   }
@@ -3834,6 +3880,8 @@ ADMIN_SCRIPTS = """
       const trialStatus = String(row.trial_status || "trial");
       const accountAdded = !!row.account_added;
       const channelVal = recordContactChannelValue(row);
+      const channelNameVal = escapeHtml(draft.channel_name !== undefined ? draft.channel_name : (row.channel_name || ""));
+      const channelNameOpts = recordChannelNameOptions(row);
       tr.dataset.enrollmentNo = row.enrollment_no;
       tr.dataset.voided = isVoided ? "1" : "0";
       tr.dataset.trialStatus = trialStatus;
@@ -3847,6 +3895,8 @@ ADMIN_SCRIPTS = """
         + "<option value='whatsapp'" + (channelVal === "whatsapp" ? " selected" : "") + ">WhatsApp</option>"
         + "<option value='wechat'" + (channelVal === "wechat" ? " selected" : "") + ">微信</option>"
         + "</select></td>"
+        + "<td><input type='text' class='rec-channel-name-input' list='recChannelNameList-" + escapeHtml(String(row.allocation_group || "")) + "' style='min-width:7rem;padding:6px 8px;' value='"
+        + channelNameVal + "' placeholder='選或填渠道名' title='對應二維碼連結池渠道名稱' /></td>"
         + "<td><input type='number' min='1' class='rec-week-input' style='width:56px;padding:6px 8px;' value='"
         + weekVal + "' placeholder='" + escapeHtml(weekHint) + "' title='" + escapeHtml(weekTitle) + "' /></td>"
         + "<td><input type='text' class='rec-subject-code-input' value='" + codeVal + "' placeholder='可選' /></td>"
@@ -3867,7 +3917,20 @@ ADMIN_SCRIPTS = """
       const weekInp = tr.querySelector("input.rec-week-input");
       const accountInp = tr.querySelector("input.rec-account-added-input");
       const channelSel = tr.querySelector("select.rec-contact-channel-select");
+      const channelNameInp = tr.querySelector("input.rec-channel-name-input");
       const en = row.enrollment_no;
+      // datalist 供渠道名下拉建議
+      if (channelNameOpts.length) {
+        let dl = document.getElementById("recChannelNameList-" + String(row.allocation_group || ""));
+        if (!dl) {
+          dl = document.createElement("datalist");
+          dl.id = "recChannelNameList-" + String(row.allocation_group || "");
+          document.body.appendChild(dl);
+        }
+        dl.innerHTML = channelNameOpts.map(function(n) {
+          return "<option value='" + escapeHtml(n) + "'></option>";
+        }).join("");
+      }
       function bindGroupSelect(groupSel) {
         if (!groupSel) return;
         applyGroupSelectStyle(groupSel);
@@ -3927,6 +3990,12 @@ ADMIN_SCRIPTS = """
       if (channelSel) channelSel.addEventListener("change", function() {
         saveRecordContactChannel(en, channelSel);
       });
+      if (channelNameInp) channelNameInp.addEventListener("input", function() {
+        window.__recordsDrafts = window.__recordsDrafts || {};
+        const d = window.__recordsDrafts[en] || {};
+        d.channel_name = channelNameInp.value;
+        window.__recordsDrafts[en] = d;
+      });
       tbody.appendChild(tr);
     });
   }
@@ -3944,9 +4013,11 @@ ADMIN_SCRIPTS = """
   function refillRecordsFilterOptions(items) {
     const siteSel = document.getElementById("recordsFilterSite");
     const groupSel = document.getElementById("recordsFilterGroup");
+    const channelNameSel = document.getElementById("recordsFilterChannelName");
     if (!siteSel || !groupSel) return;
     const prevSite = siteSel.value;
     const prevGroup = groupSel.value;
+    const prevChannelName = channelNameSel ? channelNameSel.value : "";
     const sites = [...new Set((items || []).map(x => String(x.site_id || "")).filter(Boolean))].sort();
     const groups = [...new Set((items || []).map(x => String(x.allocation_group || "")).filter(Boolean))].sort();
     siteSel.innerHTML = '<option value="">全部站點</option>';
@@ -3963,6 +4034,27 @@ ADMIN_SCRIPTS = """
       opt.textContent = v;
       groupSel.appendChild(opt);
     });
+    if (channelNameSel) {
+      const fromRecords = [...new Set((items || []).map(x => String(x.channel_name || "").trim()).filter(Boolean))];
+      const fromOpts = window.__recordsChannelOptions || {};
+      const pooled = []
+        .concat(fromOpts.GENAI || [])
+        .concat(fromOpts.HUMAN || [])
+        .concat(fromRecords);
+      const names = [...new Set(pooled.filter(Boolean))].sort(function(a, b) {
+        return String(a).localeCompare(String(b), "zh-Hant");
+      });
+      channelNameSel.innerHTML = '<option value="">全部</option><option value="unset">未填</option>';
+      names.forEach(function(v) {
+        const opt = document.createElement("option");
+        opt.value = v;
+        opt.textContent = v;
+        channelNameSel.appendChild(opt);
+      });
+      if (prevChannelName && [...channelNameSel.options].some(o => o.value === prevChannelName)) {
+        channelNameSel.value = prevChannelName;
+      }
+    }
     if (prevSite && [...siteSel.options].some(o => o.value === prevSite)) siteSel.value = prevSite;
     if (prevGroup && [...groupSel.options].some(o => o.value === prevGroup)) groupSel.value = prevGroup;
   }
@@ -4052,6 +4144,7 @@ ADMIN_SCRIPTS = """
     const phoneQ = (document.getElementById("recordsFilterPhone")?.value || "").trim().replace(/\s+/g, "").toLowerCase();
     const accountAdded = (document.getElementById("recordsFilterAccountAdded")?.value || "").trim();
     const contactChannel = (document.getElementById("recordsFilterContactChannel")?.value || "").trim();
+    const channelNameFilter = (document.getElementById("recordsFilterChannelName")?.value || "").trim();
     const filtered = all.filter(row => {
       if (site && String(row.site_id || "") !== site) return false;
       if (group && String(row.allocation_group || "") !== group) return false;
@@ -4061,6 +4154,9 @@ ADMIN_SCRIPTS = """
       if (contactChannel === "unset" && recordContactChannelValue(row)) return false;
       if ((contactChannel === "whatsapp" || contactChannel === "wechat")
           && recordContactChannelValue(row) !== contactChannel) return false;
+      if (channelNameFilter === "unset" && recordChannelNameForFilter(row)) return false;
+      if (channelNameFilter && channelNameFilter !== "unset"
+          && recordChannelNameForFilter(row) !== channelNameFilter) return false;
       if (codeQ) {
         const code = recordSubjectCodeForFilter(row).toLowerCase();
         if (!code.includes(codeQ)) return false;
@@ -4095,7 +4191,7 @@ ADMIN_SCRIPTS = """
   }
 
   function resetRecordsFilter() {
-    const ids = ["recordsFilterSite", "recordsFilterDate", "recordsFilterGroup", "recordsFilterStatus", "recordsFilterSubjectCode", "recordsFilterPhone", "recordsFilterAccountAdded", "recordsFilterContactChannel"];
+    const ids = ["recordsFilterSite", "recordsFilterDate", "recordsFilterGroup", "recordsFilterStatus", "recordsFilterSubjectCode", "recordsFilterPhone", "recordsFilterAccountAdded", "recordsFilterContactChannel", "recordsFilterChannelName"];
     ids.forEach(id => {
       const el = document.getElementById(id);
       if (!el) return;
@@ -4120,7 +4216,9 @@ ADMIN_SCRIPTS = """
       const data = await api("/admin/randomization-records", "GET");
       if (!data || !data.overview) throw new Error("invalid_records_response");
       renderRecordsOverview(data.overview);
+      window.__recordsChannelOptions = data.channel_options || {};
       window.__recordsItems = data.items || [];
+      renderRecordsChannelCounts(data.channel_counts || []);
       refillRecordsFilterOptions(window.__recordsItems);
       applyRecordsFilter();
     } catch (err) {
@@ -4142,6 +4240,7 @@ ADMIN_SCRIPTS = """
     const waInp = tr.querySelector("input.rec-whatsapp-input");
     const pnameInp = tr.querySelector("input.rec-participant-name-input");
     const weekInp = tr.querySelector("input.rec-week-input");
+    const channelNameInp = tr.querySelector("input.rec-channel-name-input");
     const groupSel = tr.querySelector("select.rec-group-select");
     const statusSel = tr.querySelector("select.rec-status-select");
     const origStatus = recordEffectiveStatus(row);
@@ -4151,6 +4250,7 @@ ADMIN_SCRIPTS = """
     const origPname = String(row.participant_name || "");
     const origGroup = String(row.allocation_group || "").toUpperCase();
     const origWeek = recordAssignedWeekDisplay(row);
+    const origChannelName = String(row.channel_name || "");
     const change = { enrollment_no: enrollmentNo, row: row };
     let has = false;
     if (statusSel && statusSel.value !== origStatus) {
@@ -4179,6 +4279,10 @@ ADMIN_SCRIPTS = """
     }
     if (weekInp && String(weekInp.value || "").trim() !== origWeek) {
       change.assigned_recruitment_week = weekInp.value;
+      has = true;
+    }
+    if (channelNameInp && channelNameInp.value.trim() !== origChannelName) {
+      change.channel_name = channelNameInp.value;
       has = true;
     }
     return has ? change : null;
@@ -4248,6 +4352,15 @@ ADMIN_SCRIPTS = """
         reason: "manual row save (list)"
       });
     }
+    if (change.channel_name !== undefined) {
+      const res = await api("/admin/randomization-records/channel-name", "PATCH", {
+        enrollment_no: en,
+        channel_name: String(change.channel_name || "").trim(),
+        changed_by: by,
+        reason: "manual row save (list)"
+      });
+      row.channel_name = res.channel_name || "";
+    }
   }
 
   function recordChangeSummaryParts(change) {
@@ -4262,6 +4375,7 @@ ADMIN_SCRIPTS = """
     if (change.participant_name !== undefined) parts.push("參加者姓名");
     if (change.allocation_group !== undefined) parts.push("分組");
     if (change.assigned_recruitment_week !== undefined) parts.push("歸屬周");
+    if (change.channel_name !== undefined) parts.push("渠道名");
     return parts;
   }
 
@@ -4286,7 +4400,7 @@ ADMIN_SCRIPTS = """
     try {
       rememberRecordsOperator();
       await persistRecordChange(change);
-      clearRecordDraft(enrollmentNo, ["status", "subject_code", "phone", "whatsapp", "participant_name", "allocation_group", "assigned_recruitment_week"]);
+      clearRecordDraft(enrollmentNo, ["status", "subject_code", "phone", "whatsapp", "participant_name", "allocation_group", "assigned_recruitment_week", "channel_name"]);
       await refreshRecordsDataPreserveDrafts();
       resultBox.textContent = "[OK] 已保存 " + enrollmentNo + "（" + parts.join("、") + "；操作人：" + recordsOperatorName() + "）";
     } catch (err) {
@@ -4309,6 +4423,7 @@ ADMIN_SCRIPTS = """
     const pnameN = pending.filter(function(c) { return c.participant_name !== undefined; }).length;
     const groupN = pending.filter(function(c) { return c.allocation_group !== undefined; }).length;
     const weekN = pending.filter(function(c) { return c.assigned_recruitment_week !== undefined; }).length;
+    const channelNameN = pending.filter(function(c) { return c.channel_name !== undefined; }).length;
     let summary = "確認保存當前篩選結果中的 " + pending.length + " 條變更？（操作人：" + recordsOperatorName() + "）";
     const parts = [];
     if (statusN) parts.push("狀態 " + statusN + " 條");
@@ -4318,6 +4433,7 @@ ADMIN_SCRIPTS = """
     if (pnameN) parts.push("參加者姓名 " + pnameN + " 條");
     if (groupN) parts.push("分組 " + groupN + " 條");
     if (weekN) parts.push("歸屬周 " + weekN + " 條");
+    if (channelNameN) parts.push("渠道名 " + channelNameN + " 條");
     if (parts.length) summary += "（" + parts.join("、") + "）";
     if (!confirm(summary)) return;
     rememberRecordsOperator();
@@ -4329,7 +4445,7 @@ ADMIN_SCRIPTS = """
       if (resultBox) resultBox.textContent = "[...] 正在保存 " + (i + 1) + "/" + pending.length;
       try {
         await persistRecordChange(change);
-        clearRecordDraft(en, ["status", "subject_code", "phone", "whatsapp", "participant_name", "allocation_group", "assigned_recruitment_week"]);
+        clearRecordDraft(en, ["status", "subject_code", "phone", "whatsapp", "participant_name", "allocation_group", "assigned_recruitment_week", "channel_name"]);
         saved += 1;
       } catch (err) {
         const msg = err && err.message ? String(err.message) : String(err);
@@ -4450,6 +4566,7 @@ ADMIN_SCRIPTS = """
     const phoneInp = document.getElementById("recordsFilterPhone");
     const accountAddedSel = document.getElementById("recordsFilterAccountAdded");
     const contactChannelSel = document.getElementById("recordsFilterContactChannel");
+    const channelNameSel = document.getElementById("recordsFilterChannelName");
     const sortSubjectTh = document.getElementById("recordsSortSubjectCode");
     const sortEnrollmentTh = document.getElementById("recordsSortEnrollmentNo");
     const pageSizeSel = document.getElementById("recordsPageSize");
@@ -4460,7 +4577,7 @@ ADMIN_SCRIPTS = """
     window.__recordsSubjectCodeSort = "none";
     window.__recordsEnrollmentNoSort = "none";
     updateRecordsSortHeaders();
-    [siteSel, dateInp, groupSel, statusSel, accountAddedSel, contactChannelSel].forEach(el => {
+    [siteSel, dateInp, groupSel, statusSel, accountAddedSel, contactChannelSel, channelNameSel].forEach(el => {
       if (!el) return;
       el.addEventListener("change", function() {
         window.__recordsCurrentPage = 1;
