@@ -680,7 +680,7 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     page = admin_get(client, "/admin/web", params={"page": "qr"})
     assert page.status_code == 200
     html = page.text
-    assert "2026-07-22-records-channel-name-v1" in html
+    assert "2026-07-22-records-channel-auto-v1" in html
     assert "二維碼（WhatsApp/微信）" in html
     assert "上傳微信二維碼" in html
     assert "儲存主碼設定" in html
@@ -706,12 +706,14 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     records_page = admin_get(client, "/admin/web", params={"page": "records"})
     assert records_page.status_code == 200
     records_html = records_page.text
-    assert "2026-07-22-records-channel-name-v1" in records_html
+    assert "2026-07-22-records-channel-auto-v1" in records_html
     assert 'id="recordsFilterChannelName"' in records_html
     assert 'id="recordsChannelCounts"' in records_html
     assert "rec-channel-name-input" in records_html
     assert "渠道名" in records_html
     assert "/admin/randomization-records/channel-name" in records_html
+    assert "掃碼後自動填寫" in records_html
+    assert "encodeURIComponent(data.enrollment_no)" in admin_get(client, "/h5/enroll").text
 
     settings = admin_get(client, "/admin/web", params={"page": "settings"})
     assert settings.status_code == 200
@@ -1074,6 +1076,62 @@ def test_records_list_channel_name_edit_and_options():
     exported = admin_get(client, "/admin/randomization-records.csv")
     assert exported.status_code == 200
     assert "channel_name" in exported.text
+
+
+def test_dynamic_qr_redirect_auto_binds_channel_name_to_record():
+    """掃描結果頁動態碼（帶 en）後，渠道名自動寫入該入組記錄。"""
+    client = TestClient(app)
+    open_batch(client, ["SITE_01"])
+    set_site_password(client, "SITE_01")
+    admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_target_items": [
+                {"url": "https://wa.me/auto_a", "name": "自動渠道甲", "daily_cap": 20},
+                {"url": "https://wa.me/auto_b", "name": "自動渠道乙", "daily_cap": 20},
+            ],
+            "changed_by": "admin",
+            "reason": "auto bind",
+        },
+    )
+    enrollment_no = None
+    for i in range(16):
+        r = client.post(
+            "/randomization/trigger",
+            json={
+                "phone_number": f"+85260008{i:03d}",
+                "recruiter_id": "r1",
+                "site_id": "SITE_01",
+                "recruiter_password": "123456",
+            },
+        )
+        assert r.status_code == 200, r.text
+        if r.json()["allocation_group"] == "GENAI":
+            enrollment_no = r.json()["enrollment_no"]
+            break
+    assert enrollment_no is not None
+
+    before = admin_get(client, "/admin/randomization-records").json()
+    item0 = next(i for i in before["items"] if i["enrollment_no"] == enrollment_no)
+    assert item0.get("channel_name") in (None, "")
+
+    redirected = client.get(f"/r/GENAI?en={enrollment_no}", follow_redirects=False)
+    assert redirected.status_code == 302, redirected.text
+    assert redirected.headers["location"] in {"https://wa.me/auto_a", "https://wa.me/auto_b"}
+
+    after = admin_get(client, "/admin/randomization-records").json()
+    item = next(i for i in after["items"] if i["enrollment_no"] == enrollment_no)
+    expected = "自動渠道甲" if redirected.headers["location"].endswith("auto_a") else "自動渠道乙"
+    assert item["channel_name"] == expected
+    counts = {d["name"]: d["count"] for d in after["channel_counts"]}
+    assert counts.get(expected, 0) >= 1
+
+    png = client.get(f"/r/GENAI/qr.png?en={enrollment_no}")
+    assert png.status_code == 200
+    assert png.headers["content-type"].startswith("image/png")
 
 
 def test_dynamic_qr_target_daily_cap_10():

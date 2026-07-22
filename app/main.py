@@ -833,8 +833,11 @@ def _update_streak_state(db: Session, group: str, chosen: str) -> int:
     return int(state.consecutive_count)
 
 
-def _pick_dynamic_target(cfg: QRConfig, db: Session, day_key: str | None = None) -> str:
-    """從連結池挑選目標：避開當日已滿額，且同一連結不可連續達上限後仍再出。"""
+def _pick_dynamic_target(cfg: QRConfig, db: Session, day_key: str | None = None) -> tuple[str, str]:
+    """從連結池挑選目標：避開當日已滿額，且同一連結不可連續達上限後仍再出。
+
+    返回 (target_url, channel_name)。
+    """
     entries = _target_entries_from_config(cfg)
     if not entries:
         raise HTTPException(status_code=404, detail="target_not_configured")
@@ -871,7 +874,43 @@ def _pick_dynamic_target(cfg: QRConfig, db: Session, day_key: str | None = None)
             break
     _increment_daily_hit(db, cfg.group_type, day, chosen, channel_name=chosen_name)
     _update_streak_state(db, cfg.group_type, chosen)
-    return chosen
+    return chosen, _normalize_channel_name(chosen_name)
+
+
+def _bind_record_channel_from_redirect(
+    db: Session,
+    *,
+    enrollment_no: str | None,
+    group: str,
+    channel_name: str,
+) -> None:
+    """掃碼跳轉時，把實際分到的渠道名自動寫入對應入組記錄。"""
+    en = str(enrollment_no or "").strip()
+    name = _normalize_channel_name(channel_name)
+    if not en or not name:
+        return
+    record = db.scalar(select(RandomizationRecord).where(RandomizationRecord.enrollment_no == en))
+    if record is None:
+        return
+    if str(record.allocation_group or "") != group:
+        return
+    old = getattr(record, "channel_name", None)
+    if str(old or "") == name:
+        return
+    record.channel_name = name
+    db.commit()
+    add_audit(
+        db,
+        "qr_redirect_channel_name_bound",
+        {
+            **_record_audit_snapshot(record),
+            "old_channel_name": old,
+            "new_channel_name": name,
+            "channel_name": name,
+            "changed_by": "system",
+            "reason": "dynamic qr redirect",
+        },
+    )
 
 
 def _public_base_url(request: Request | None = None) -> str:
@@ -1523,13 +1562,22 @@ def parse_block_sizes(block_sizes_csv: str) -> tuple[int, ...]:
 
 
 @app.get("/r/{group}/qr.png")
-def qr_group_png(group: str, request: Request, db: Session = Depends(get_db)):
+def qr_group_png(
+    group: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    en: str | None = Query(default=None),
+):
     if group not in QR_GROUP_TYPES:
         raise HTTPException(status_code=404, detail="invalid_group")
     cfg = db.scalar(select(QRConfig).where(QRConfig.group_type == group))
     if cfg is None or _infer_qr_mode(cfg.qr_value, cfg.qr_mode) != "dynamic":
         raise HTTPException(status_code=404, detail="dynamic_qr_not_configured")
-    png = _make_qr_png(_stable_qr_url(group, request), group, _qr_logo_path_for_group(db, group))
+    target_url = _stable_qr_url(group, request)
+    enrollment_no = str(en or "").strip()
+    if enrollment_no:
+        target_url = f"{target_url}?en={quote(enrollment_no, safe='')}"
+    png = _make_qr_png(target_url, group, _qr_logo_path_for_group(db, group))
     return Response(content=png, media_type="image/png")
 
 
@@ -1543,13 +1591,23 @@ def admin_qr_preview_png(group: str, request: Request, db: Session = Depends(get
 
 
 @app.get("/r/{group}")
-def qr_group_redirect(group: str, db: Session = Depends(get_db)):
+def qr_group_redirect(
+    group: str,
+    db: Session = Depends(get_db),
+    en: str | None = Query(default=None),
+):
     if group not in QR_GROUP_TYPES:
         raise HTTPException(status_code=404, detail="invalid_group")
     cfg = db.scalar(select(QRConfig).where(QRConfig.group_type == group))
     if cfg is None or _infer_qr_mode(cfg.qr_value, cfg.qr_mode) != "dynamic":
         raise HTTPException(status_code=404, detail="dynamic_qr_not_configured")
-    target = _pick_dynamic_target(cfg, db)
+    target, channel_name = _pick_dynamic_target(cfg, db)
+    _bind_record_channel_from_redirect(
+        db,
+        enrollment_no=en,
+        group=group,
+        channel_name=channel_name,
+    )
     return RedirectResponse(url=target, status_code=302)
 
 
@@ -1875,7 +1933,8 @@ def _h5_randomize_html() -> str:
             qrImg.style.display = "none";
             dualBox.classList.add("show");
             if (qrMode === "dynamic") {
-              waImg.src = window.location.origin + "/r/" + (data.allocation_group || "") + "/qr.png?t=" + Date.now();
+              const enQ = data.enrollment_no ? ("&en=" + encodeURIComponent(data.enrollment_no)) : "";
+              waImg.src = window.location.origin + "/r/" + (data.allocation_group || "") + "/qr.png?t=" + Date.now() + enQ;
             } else {
               waImg.src = qrUrl;
             }
@@ -1906,7 +1965,8 @@ def _h5_randomize_html() -> str:
           }
           if (qrMode === "dynamic") {
             const group = data.allocation_group || "";
-            qrImg.src = window.location.origin + "/r/" + group + "/qr.png";
+            const enQ = data.enrollment_no ? ("en=" + encodeURIComponent(data.enrollment_no) + "&") : "";
+            qrImg.src = window.location.origin + "/r/" + group + "/qr.png?" + enQ + "t=" + Date.now();
             qrImg.style.display = "block";
             qrLinkText.textContent = "請掃碼加入 WhatsApp";
             return;

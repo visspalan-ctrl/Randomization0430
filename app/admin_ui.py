@@ -11,7 +11,7 @@ from app.models import (
 
 PageId = Literal["settings", "sites", "qr", "records"]
 
-ADMIN_UI_BUILD_ID = "2026-07-22-records-channel-name-v1"
+ADMIN_UI_BUILD_ID = "2026-07-22-records-channel-auto-v1"
 QR_TARGET_POOL_MAX = 30
 
 ADMIN_CSS = """
@@ -1155,7 +1155,7 @@ def panel_records() -> str:
     return """
     <div class="page-header">
       <h2>隨機化分組記錄</h2>
-      <p class="lead">查詢入組記錄；支援<strong>多人同時</strong>在不同瀏覽器編輯並保存（請先填寫下方「操作人」以便稽核）。可編輯受試者編碼、手機號與狀態，修改後點「全部保存」一次提交（或分別點行內按鈕）。新隨機默認為 Trial。</p>
+      <p class="lead">查詢入組記錄；支援<strong>多人同時</strong>在不同瀏覽器編輯並保存（請先填寫下方「操作人」以便稽核）。可編輯受試者編碼、手機號與狀態，修改後點「全部保存」一次提交（或分別點行內按鈕）。新隨機默認為 Trial。動態連結池的<strong>渠道名</strong>會在參加者掃描結果頁 WhatsApp 二維碼後自動寫入，亦可在此手動改。</p>
       <p class="muted" style="margin:6px 0 0;font-size:12px;">列表版本：""" + ADMIN_UI_BUILD_ID + """</p>
     </div>
     <div class="card">
@@ -3896,7 +3896,7 @@ ADMIN_SCRIPTS = """
         + "<option value='wechat'" + (channelVal === "wechat" ? " selected" : "") + ">微信</option>"
         + "</select></td>"
         + "<td><input type='text' class='rec-channel-name-input' list='recChannelNameList-" + escapeHtml(String(row.allocation_group || "")) + "' style='min-width:7rem;padding:6px 8px;' value='"
-        + channelNameVal + "' placeholder='選或填渠道名' title='對應二維碼連結池渠道名稱' /></td>"
+        + channelNameVal + "' placeholder='掃碼後自動填寫' title='掃描結果頁動態碼後自動寫入；亦可手動選或填' /></td>"
         + "<td><input type='number' min='1' class='rec-week-input' style='width:56px;padding:6px 8px;' value='"
         + weekVal + "' placeholder='" + escapeHtml(weekHint) + "' title='" + escapeHtml(weekTitle) + "' /></td>"
         + "<td><input type='text' class='rec-subject-code-input' value='" + codeVal + "' placeholder='可選' /></td>"
