@@ -11,7 +11,7 @@ from app.models import (
 
 PageId = Literal["settings", "sites", "qr", "records"]
 
-ADMIN_UI_BUILD_ID = "2026-07-22-per-link-daily-cap-v1"
+ADMIN_UI_BUILD_ID = "2026-07-22-streak-3-then-switch-v1"
 
 ADMIN_CSS = """
 :root {
@@ -1088,7 +1088,7 @@ def panel_qr() -> str:
       <input id="qrValue" placeholder="https://wa.me/..." oninput="onQrValueInput()" />
       <div id="qrDynamicTargets" style="display:none;margin-top:10px;padding:12px;border:1px solid #bae6fd;border-radius:10px;background:#f0f9ff;">
         <label style="margin:0 0 6px;display:block;font-weight:600;color:#0369a1;">動態跳轉連結池（最多 5 條）</label>
-        <p class="muted" style="margin:0 0 10px;font-size:12px;">印刷用固定碼不變；每次掃碼從下方已填連結中<strong>隨機</strong>跳轉一條。至少 1 條、最多 5 條。<strong>每條連結各自設定</strong>當日出現上限（香港日，預設 10，可改 1–200）；且<strong>同一連結不可連續出現 3 次</strong>（連續 2 次後必須換其他連結）。當日全部達上限後掃碼將暫時無法跳轉，翌日自動重置。</p>
+        <p class="muted" style="margin:0 0 10px;font-size:12px;">印刷用固定碼不變；每次掃碼從下方已填連結中<strong>隨機</strong>跳轉一條。至少 1 條、最多 5 條。<strong>每條連結各自設定</strong>當日出現上限（香港日，預設 10，可改 1–200）；且<strong>同一連結最多連續出現 3 次，連續三次之後必須換其他連結</strong>。當日全部達上限後掃碼將暫時無法跳轉，翌日自動重置。</p>
         <div id="qrTargetsDailyHint" class="muted" style="margin:0 0 10px;font-size:12px;color:#0c4a6e;"></div>
         <div style="display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin:0 0 8px;">
           <div style="flex:1 1 16rem;min-width:12rem;">

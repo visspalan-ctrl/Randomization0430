@@ -680,7 +680,7 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     page = admin_get(client, "/admin/web", params={"page": "qr"})
     assert page.status_code == 200
     html = page.text
-    assert "2026-07-22-per-link-daily-cap-v1" in html
+    assert "2026-07-22-streak-3-then-switch-v1" in html
     assert "二維碼（WhatsApp/微信）" in html
     assert "上傳微信二維碼" in html
     assert "儲存主碼設定" in html
@@ -692,7 +692,7 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     assert 'id="qrTargetDailyCap"' not in html
     assert "qrTarget5" in html
     assert "每條連結各自設定" in html
-    assert "同一連結不可連續出現 3 次" in html
+    assert "連續三次之後必須換其他連結" in html
     assert "confirm_replace_dynamic" in html
     assert "REPLACE" in html
     assert "已選擇微信圖片" in html
@@ -705,8 +705,8 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     assert "前往二維碼頁（含微信上傳）" not in settings.text
 
 
-def test_dynamic_qr_target_cannot_streak_three_times():
-    """同一連結最多連續 2 次，第 3 次必須換其他連結（尚有其他可用連結時）。"""
+def test_dynamic_qr_target_must_switch_after_three_consecutive():
+    """同一連結最多連續 3 次，連續三次之後必須換其他連結（尚有其他可用連結時）。"""
     client = TestClient(app)
     targets = [
         "https://wa.me/streak_a",
@@ -726,15 +726,19 @@ def test_dynamic_qr_target_cannot_streak_three_times():
     )
     sequence = []
     forced_switch_checked = False
-    for _ in range(40):
+    for _ in range(60):
         r = client.get("/r/GENAI", follow_redirects=False)
         if r.status_code == 429:
             break
         assert r.status_code == 302, r.text
         loc = r.headers["location"]
         sequence.append(loc)
-        if len(sequence) >= 2 and sequence[-1] == sequence[-2] and not forced_switch_checked:
-            # 已連續 2 次相同，下一次在仍有其他連結時必須換
+        if (
+            len(sequence) >= 3
+            and sequence[-1] == sequence[-2] == sequence[-3]
+            and not forced_switch_checked
+        ):
+            # 已連續 3 次相同，下一次在仍有其他連結時必須換
             nxt = client.get("/r/GENAI", follow_redirects=False)
             if nxt.status_code == 429:
                 break
@@ -742,13 +746,15 @@ def test_dynamic_qr_target_cannot_streak_three_times():
             assert nxt.headers["location"] != sequence[-1]
             sequence.append(nxt.headers["location"])
             forced_switch_checked = True
-    assert forced_switch_checked, "未能在測試中湊出連續兩次同連結以驗證強制切換"
-    for i in range(len(sequence) - 2):
-        assert not (sequence[i] == sequence[i + 1] == sequence[i + 2]), sequence[i : i + 3]
+    assert forced_switch_checked, "未能在測試中湊出連續三次同連結以驗證強制切換"
+    for i in range(len(sequence) - 3):
+        assert not (
+            sequence[i] == sequence[i + 1] == sequence[i + 2] == sequence[i + 3]
+        ), sequence[i : i + 4]
 
     configs = admin_get(client, "/admin/qr-configs").json()
     genai = next(i for i in configs["items"] if i["group_type"] == "GENAI")
-    assert genai["qr_target_max_consecutive"] == 2
+    assert genai["qr_target_max_consecutive"] == 3
 
 
 def test_dynamic_qr_target_daily_cap_is_configurable():
