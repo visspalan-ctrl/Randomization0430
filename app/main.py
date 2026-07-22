@@ -95,8 +95,8 @@ QR_MODES = frozenset({"dynamic", "static_url", "static_image"})
 DYNAMIC_QR_TARGET_MAX = 5
 DYNAMIC_QR_TARGET_DAILY_MAX_DEFAULT = 10  # 每條連結每日上限預設值（後台可改）
 DYNAMIC_QR_TARGET_DAILY_MAX_LIMIT = 200  # 後台可設上限的硬頂
-# 同一連結最多連續出現次數；達此數後下一次必須換其他連結（不可連續加滿 3 人）
-DYNAMIC_QR_TARGET_MAX_CONSECUTIVE = 3  # 同一連結連續出現 3 次後，下一次必須換鏈
+# 同一連結最多連續出現次數；達此數後下一次必須換其他連結
+DYNAMIC_QR_TARGET_MAX_CONSECUTIVE = 3
 QR_GROUP_COLORS: dict[str, dict[str, str]] = {
     "GENAI": {"dark": "#dc2626", "light": "#ffffff"},
     "HUMAN": {"dark": "#2563eb", "light": "#ffffff"},
