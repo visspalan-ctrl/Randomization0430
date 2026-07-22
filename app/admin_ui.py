@@ -11,7 +11,8 @@ from app.models import (
 
 PageId = Literal["settings", "sites", "qr", "records"]
 
-ADMIN_UI_BUILD_ID = "2026-07-22-multi-editor-records-v1"
+ADMIN_UI_BUILD_ID = "2026-07-22-addable-qr-targets-v1"
+QR_TARGET_POOL_MAX = 30
 
 ADMIN_CSS = """
 :root {
@@ -1087,8 +1088,8 @@ def panel_qr() -> str:
       <label id="qrValueLabel">跳轉目標（可隨時更換）</label>
       <input id="qrValue" placeholder="https://wa.me/..." oninput="onQrValueInput()" />
       <div id="qrDynamicTargets" style="display:none;margin-top:10px;padding:12px;border:1px solid #bae6fd;border-radius:10px;background:#f0f9ff;">
-        <label style="margin:0 0 6px;display:block;font-weight:600;color:#0369a1;">動態跳轉連結池（最多 5 條）</label>
-        <p class="muted" style="margin:0 0 10px;font-size:12px;">印刷用固定碼不變；每次掃碼從下方已填連結中<strong>隨機</strong>跳轉一條。至少 1 條、最多 5 條。<strong>每條連結各自設定</strong>當日出現上限（香港日，預設 10，可改 1–200）。下方可設定「同一連結連續出現幾次後必須換鏈」（預設 3，可改 1–20）。當日全部達上限後掃碼將暫時無法跳轉，翌日自動重置。</p>
+        <label style="margin:0 0 6px;display:block;font-weight:600;color:#0369a1;">動態跳轉連結池（最多 """ + str(QR_TARGET_POOL_MAX) + """ 條）</label>
+        <p class="muted" style="margin:0 0 10px;font-size:12px;">印刷用固定碼不變；每次掃碼從下方已填連結中<strong>隨機</strong>跳轉一條。至少 1 條、最多 """ + str(QR_TARGET_POOL_MAX) + """ 條；點「添加連結」可新增。<strong>每條連結各自設定</strong>當日出現上限（香港日，預設 10，可改 1–200）。下方可設定「同一連結連續出現幾次後必須換鏈」（預設 3，可改 1–20）。當日全部達上限後掃碼將暫時無法跳轉，翌日自動重置。</p>
         <div style="display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin:0 0 12px;">
           <div>
             <label for="qrTargetMaxConsecutive">連續出現幾次後換連結</label>
@@ -1097,55 +1098,10 @@ def panel_qr() -> str:
           <p class="muted" style="margin:0;font-size:12px;align-self:center;">例如填 3：同一連結最多連續 3 次，第 4 次必須換其他連結</p>
         </div>
         <div id="qrTargetsDailyHint" class="muted" style="margin:0 0 10px;font-size:12px;color:#0c4a6e;"></div>
-        <div style="display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin:0 0 8px;">
-          <div style="flex:1 1 16rem;min-width:12rem;">
-            <label for="qrTarget1">連結 1</label>
-            <input id="qrTarget1" placeholder="https://wa.me/..." oninput="onDynamicTargetsInput()" />
-          </div>
-          <div style="flex:0 0 auto;">
-            <label for="qrTargetCap1">當日上限</label>
-            <input id="qrTargetCap1" type="number" min="1" max="200" value="10" style="max-width:100px;" />
-          </div>
-        </div>
-        <div style="display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin:0 0 8px;">
-          <div style="flex:1 1 16rem;min-width:12rem;">
-            <label for="qrTarget2">連結 2（可選）</label>
-            <input id="qrTarget2" placeholder="https://wa.me/..." oninput="onDynamicTargetsInput()" />
-          </div>
-          <div style="flex:0 0 auto;">
-            <label for="qrTargetCap2">當日上限</label>
-            <input id="qrTargetCap2" type="number" min="1" max="200" value="10" style="max-width:100px;" />
-          </div>
-        </div>
-        <div style="display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin:0 0 8px;">
-          <div style="flex:1 1 16rem;min-width:12rem;">
-            <label for="qrTarget3">連結 3（可選）</label>
-            <input id="qrTarget3" placeholder="https://wa.me/..." oninput="onDynamicTargetsInput()" />
-          </div>
-          <div style="flex:0 0 auto;">
-            <label for="qrTargetCap3">當日上限</label>
-            <input id="qrTargetCap3" type="number" min="1" max="200" value="10" style="max-width:100px;" />
-          </div>
-        </div>
-        <div style="display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin:0 0 8px;">
-          <div style="flex:1 1 16rem;min-width:12rem;">
-            <label for="qrTarget4">連結 4（可選）</label>
-            <input id="qrTarget4" placeholder="https://wa.me/..." oninput="onDynamicTargetsInput()" />
-          </div>
-          <div style="flex:0 0 auto;">
-            <label for="qrTargetCap4">當日上限</label>
-            <input id="qrTargetCap4" type="number" min="1" max="200" value="10" style="max-width:100px;" />
-          </div>
-        </div>
-        <div style="display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin:0 0 8px;">
-          <div style="flex:1 1 16rem;min-width:12rem;">
-            <label for="qrTarget5">連結 5（可選）</label>
-            <input id="qrTarget5" placeholder="https://wa.me/..." oninput="onDynamicTargetsInput()" />
-          </div>
-          <div style="flex:0 0 auto;">
-            <label for="qrTargetCap5">當日上限</label>
-            <input id="qrTargetCap5" type="number" min="1" max="200" value="10" style="max-width:100px;" />
-          </div>
+        <div id="qrTargetRows"></div>
+        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <button type="button" class="secondary" id="qrTargetAddBtn" onclick="addDynamicTargetRow()">添加連結</button>
+          <span id="qrTargetCountHint" class="muted" style="font-size:12px;"></span>
         </div>
       </div>
       <div id="qrDynamicExtras" style="display:none;margin-top:10px;">
@@ -1345,6 +1301,7 @@ ADMIN_SCRIPTS = """
     recruitmentClosed: "#b45309"
   };
   const BATCH_MAX = __BATCH_MAX__;
+  const QR_TARGET_POOL_MAX = __QR_TARGET_POOL_MAX__;
   window.__batchPickSiteIds = [];
   const resultBox = document.getElementById("result");
 
@@ -2181,18 +2138,127 @@ ADMIN_SCRIPTS = """
     return "https://wa.me/";
   }
 
+  function qrTargetRowCount() {
+    const box = document.getElementById("qrTargetRows");
+    return box ? box.querySelectorAll(".qr-target-row").length : 0;
+  }
+
+  function updateQrTargetCountHint() {
+    const hint = document.getElementById("qrTargetCountHint");
+    const addBtn = document.getElementById("qrTargetAddBtn");
+    const n = qrTargetRowCount();
+    if (hint) hint.textContent = "目前 " + n + " / " + QR_TARGET_POOL_MAX + " 條";
+    if (addBtn) addBtn.disabled = n >= QR_TARGET_POOL_MAX;
+  }
+
+  function renumberQrTargetRows() {
+    const box = document.getElementById("qrTargetRows");
+    if (!box) return;
+    const rows = box.querySelectorAll(".qr-target-row");
+    rows.forEach(function(row, idx) {
+      const n = idx + 1;
+      const urlLab = row.querySelector(".qr-target-url-label");
+      const capLab = row.querySelector(".qr-target-cap-label");
+      const urlInp = row.querySelector(".qr-target-url");
+      const capInp = row.querySelector(".qr-target-cap");
+      if (urlLab) urlLab.textContent = "連結 " + n + (n === 1 ? "" : "（可選）");
+      if (capLab) capLab.textContent = "當日上限";
+      if (urlInp) {
+        urlInp.id = "qrTarget" + n;
+        urlInp.setAttribute("aria-label", "連結 " + n);
+      }
+      if (capInp) {
+        capInp.id = "qrTargetCap" + n;
+        capInp.setAttribute("aria-label", "連結 " + n + " 當日上限");
+      }
+      const rm = row.querySelector(".qr-target-remove");
+      if (rm) rm.style.visibility = rows.length > 1 ? "visible" : "hidden";
+    });
+    updateQrTargetCountHint();
+  }
+
+  function addDynamicTargetRow(url, dailyCap, focus) {
+    const box = document.getElementById("qrTargetRows");
+    if (!box) return null;
+    if (qrTargetRowCount() >= QR_TARGET_POOL_MAX) {
+      if (resultBox) resultBox.textContent = "[ERROR] 動態跳轉連結最多 " + QR_TARGET_POOL_MAX + " 條";
+      return null;
+    }
+    const row = document.createElement("div");
+    row.className = "qr-target-row";
+    row.style.cssText = "display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin:0 0 8px;";
+    row.innerHTML =
+      "<div style='flex:1 1 16rem;min-width:12rem;'>"
+      + "<label class='qr-target-url-label'>連結</label>"
+      + "<input class='qr-target-url' type='url' maxlength='2000' placeholder='https://wa.me/...' autocomplete='off' />"
+      + "</div>"
+      + "<div style='flex:0 0 auto;'>"
+      + "<label class='qr-target-cap-label'>當日上限</label>"
+      + "<input class='qr-target-cap' type='number' min='1' max='200' value='10' style='max-width:100px;' />"
+      + "</div>"
+      + "<div style='flex:0 0 auto;'>"
+      + "<button type='button' class='secondary qr-target-remove' style='margin:0;padding:6px 10px;font-size:12px;'>移除</button>"
+      + "</div>";
+    const urlInp = row.querySelector(".qr-target-url");
+    const capInp = row.querySelector(".qr-target-cap");
+    if (urlInp) {
+      if (url) urlInp.value = String(url);
+      urlInp.addEventListener("input", onDynamicTargetsInput);
+    }
+    if (capInp) {
+      const cap = (dailyCap != null && Number(dailyCap) >= 1) ? Number(dailyCap) : 10;
+      capInp.value = String(cap);
+      capInp.addEventListener("input", onDynamicTargetsInput);
+    }
+    const rm = row.querySelector(".qr-target-remove");
+    if (rm) {
+      rm.addEventListener("click", function() {
+        if (qrTargetRowCount() <= 1) {
+          if (urlInp) urlInp.value = "";
+          if (capInp) capInp.value = "10";
+          onDynamicTargetsInput();
+          return;
+        }
+        row.remove();
+        renumberQrTargetRows();
+        onDynamicTargetsInput();
+      });
+    }
+    box.appendChild(row);
+    renumberQrTargetRows();
+    if (focus && urlInp) setTimeout(function() { urlInp.focus(); }, 0);
+    return row;
+  }
+
+  function ensureDynamicTargetRows(minCount) {
+    const box = document.getElementById("qrTargetRows");
+    if (!box) return;
+    const need = Math.max(1, Math.min(QR_TARGET_POOL_MAX, Number(minCount) || 1));
+    while (qrTargetRowCount() < need) addDynamicTargetRow("", 10, false);
+    while (qrTargetRowCount() > need) {
+      const last = box.querySelector(".qr-target-row:last-child");
+      if (!last) break;
+      last.remove();
+    }
+    renumberQrTargetRows();
+  }
+
   function collectDynamicTargetItems() {
+    const box = document.getElementById("qrTargetRows");
+    const rows = box ? box.querySelectorAll(".qr-target-row") : [];
     const out = [];
     const seen = {};
-    for (let i = 1; i <= 5; i++) {
-      const el = document.getElementById("qrTarget" + i);
-      const url = (el && el.value ? el.value : "").trim();
-      if (!url || seen[url]) continue;
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const urlInp = row.querySelector(".qr-target-url");
+      const capInp = row.querySelector(".qr-target-cap");
+      const url = (urlInp && urlInp.value ? urlInp.value : "").trim();
+      if (!url) continue;
+      if (seen[url]) continue;
       seen[url] = true;
-      const capEl = document.getElementById("qrTargetCap" + i);
-      const capRaw = capEl ? Number(capEl.value) : NaN;
+      const capRaw = capInp ? Number(capInp.value) : NaN;
       if (!Number.isFinite(capRaw) || capRaw < 1 || capRaw > 200) {
-        return { error: "連結 " + i + " 的當日上限須為 1–200 的整數" };
+        return { error: "連結 " + (i + 1) + " 的當日上限須為 1–200 的整數" };
       }
       out.push({ url: url, daily_cap: Math.floor(capRaw) });
     }
@@ -2206,26 +2272,24 @@ ADMIN_SCRIPTS = """
   }
 
   function fillDynamicTargets(targets, items) {
-    const list = Array.isArray(targets) ? targets.slice(0, 5) : [];
+    const list = Array.isArray(targets) ? targets.slice(0, QR_TARGET_POOL_MAX) : [];
     const itemByUrl = {};
     if (Array.isArray(items)) {
       items.forEach(function(it) {
         if (it && it.url) itemByUrl[String(it.url)] = it;
       });
     }
-    for (let i = 1; i <= 5; i++) {
-      const el = document.getElementById("qrTarget" + i);
-      const url = list[i - 1] || "";
-      if (el) el.value = url;
-      const capEl = document.getElementById("qrTargetCap" + i);
-      if (capEl) {
-        const fromItem = url && itemByUrl[url] ? itemByUrl[url].daily_cap : null;
-        const capVal = (fromItem != null && Number(fromItem) >= 1) ? Number(fromItem) : 10;
-        capEl.value = String(capVal);
-      }
+    const box = document.getElementById("qrTargetRows");
+    if (box) box.innerHTML = "";
+    const count = Math.max(1, list.length);
+    for (let i = 0; i < count; i++) {
+      const url = list[i] || "";
+      const fromItem = url && itemByUrl[url] ? itemByUrl[url].daily_cap : 10;
+      addDynamicTargetRow(url, fromItem, false);
     }
     const valueEl = document.getElementById("qrValue");
     if (valueEl) valueEl.value = list[0] || "";
+    updateQrTargetCountHint();
   }
 
   function onDynamicTargetsInput() {
@@ -2240,7 +2304,7 @@ ADMIN_SCRIPTS = """
     if (!hint) return;
     if (mode === "dynamic") {
       hint.style.display = "block";
-      hint.textContent = "已選動態主碼：在下方連結池填寫 1–5 條 https://wa.me/...，儲存後掃碼會隨機跳轉其一。加微信請用上方綠色上傳。";
+      hint.textContent = "已選動態主碼：在下方連結池填寫 1–" + QR_TARGET_POOL_MAX + " 條 https://wa.me/...（可點「添加連結」），儲存後掃碼會隨機跳轉其一。加微信請用上方綠色上傳。";
       return;
     }
     if (mode === "static_image") {
@@ -2329,6 +2393,9 @@ ADMIN_SCRIPTS = """
     const fileInput = document.getElementById("qrFile");
     if (dynamicExtras) dynamicExtras.style.display = mode === "dynamic" ? "block" : "none";
     if (dynamicTargets) dynamicTargets.style.display = mode === "dynamic" ? "block" : "none";
+    if (mode === "dynamic" && qrTargetRowCount() === 0) {
+      ensureDynamicTargetRows(1);
+    }
     if (valueLabel) {
       valueLabel.style.display = mode === "dynamic" ? "none" : "";
       valueLabel.textContent = mode === "dynamic"
@@ -2615,7 +2682,7 @@ ADMIN_SCRIPTS = """
     if (!targets.length) {
       const suggested = recalledDynamicQrTarget(group);
       const entered = window.prompt(
-        "請輸入動態二維碼跳轉目標 URL（例如 https://wa.me/852xxxxxxxx；可稍後再加多至 5 條）",
+        "請輸入動態二維碼跳轉目標 URL（例如 https://wa.me/852xxxxxxxx；可再點「添加連結」擴充）",
         suggested
       );
       if (entered == null) {
@@ -2712,7 +2779,7 @@ ADMIN_SCRIPTS = """
       if (!qrTargets.length) {
         const suggested = recalledDynamicQrTarget(group);
         const entered = window.prompt(
-          "動態二維碼：請輸入至少 1 條跳轉 URL（例如 https://wa.me/852xxxxxxxx；最多可填 5 條隨機跳轉）",
+          "動態二維碼：請輸入至少 1 條跳轉 URL（例如 https://wa.me/852xxxxxxxx；可再點「添加連結」擴充）",
           suggested
         );
         if (entered == null) {
@@ -2780,8 +2847,8 @@ ADMIN_SCRIPTS = """
         resultBox.textContent = "[ERROR] 動態二維碼請至少填寫 1 條跳轉目標（例如 https://wa.me/...）";
       } else if (detail === "dynamic_qr_target_must_be_url") {
         resultBox.textContent = "[ERROR] 動態模式的跳轉目標須為 URL（不可為已上傳的圖片路徑）";
-      } else if (detail === "dynamic_qr_targets_max_5") {
-        resultBox.textContent = "[ERROR] 動態跳轉連結最多 5 條";
+      } else if (detail === "dynamic_qr_targets_too_many" || detail === "dynamic_qr_targets_max_5") {
+        resultBox.textContent = "[ERROR] 動態跳轉連結最多 " + QR_TARGET_POOL_MAX + " 條";
       } else if (detail === "invalid_target_daily_cap") {
         resultBox.textContent = "[ERROR] 當日出現上限須為 1–200 的整數（每條連結各自設定）";
       } else if (detail === "invalid_target_max_consecutive") {
@@ -4396,6 +4463,8 @@ def render_admin_page(page: PageId) -> str:
     scripts = (
         ADMIN_SCRIPTS.replace("__PAGE__", page).replace(
             "__BATCH_MAX__", str(RECRUITMENT_BATCH_MAX_ACTIVE_SITES)
+        ).replace(
+            "__QR_TARGET_POOL_MAX__", str(QR_TARGET_POOL_MAX)
         )
     )
     chart_js = (

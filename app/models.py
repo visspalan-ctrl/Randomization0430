@@ -63,8 +63,8 @@ class QRConfig(Base):
     group_type: Mapped[str] = mapped_column(String(16), nullable=False, unique=True)
     qr_mode: Mapped[str] = mapped_column(String(32), default="static_url", nullable=False)
     qr_value: Mapped[str] = mapped_column(String(512), nullable=False)
-    # JSON 陣列：動態模式下最多 5 條跳轉連結，掃碼時隨機其一；qr_value 同步為第一條
-    qr_targets_json: Mapped[str | None] = mapped_column(String(4096), nullable=True)
+    # JSON 陣列：動態模式下跳轉連結池，掃碼時隨機其一；qr_value 同步為第一條
+    qr_targets_json: Mapped[str | None] = mapped_column(String(16384), nullable=True)
     # 每條動態連結每個香港日最多出現次數（後台可調，預設 10）
     target_daily_cap: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
     # 同一連結連續出現幾次後必須換鏈（後台可調，預設 3）

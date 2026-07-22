@@ -680,20 +680,21 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     page = admin_get(client, "/admin/web", params={"page": "qr"})
     assert page.status_code == 200
     html = page.text
-    assert "2026-07-22-configurable-streak-v1" in html
+    assert "2026-07-22-addable-qr-targets-v1" in html
     assert "二維碼（WhatsApp/微信）" in html
     assert "上傳微信二維碼" in html
     assert "儲存主碼設定" in html
     assert "微信二維碼上傳" in html
     assert 'id="qrWechatSection"' in html
     assert 'id="qrDynamicTargets"' in html
-    assert 'id="qrTargetCap1"' in html
-    assert 'id="qrTargetCap5"' in html
+    assert 'id="qrTargetRows"' in html
+    assert 'id="qrTargetAddBtn"' in html
+    assert "添加連結" in html
     assert 'id="qrTargetMaxConsecutive"' in html
     assert 'id="qrTargetDailyCap"' not in html
-    assert "qrTarget5" in html
     assert "每條連結各自設定" in html
     assert "連續出現幾次後換連結" in html
+    assert "QR_TARGET_POOL_MAX" in html
     assert "confirm_replace_dynamic" in html
     assert "REPLACE" in html
     assert "已選擇微信圖片" in html
@@ -1000,7 +1001,23 @@ def test_dynamic_qr_target_pool_random_redirect():
     genai = next(i for i in configs["items"] if i["group_type"] == "GENAI")
     assert genai["qr_targets"] == targets
     assert genai["qr_targets_count"] == 5
+    assert genai["qr_target_pool_max"] == 30
     assert genai["qr_value"] == targets[0]
+
+    more = [f"https://wa.me/pool_extra_{i}" for i in range(6, 31)]
+    saved_30 = admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_targets": targets + more,
+            "changed_by": "admin",
+            "reason": "pool of 30",
+        },
+    )
+    assert saved_30.status_code == 200, saved_30.text
+    assert len(saved_30.json()["qr_targets"]) == 30
 
     too_many = admin_post(
         client,
@@ -1008,12 +1025,24 @@ def test_dynamic_qr_target_pool_random_redirect():
         json={
             "group": "GENAI",
             "qr_mode": "dynamic",
-            "qr_targets": targets + ["https://wa.me/pool_f"],
+            "qr_targets": targets + more + ["https://wa.me/pool_overflow"],
             "changed_by": "admin",
         },
     )
     assert too_many.status_code == 400
-    assert too_many.json()["detail"] == "dynamic_qr_targets_max_5"
+    assert too_many.json()["detail"] == "dynamic_qr_targets_too_many"
+
+    admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_targets": targets,
+            "changed_by": "admin",
+            "reason": "back to 5",
+        },
+    )
 
     seen = set()
     for _ in range(80):

@@ -92,7 +92,7 @@ ENROLLMENT_MODE_TRIAL = "trial"
 ENROLLMENT_MODE_NONTrial = "nontrial"
 QR_GROUP_TYPES = frozenset({"GENAI", "HUMAN"})
 QR_MODES = frozenset({"dynamic", "static_url", "static_image"})
-DYNAMIC_QR_TARGET_MAX = 5
+DYNAMIC_QR_TARGET_MAX = 30  # 動態跳轉池最多條數（後台可逐條添加）
 DYNAMIC_QR_TARGET_DAILY_MAX_DEFAULT = 10  # 每條連結每日上限預設值（後台可改）
 DYNAMIC_QR_TARGET_DAILY_MAX_LIMIT = 200  # 後台可設上限的硬頂
 # 同一連結最多連續出現次數（後台可調）；達此數後下一次必須換其他連結
@@ -859,6 +859,7 @@ def _serialize_qr_config(
         item["stable_qr_url"] = _stable_qr_url(cfg.group_type, request)
         item["stable_qr_path"] = _stable_qr_path(cfg.group_type)
         item["qr_targets_count"] = len(targets)
+        item["qr_target_pool_max"] = DYNAMIC_QR_TARGET_MAX
         item["qr_target_daily_cap"] = default_cap
         item["target_daily_cap"] = default_cap
         max_consecutive = _max_consecutive_from_config(cfg)
@@ -2537,14 +2538,14 @@ def update_qr_config(payload: QRUpdateRequest, db: Session = Depends(get_db)):
         raw_items: list[object] = []
         if payload.qr_target_items:
             if len(payload.qr_target_items) > DYNAMIC_QR_TARGET_MAX:
-                raise HTTPException(status_code=400, detail="dynamic_qr_targets_max_5")
+                raise HTTPException(status_code=400, detail="dynamic_qr_targets_too_many")
             for it in payload.qr_target_items:
                 if it.daily_cap is not None:
                     _normalize_target_daily_cap(it.daily_cap, required=True)
                 raw_items.append({"url": it.url, "daily_cap": it.daily_cap})
         elif payload.qr_targets is not None:
             if len(payload.qr_targets) > DYNAMIC_QR_TARGET_MAX:
-                raise HTTPException(status_code=400, detail="dynamic_qr_targets_max_5")
+                raise HTTPException(status_code=400, detail="dynamic_qr_targets_too_many")
             raw_items.extend(payload.qr_targets)
         entries = _normalize_dynamic_target_entries(raw_items, qr_value, int(default_cap))
         if not entries:
