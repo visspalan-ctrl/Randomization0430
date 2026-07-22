@@ -1078,6 +1078,64 @@ def test_admin_can_maintain_record_phone():
     assert corrected.json()["phone_number"] == "+85260000999"
 
 
+def test_records_page_supports_multi_editor():
+    client = TestClient(app)
+    page = admin_get(client, "/admin/web", params={"page": "records"})
+    assert page.status_code == 200
+    html = page.text
+    assert "2026-07-22-multi-editor-records-v1" in html
+    assert 'id="recordsOperator"' in html
+    assert "多人同時" in html
+    assert "recordsOperatorName" in html
+    assert "rememberRecordsOperator" in html
+
+
+def test_concurrent_record_field_updates_succeed():
+    """多人同時改不同記錄欄位時不應因資料庫鎖失敗。"""
+    import concurrent.futures
+
+    client = TestClient(app)
+    open_batch(client, ["SITE_01"])
+    set_site_password(client, "SITE_01")
+    records = []
+    for i in range(4):
+        r = client.post(
+            "/randomization/trigger",
+            json={
+                "phone_number": f"+8527001000{i}",
+                "recruiter_id": "r1",
+                "site_id": "SITE_01",
+                "recruiter_password": "123456",
+                "participant_name": f"P{i}",
+            },
+        )
+        assert r.status_code == 200, r.text
+        records.append(r.json()["enrollment_no"])
+
+    def patch_one(idx: int) -> int:
+        en = records[idx]
+        res = admin_patch(
+            client,
+            "/admin/randomization-records/participant-name",
+            json={
+                "enrollment_no": en,
+                "participant_name": f"Editor-{idx}",
+                "changed_by": f"editor_{idx}",
+                "reason": "concurrent edit",
+            },
+        )
+        return res.status_code
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        statuses = list(pool.map(patch_one, range(4)))
+    assert statuses == [200, 200, 200, 200]
+
+    listing = admin_get(client, "/admin/randomization-records").json()
+    by_en = {item["enrollment_no"]: item for item in listing["items"]}
+    for i, en in enumerate(records):
+        assert by_en[en]["participant_name"] == f"Editor-{i}"
+
+
 def test_h5_randomize_page_has_participant_name_field():
     client = TestClient(app)
     for path in ("/h5/randomize", "/h5/enroll"):

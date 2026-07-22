@@ -11,7 +11,7 @@ from app.models import (
 
 PageId = Literal["settings", "sites", "qr", "records"]
 
-ADMIN_UI_BUILD_ID = "2026-07-22-configurable-streak-v1"
+ADMIN_UI_BUILD_ID = "2026-07-22-multi-editor-records-v1"
 
 ADMIN_CSS = """
 :root {
@@ -1198,7 +1198,7 @@ def panel_records() -> str:
     return """
     <div class="page-header">
       <h2>隨機化分組記錄</h2>
-      <p class="lead">查詢入組記錄；可編輯受試者編碼、手機號與狀態，修改後點「全部保存」一次提交（或分別點行內按鈕）。新隨機默認為 Trial。</p>
+      <p class="lead">查詢入組記錄；支援<strong>多人同時</strong>在不同瀏覽器編輯並保存（請先填寫下方「操作人」以便稽核）。可編輯受試者編碼、手機號與狀態，修改後點「全部保存」一次提交（或分別點行內按鈕）。新隨機默認為 Trial。</p>
       <p class="muted" style="margin:6px 0 0;font-size:12px;">列表版本：""" + ADMIN_UI_BUILD_ID + """</p>
     </div>
     <div class="card">
@@ -1225,15 +1225,17 @@ def panel_records() -> str:
       </div>
     </div>
     <div class="card">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
         <h3 style="margin:0;">記錄列表</h3>
-        <div style="display:flex;gap:8px;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <label for="recordsOperator" style="margin:0;font-size:12px;color:#475569;">操作人</label>
+          <input id="recordsOperator" type="text" placeholder="請填姓名或代號" maxlength="64" style="width:9rem;margin:0;padding:6px 8px;font-size:12px;" onchange="rememberRecordsOperator()" onblur="rememberRecordsOperator()" />
           <button type="button" class="secondary" onclick="saveAllRecordChanges()">全部保存</button>
           <button type="button" class="secondary" onclick="loadRecords()">重新整理</button>
           <button type="button" class="secondary" onclick="exportRecordsCsv()">匯出 CSV</button>
         </div>
       </div>
-      <p class="muted" style="margin:8px 0 0;font-size:12px;">「歸屬周」：若站點已設歸屬周，入組時會自動寫入並在此顯示；可改寫覆蓋。「參加者姓名」在手機號右側；「WhatsApp 號」默認與手機號相同，可單獨修改。「已添加帳號」為手動核對（對方已添加或我方已添加對方），勾選後立即保存。Non-trial 記錄的「分組」可改 GENAI/HUMAN，Trial 記錄分組只讀。其餘修改後點該行「保存修改」或上方「全部保存」。</p>
+      <p class="muted" style="margin:8px 0 0;font-size:12px;">多人可同時打開本頁改不同行；保存互不鎖定整表。重新整理前請先保存自己的修改（有未保存草稿時會提示）。「歸屬周」：若站點已設歸屬周，入組時會自動寫入並在此顯示；可改寫覆蓋。「參加者姓名」在手機號右側；「WhatsApp 號」默認與手機號相同，可單獨修改。「已添加帳號」為手動核對（對方已添加或我方已添加對方），勾選後立即保存。Non-trial 記錄的「分組」可改 GENAI/HUMAN，Trial 記錄分組只讀。其餘修改後點該行「保存修改」或上方「全部保存」。</p>
       <div class="row" style="margin-top:10px;max-width:none;flex-wrap:wrap;">
         <div style="flex:1 1 0;min-width:0;">
           <label>站點</label>
@@ -3381,6 +3383,38 @@ ADMIN_SCRIPTS = """
     return items.find(function(r) { return String(r.enrollment_no) === String(enrollmentNo); }) || null;
   }
 
+  function recordsOperatorName() {
+    const el = document.getElementById("recordsOperator");
+    const raw = el && el.value != null ? String(el.value).trim() : "";
+    if (raw) return raw.slice(0, 64);
+    try {
+      const saved = localStorage.getItem("records_operator_name");
+      if (saved && String(saved).trim()) return String(saved).trim().slice(0, 64);
+    } catch (e) {}
+    return "admin";
+  }
+
+  function rememberRecordsOperator() {
+    const el = document.getElementById("recordsOperator");
+    if (!el) return;
+    const name = String(el.value || "").trim().slice(0, 64);
+    el.value = name;
+    try {
+      if (name) localStorage.setItem("records_operator_name", name);
+      else localStorage.removeItem("records_operator_name");
+    } catch (e) {}
+  }
+
+  function restoreRecordsOperator() {
+    const el = document.getElementById("recordsOperator");
+    if (!el) return;
+    if (String(el.value || "").trim()) return;
+    try {
+      const saved = localStorage.getItem("records_operator_name");
+      if (saved) el.value = String(saved).trim().slice(0, 64);
+    } catch (e) {}
+  }
+
   async function toggleRecordAccountAdded(enrollmentNo, inputEl) {
     const row = recordsFindItem(enrollmentNo);
     if (!row || !inputEl) return;
@@ -3392,7 +3426,7 @@ ADMIN_SCRIPTS = """
       const res = await api("/admin/randomization-records/account-added", "PATCH", {
         enrollment_no: enrollmentNo,
         account_added: newVal,
-        changed_by: "admin",
+        changed_by: recordsOperatorName(),
         reason: "manual account check"
       });
       row.account_added = !!res.account_added;
@@ -3439,7 +3473,7 @@ ADMIN_SCRIPTS = """
       const res = await api("/admin/randomization-records/contact-channel", "PATCH", {
         enrollment_no: enrollmentNo,
         contact_channel: newVal,
-        changed_by: "admin",
+        changed_by: recordsOperatorName(),
         reason: "manual channel update"
       });
       row.contact_channel = res.contact_channel;
@@ -3579,11 +3613,12 @@ ADMIN_SCRIPTS = """
     const wasVoided = String(row.activation_status || "") === "voided";
     const wasTrial = String(row.trial_status || "trial");
     const currentStatus = wasVoided ? "voided" : wasTrial;
+    const by = recordsOperatorName();
     if (newStatus === currentStatus) return false;
     if (newStatus === "voided") {
       await api("/admin/randomization-records/delete", "POST", {
         enrollment_no: enrollmentNo,
-        voided_by: "admin",
+        voided_by: by,
         reason: "manual void (list status)"
       });
       return true;
@@ -3591,7 +3626,7 @@ ADMIN_SCRIPTS = """
     if (wasVoided) {
       await api("/admin/randomization-records/delete", "POST", {
         enrollment_no: enrollmentNo,
-        voided_by: "admin",
+        voided_by: by,
         reason: "manual restore (list status)"
       });
     }
@@ -3599,7 +3634,7 @@ ADMIN_SCRIPTS = """
       await api("/admin/randomization-records/trial-status", "PATCH", {
         enrollment_no: enrollmentNo,
         trial_status: newStatus,
-        changed_by: "admin",
+        changed_by: by,
         reason: "manual trial status (list status)"
       });
     }
@@ -4007,11 +4042,12 @@ ADMIN_SCRIPTS = """
     const en = change.enrollment_no;
     let row = change.row || recordsFindItem(en);
     if (!row) throw new Error("未找到入組編號 " + en);
+    const by = recordsOperatorName();
     if (change.allocation_group !== undefined) {
       await api("/admin/randomization-records/allocation-group", "PATCH", {
         enrollment_no: en,
         allocation_group: change.allocation_group,
-        changed_by: "admin",
+        changed_by: by,
         reason: "manual row save (list)"
       });
       row.allocation_group = change.allocation_group;
@@ -4024,7 +4060,7 @@ ADMIN_SCRIPTS = """
       await api("/admin/randomization-records/subject-code", "PATCH", {
         enrollment_no: en,
         subject_code: change.subject_code.trim(),
-        changed_by: "admin",
+        changed_by: by,
         reason: "manual row save (list)"
       });
     }
@@ -4034,7 +4070,7 @@ ADMIN_SCRIPTS = """
       await api("/admin/randomization-records/phone", "PATCH", {
         enrollment_no: en,
         new_phone_number: phone,
-        changed_by: "admin",
+        changed_by: by,
         reason: "manual row save (list)"
       });
     }
@@ -4044,7 +4080,7 @@ ADMIN_SCRIPTS = """
       await api("/admin/randomization-records/whatsapp", "PATCH", {
         enrollment_no: en,
         whatsapp_number: wa,
-        changed_by: "admin",
+        changed_by: by,
         reason: "manual row save (list)"
       });
     }
@@ -4052,7 +4088,7 @@ ADMIN_SCRIPTS = """
       await api("/admin/randomization-records/participant-name", "PATCH", {
         enrollment_no: en,
         participant_name: change.participant_name.trim(),
-        changed_by: "admin",
+        changed_by: by,
         reason: "manual row save (list)"
       });
     }
@@ -4062,7 +4098,7 @@ ADMIN_SCRIPTS = """
       await api("/admin/randomization-records/assigned-week", "PATCH", {
         enrollment_no: en,
         assigned_recruitment_week: week,
-        changed_by: "admin",
+        changed_by: by,
         reason: "manual row save (list)"
       });
     }
@@ -4102,10 +4138,11 @@ ADMIN_SCRIPTS = """
       if (!confirm(tip)) return;
     }
     try {
+      rememberRecordsOperator();
       await persistRecordChange(change);
       clearRecordDraft(enrollmentNo, ["status", "subject_code", "phone", "whatsapp", "participant_name", "allocation_group", "assigned_recruitment_week"]);
       await refreshRecordsDataPreserveDrafts();
-      resultBox.textContent = "[OK] 已保存 " + enrollmentNo + "（" + parts.join("、") + "）";
+      resultBox.textContent = "[OK] 已保存 " + enrollmentNo + "（" + parts.join("、") + "；操作人：" + recordsOperatorName() + "）";
     } catch (err) {
       const msg = err && err.message ? String(err.message) : String(err);
       resultBox.textContent = "[ERROR] 保存失敗\\n" + msg;
@@ -4126,7 +4163,7 @@ ADMIN_SCRIPTS = """
     const pnameN = pending.filter(function(c) { return c.participant_name !== undefined; }).length;
     const groupN = pending.filter(function(c) { return c.allocation_group !== undefined; }).length;
     const weekN = pending.filter(function(c) { return c.assigned_recruitment_week !== undefined; }).length;
-    let summary = "確認保存當前篩選結果中的 " + pending.length + " 條變更？";
+    let summary = "確認保存當前篩選結果中的 " + pending.length + " 條變更？（操作人：" + recordsOperatorName() + "）";
     const parts = [];
     if (statusN) parts.push("狀態 " + statusN + " 條");
     if (codeN) parts.push("編碼 " + codeN + " 條");
@@ -4137,24 +4174,30 @@ ADMIN_SCRIPTS = """
     if (weekN) parts.push("歸屬周 " + weekN + " 條");
     if (parts.length) summary += "（" + parts.join("、") + "）";
     if (!confirm(summary)) return;
-    try {
-      let saved = 0;
-      for (let i = 0; i < pending.length; i++) {
-        const change = pending[i];
-        const en = change.enrollment_no;
+    rememberRecordsOperator();
+    const failures = [];
+    let saved = 0;
+    for (let i = 0; i < pending.length; i++) {
+      const change = pending[i];
+      const en = change.enrollment_no;
+      if (resultBox) resultBox.textContent = "[...] 正在保存 " + (i + 1) + "/" + pending.length;
+      try {
         await persistRecordChange(change);
         clearRecordDraft(en, ["status", "subject_code", "phone", "whatsapp", "participant_name", "allocation_group", "assigned_recruitment_week"]);
         saved += 1;
-        if (resultBox) resultBox.textContent = "[...] 正在保存 " + (i + 1) + "/" + pending.length;
+      } catch (err) {
+        const msg = err && err.message ? String(err.message) : String(err);
+        failures.push(en + "：" + msg);
       }
-      window.__recordsDrafts = {};
-      await refreshRecordsDataPreserveDrafts();
-      resultBox.textContent = "[OK] 已全部保存 " + saved + " 條變更";
-    } catch (err) {
-      const msg = err && err.message ? String(err.message) : String(err);
-      resultBox.textContent = "[ERROR] 全部保存失敗\\n" + msg;
-      await refreshRecordsDataPreserveDrafts();
     }
+    await refreshRecordsDataPreserveDrafts();
+    if (!failures.length) {
+      resultBox.textContent = "[OK] 已全部保存 " + saved + " 條變更（操作人：" + recordsOperatorName() + "）";
+      return;
+    }
+    resultBox.textContent = "[部分完成] 成功 " + saved + " 條，失敗 " + failures.length + " 條\\n"
+      + failures.slice(0, 8).join("\\n")
+      + (failures.length > 8 ? "\\n…" : "");
   }
 
   function parseAuditPayload(row) {
@@ -4300,6 +4343,7 @@ ADMIN_SCRIPTS = """
       window.__recordsCurrentPage = (window.__recordsCurrentPage || 1) + 1;
       applyRecordsFilter();
     });
+    restoreRecordsOperator();
     loadRecords();
     loadAudits();
   }
