@@ -85,6 +85,8 @@ class QRTargetDailyHit(Base):
     group_type: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     day_key: Mapped[str] = mapped_column(String(8), nullable=False, index=True)  # YYYYMMDD HK
     target_url: Mapped[str] = mapped_column(String(512), nullable=False)
+    # 渠道命名（與連結池 name 對應；歷史紀錄保留當時名稱）
+    channel_name: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     hit_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     __table_args__ = (

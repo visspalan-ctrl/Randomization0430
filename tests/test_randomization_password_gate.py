@@ -680,7 +680,7 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     page = admin_get(client, "/admin/web", params={"page": "qr"})
     assert page.status_code == 200
     html = page.text
-    assert "2026-07-22-addable-qr-targets-v1" in html
+    assert "2026-07-22-qr-channel-name-stats-v1" in html
     assert "二維碼（WhatsApp/微信）" in html
     assert "上傳微信二維碼" in html
     assert "儲存主碼設定" in html
@@ -689,10 +689,12 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     assert 'id="qrDynamicTargets"' in html
     assert 'id="qrTargetRows"' in html
     assert 'id="qrTargetAddBtn"' in html
+    assert 'id="qrChannelStats"' in html
     assert "添加連結" in html
+    assert "渠道名稱" in html
+    assert "渠道數量統計" in html
     assert 'id="qrTargetMaxConsecutive"' in html
     assert 'id="qrTargetDailyCap"' not in html
-    assert "每條連結各自設定" in html
     assert "連續出現幾次後換連結" in html
     assert "QR_TARGET_POOL_MAX" in html
     assert "confirm_replace_dynamic" in html
@@ -873,8 +875,8 @@ def test_dynamic_qr_per_link_daily_cap():
     """每條連結可設定不同的當日出現上限。"""
     client = TestClient(app)
     items = [
-        {"url": "https://wa.me/per_a", "daily_cap": 2},
-        {"url": "https://wa.me/per_b", "daily_cap": 5},
+        {"url": "https://wa.me/per_a", "name": "渠道A", "daily_cap": 2},
+        {"url": "https://wa.me/per_b", "name": "渠道B", "daily_cap": 5},
     ]
     saved = admin_post(
         client,
@@ -893,6 +895,10 @@ def test_dynamic_qr_per_link_daily_cap():
     assert {it["url"]: it["daily_cap"] for it in body["qr_target_items"]} == {
         "https://wa.me/per_a": 2,
         "https://wa.me/per_b": 5,
+    }
+    assert {it["url"]: it["name"] for it in body["qr_target_items"]} == {
+        "https://wa.me/per_a": "渠道A",
+        "https://wa.me/per_b": "渠道B",
     }
 
     counts = {"https://wa.me/per_a": 0, "https://wa.me/per_b": 0}
@@ -923,13 +929,63 @@ def test_dynamic_qr_per_link_daily_cap():
             "group": "GENAI",
             "qr_mode": "dynamic",
             "qr_target_items": [
-                {"url": "https://wa.me/bad", "daily_cap": 0},
+                {"url": "https://wa.me/bad", "name": "壞渠道", "daily_cap": 0},
             ],
             "changed_by": "admin",
         },
     )
     assert bad.status_code == 400
     assert bad.json()["detail"] == "invalid_target_daily_cap"
+
+
+def test_dynamic_qr_channel_name_and_stats():
+    """每條連結可命名渠道，跳轉計入該渠道統計。"""
+    client = TestClient(app)
+    items = [
+        {"url": "https://wa.me/ch_a", "name": "渠道甲", "daily_cap": 10},
+        {"url": "https://wa.me/ch_b", "name": "渠道乙", "daily_cap": 10},
+    ]
+    saved = admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_target_items": items,
+            "changed_by": "admin",
+            "reason": "channel names",
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    assert {it["name"] for it in saved.json()["qr_target_items"]} == {"渠道甲", "渠道乙"}
+
+    missing_name = admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_target_items": [{"url": "https://wa.me/noname", "name": "  "}],
+            "changed_by": "admin",
+        },
+    )
+    assert missing_name.status_code == 400
+    assert missing_name.json()["detail"] == "dynamic_qr_channel_name_required"
+
+    for _ in range(5):
+        r = client.get("/r/GENAI", follow_redirects=False)
+        assert r.status_code == 302, r.text
+
+    configs = admin_get(client, "/admin/qr-configs").json()
+    genai = next(i for i in configs["items"] if i["group_type"] == "GENAI")
+    stats = {d["name"]: d for d in genai["qr_channel_stats"]}
+    assert set(stats) == {"渠道甲", "渠道乙"}
+    assert stats["渠道甲"]["hits_today"] + stats["渠道乙"]["hits_today"] == 5
+    assert stats["渠道甲"]["hits_total"] + stats["渠道乙"]["hits_total"] == 5
+    assert stats["渠道甲"]["hits_total"] == stats["渠道甲"]["hits_today"]
+    daily = {d["name"]: d for d in genai["qr_targets_daily"]}
+    assert daily["渠道甲"]["channel"] == "渠道甲"
+    assert daily["渠道乙"]["url"] == "https://wa.me/ch_b"
 
 
 def test_dynamic_qr_target_daily_cap_10():

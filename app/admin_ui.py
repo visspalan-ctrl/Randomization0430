@@ -11,7 +11,7 @@ from app.models import (
 
 PageId = Literal["settings", "sites", "qr", "records"]
 
-ADMIN_UI_BUILD_ID = "2026-07-22-addable-qr-targets-v1"
+ADMIN_UI_BUILD_ID = "2026-07-22-qr-channel-name-stats-v1"
 QR_TARGET_POOL_MAX = 30
 
 ADMIN_CSS = """
@@ -1089,7 +1089,7 @@ def panel_qr() -> str:
       <input id="qrValue" placeholder="https://wa.me/..." oninput="onQrValueInput()" />
       <div id="qrDynamicTargets" style="display:none;margin-top:10px;padding:12px;border:1px solid #bae6fd;border-radius:10px;background:#f0f9ff;">
         <label style="margin:0 0 6px;display:block;font-weight:600;color:#0369a1;">動態跳轉連結池（最多 """ + str(QR_TARGET_POOL_MAX) + """ 條）</label>
-        <p class="muted" style="margin:0 0 10px;font-size:12px;">印刷用固定碼不變；每次掃碼從下方已填連結中<strong>隨機</strong>跳轉一條。至少 1 條、最多 """ + str(QR_TARGET_POOL_MAX) + """ 條；點「添加連結」可新增。<strong>每條連結各自設定</strong>當日出現上限（香港日，預設 10，可改 1–200）。下方可設定「同一連結連續出現幾次後必須換鏈」（預設 3，可改 1–20）。當日全部達上限後掃碼將暫時無法跳轉，翌日自動重置。</p>
+        <p class="muted" style="margin:0 0 10px;font-size:12px;">印刷用固定碼不變；每次掃碼從下方已填連結中<strong>隨機</strong>跳轉一條。至少 1 條、最多 """ + str(QR_TARGET_POOL_MAX) + """ 條；點「添加連結」可新增。每條請填<strong>渠道名稱</strong>（例如「渠道A」），並可各自設定當日出現上限（香港日，預設 10）。下方可設定「同一連結連續出現幾次後必須換鏈」。當日全部達上限後掃碼將暫時無法跳轉，翌日自動重置。</p>
         <div style="display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin:0 0 12px;">
           <div>
             <label for="qrTargetMaxConsecutive">連續出現幾次後換連結</label>
@@ -1098,9 +1098,10 @@ def panel_qr() -> str:
           <p class="muted" style="margin:0;font-size:12px;align-self:center;">例如填 3：同一連結最多連續 3 次，第 4 次必須換其他連結</p>
         </div>
         <div id="qrTargetsDailyHint" class="muted" style="margin:0 0 10px;font-size:12px;color:#0c4a6e;"></div>
+        <div id="qrChannelStats" class="muted" style="margin:0 0 12px;padding:8px 10px;border:1px dashed #7dd3fc;border-radius:8px;background:#f0f9ff;font-size:12px;color:#0c4a6e;display:none;"></div>
         <div id="qrTargetRows"></div>
         <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-          <button type="button" class="secondary" id="qrTargetAddBtn" onclick="addDynamicTargetRow('', 10, true)">添加連結</button>
+          <button type="button" class="secondary" id="qrTargetAddBtn" onclick="addDynamicTargetRow('', 10, true, '')">添加連結</button>
           <span id="qrTargetCountHint" class="muted" style="font-size:12px;"></span>
         </div>
       </div>
@@ -2157,12 +2158,20 @@ ADMIN_SCRIPTS = """
     const rows = box.querySelectorAll(".qr-target-row");
     rows.forEach(function(row, idx) {
       const n = idx + 1;
+      const nameLab = row.querySelector(".qr-target-name-label");
       const urlLab = row.querySelector(".qr-target-url-label");
       const capLab = row.querySelector(".qr-target-cap-label");
+      const nameInp = row.querySelector(".qr-target-name");
       const urlInp = row.querySelector(".qr-target-url");
       const capInp = row.querySelector(".qr-target-cap");
-      if (urlLab) urlLab.textContent = "連結 " + n + (n === 1 ? "" : "（可選）");
+      if (nameLab) nameLab.textContent = "渠道名稱 " + n;
+      if (urlLab) urlLab.textContent = "連結 " + n;
       if (capLab) capLab.textContent = "當日上限";
+      if (nameInp) {
+        nameInp.id = "qrTargetName" + n;
+        nameInp.placeholder = "例如：渠道" + String.fromCharCode(64 + Math.min(n, 26));
+        nameInp.setAttribute("aria-label", "渠道名稱 " + n);
+      }
       if (urlInp) {
         urlInp.id = "qrTarget" + n;
         urlInp.setAttribute("aria-label", "連結 " + n);
@@ -2177,7 +2186,7 @@ ADMIN_SCRIPTS = """
     updateQrTargetCountHint();
   }
 
-  function addDynamicTargetRow(url, dailyCap, focus) {
+  function addDynamicTargetRow(url, dailyCap, focus, name) {
     const box = document.getElementById("qrTargetRows");
     if (!box) return null;
     if (qrTargetRowCount() >= QR_TARGET_POOL_MAX) {
@@ -2188,7 +2197,11 @@ ADMIN_SCRIPTS = """
     row.className = "qr-target-row";
     row.style.cssText = "display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin:0 0 8px;";
     row.innerHTML =
-      "<div style='flex:1 1 16rem;min-width:12rem;'>"
+      "<div style='flex:0 1 9rem;min-width:7rem;'>"
+      + "<label class='qr-target-name-label'>渠道名稱</label>"
+      + "<input class='qr-target-name' type='text' maxlength='64' placeholder='例如：渠道A' autocomplete='off' />"
+      + "</div>"
+      + "<div style='flex:1 1 14rem;min-width:12rem;'>"
       + "<label class='qr-target-url-label'>連結</label>"
       + "<input class='qr-target-url' type='url' maxlength='2000' placeholder='https://wa.me/...' autocomplete='off' />"
       + "</div>"
@@ -2199,8 +2212,13 @@ ADMIN_SCRIPTS = """
       + "<div style='flex:0 0 auto;'>"
       + "<button type='button' class='secondary qr-target-remove' style='margin:0;padding:6px 10px;font-size:12px;'>移除</button>"
       + "</div>";
+    const nameInp = row.querySelector(".qr-target-name");
     const urlInp = row.querySelector(".qr-target-url");
     const capInp = row.querySelector(".qr-target-cap");
+    if (nameInp) {
+      if (name) nameInp.value = String(name);
+      nameInp.addEventListener("input", onDynamicTargetsInput);
+    }
     if (urlInp) {
       if (url) urlInp.value = String(url);
       urlInp.addEventListener("input", onDynamicTargetsInput);
@@ -2214,6 +2232,7 @@ ADMIN_SCRIPTS = """
     if (rm) {
       rm.addEventListener("click", function() {
         if (qrTargetRowCount() <= 1) {
+          if (nameInp) nameInp.value = "";
           if (urlInp) urlInp.value = "";
           if (capInp) capInp.value = "10";
           onDynamicTargetsInput();
@@ -2226,7 +2245,7 @@ ADMIN_SCRIPTS = """
     }
     box.appendChild(row);
     renumberQrTargetRows();
-    if (focus && urlInp) setTimeout(function() { urlInp.focus(); }, 0);
+    if (focus && nameInp) setTimeout(function() { nameInp.focus(); }, 0);
     return row;
   }
 
@@ -2234,7 +2253,7 @@ ADMIN_SCRIPTS = """
     const box = document.getElementById("qrTargetRows");
     if (!box) return;
     const need = Math.max(1, Math.min(QR_TARGET_POOL_MAX, Number(minCount) || 1));
-    while (qrTargetRowCount() < need) addDynamicTargetRow("", 10, false);
+    while (qrTargetRowCount() < need) addDynamicTargetRow("", 10, false, "");
     while (qrTargetRowCount() > need) {
       const last = box.querySelector(".qr-target-row:last-child");
       if (!last) break;
@@ -2247,20 +2266,36 @@ ADMIN_SCRIPTS = """
     const box = document.getElementById("qrTargetRows");
     const rows = box ? box.querySelectorAll(".qr-target-row") : [];
     const out = [];
-    const seen = {};
+    const seenUrl = {};
+    const seenName = {};
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
+      const nameInp = row.querySelector(".qr-target-name");
       const urlInp = row.querySelector(".qr-target-url");
       const capInp = row.querySelector(".qr-target-cap");
       const url = (urlInp && urlInp.value ? urlInp.value : "").trim();
-      if (!url) continue;
-      if (seen[url]) continue;
-      seen[url] = true;
+      const name = (nameInp && nameInp.value ? nameInp.value : "").trim();
+      if (!url && !name) continue;
+      if (!url) {
+        return { error: "連結 " + (i + 1) + " 請填寫跳轉 URL" };
+      }
+      if (!name) {
+        return { error: "連結 " + (i + 1) + " 請填寫渠道名稱" };
+      }
+      if (seenUrl[url]) {
+        return { error: "連結 URL 重複：" + url };
+      }
+      const nameKey = name.toLowerCase();
+      if (seenName[nameKey]) {
+        return { error: "渠道名稱重複：" + name };
+      }
+      seenUrl[url] = true;
+      seenName[nameKey] = true;
       const capRaw = capInp ? Number(capInp.value) : NaN;
       if (!Number.isFinite(capRaw) || capRaw < 1 || capRaw > 200) {
         return { error: "連結 " + (i + 1) + " 的當日上限須為 1–200 的整數" };
       }
-      out.push({ url: url, daily_cap: Math.floor(capRaw) });
+      out.push({ url: url, name: name, daily_cap: Math.floor(capRaw) });
     }
     return { items: out };
   }
@@ -2284,8 +2319,10 @@ ADMIN_SCRIPTS = """
     const count = Math.max(1, list.length);
     for (let i = 0; i < count; i++) {
       const url = list[i] || "";
-      const fromItem = url && itemByUrl[url] ? itemByUrl[url].daily_cap : 10;
-      addDynamicTargetRow(url, fromItem, false);
+      const fromItem = url && itemByUrl[url] ? itemByUrl[url] : null;
+      const fromCap = fromItem && fromItem.daily_cap != null ? fromItem.daily_cap : 10;
+      const fromName = fromItem ? (fromItem.name || fromItem.channel || "") : "";
+      addDynamicTargetRow(url, fromCap, false, fromName || (url ? ("渠道" + (i + 1)) : ""));
     }
     const valueEl = document.getElementById("qrValue");
     if (valueEl) valueEl.value = list[0] || "";
@@ -2375,10 +2412,17 @@ ADMIN_SCRIPTS = """
     }
     const targets = collectDynamicTargets();
     if (hint) {
+      const got = collectDynamicTargetItems();
+      const items = (!got.error && got.items) ? got.items : [];
       hint.innerHTML = "固定碼連結：<strong>" + stableUrl + "</strong>"
-        + (targets.length
-          ? ("<br>跳轉池 " + targets.length + " 條（掃碼隨機其一，儲存後生效）：<br>" + targets.map(function(u, i){ return (i+1) + ". " + u; }).join("<br>"))
-          : "<br>請至少填寫 1 條跳轉連結後點擊儲存");
+        + (items.length
+          ? ("<br>跳轉池 " + items.length + " 條（掃碼隨機其一，儲存後生效）：<br>"
+            + items.map(function(it, i){
+              return (i+1) + ". <strong>" + escapeHtml(it.name || ("渠道"+(i+1))) + "</strong> → " + escapeHtml(it.url);
+            }).join("<br>"))
+          : (targets.length
+            ? ("<br>跳轉池 " + targets.length + " 條（掃碼隨機其一，儲存後生效）：<br>" + targets.map(function(u, i){ return (i+1) + ". " + escapeHtml(u); }).join("<br>"))
+            : "<br>請至少填寫 1 條跳轉連結與渠道名稱後點擊儲存"));
     }
   }
 
@@ -2585,27 +2629,56 @@ ADMIN_SCRIPTS = """
     onQrModeChange();
     if (mode === "dynamic") {
       const daily = Array.isArray(current.qr_targets_daily) ? current.qr_targets_daily : [];
+      const channelStats = Array.isArray(current.qr_channel_stats) && current.qr_channel_stats.length
+        ? current.qr_channel_stats
+        : daily;
       const dailyHint = document.getElementById("qrTargetsDailyHint");
+      const statsEl = document.getElementById("qrChannelStats");
       if (dailyHint) {
         if (daily.length) {
-          dailyHint.innerHTML = "今日（香港 " + (current.qr_targets_daily_day || "") + "）各連結出現次數 / 各自上限：<br>"
+          dailyHint.innerHTML = "今日（香港 " + (current.qr_targets_daily_day || "") + "）各渠道出現次數 / 各自上限：<br>"
             + daily.map(function(d, i) {
               const cap = (d.daily_cap != null) ? d.daily_cap : (current.qr_target_daily_cap || 10);
-              return (i + 1) + ". " + (d.url || "") + " → " + (d.hits_today || 0) + "/" + cap
-                + "（剩 " + (d.remaining_today != null ? d.remaining_today : "?") + "）";
+              const label = d.name || d.channel || ("渠道" + (i + 1));
+              return (i + 1) + ". <strong>" + escapeHtml(label) + "</strong> → "
+                + (d.hits_today || 0) + "/" + cap
+                + "（剩 " + (d.remaining_today != null ? d.remaining_today : "?") + "）"
+                + "<br><span style='color:#64748b'>" + escapeHtml(d.url || "") + "</span>";
             }).join("<br>");
         } else {
           dailyHint.textContent = "";
         }
       }
+      if (statsEl) {
+        if (channelStats.length) {
+          statsEl.style.display = "block";
+          const totalAll = channelStats.reduce(function(s, d) { return s + (Number(d.hits_total) || 0); }, 0);
+          const todayAll = channelStats.reduce(function(s, d) { return s + (Number(d.hits_today) || 0); }, 0);
+          statsEl.innerHTML = "<strong>渠道數量統計</strong>（累計 / 今日）共累計 "
+            + totalAll + "、今日 " + todayAll + "<br>"
+            + channelStats.map(function(d, i) {
+              const label = d.name || d.channel || ("渠道" + (i + 1));
+              return (i + 1) + ". <strong>" + escapeHtml(label) + "</strong>：累計 "
+                + (d.hits_total || 0) + " · 今日 " + (d.hits_today || 0);
+            }).join("<br>");
+        } else {
+          statsEl.style.display = "none";
+          statsEl.textContent = "";
+        }
+      }
       text.textContent = "v" + current.version + " · 動態碼池 " + targets.length + " 條（連續≤"
         + (current.target_max_consecutive || current.qr_target_max_consecutive || 3)
-        + " 次後換鏈；每條可設獨立每日上限） → " + (targets.join(" | ") || "");
+        + " 次後換鏈） → " + (channelStats.map(function(d){ return d.name || d.url; }).join(" | ") || targets.join(" | ") || "");
       if (img) { img.style.display = "none"; }
       return;
     }
     const dailyHintClear = document.getElementById("qrTargetsDailyHint");
     if (dailyHintClear) dailyHintClear.textContent = "";
+    const statsClear = document.getElementById("qrChannelStats");
+    if (statsClear) {
+      statsClear.style.display = "none";
+      statsClear.textContent = "";
+    }
     text.textContent = "v" + current.version + " · " + (current.qr_value || "");
     const previewUrl = toAbsoluteUrl(current.qr_value || "");
     const isImg = /\\.(png|jpg|jpeg|webp)(\\?.*)?$/i.test(previewUrl) || previewUrl.includes("/uploads/qr/");
@@ -2791,7 +2864,7 @@ ADMIN_SCRIPTS = """
           resultBox.textContent = "[ERROR] 跳轉目標須為 http(s) 連結，不能是圖片路徑";
           return;
         }
-        fillDynamicTargets([url], [{ url: url, daily_cap: 10 }]);
+        fillDynamicTargets([url], [{ url: url, name: "渠道1", daily_cap: 10 }]);
         collected = collectDynamicTargetItems();
         if (collected.error) {
           resultBox.textContent = "[ERROR] " + collected.error;
@@ -2802,6 +2875,10 @@ ADMIN_SCRIPTS = """
       }
       for (let i = 0; i < qrTargetItems.length; i++) {
         const it = qrTargetItems[i];
+        if (!it.name || !String(it.name).trim()) {
+          resultBox.textContent = "[ERROR] 連結池第 " + (i + 1) + " 條請填寫渠道名稱";
+          return;
+        }
         if (!isHttpUrl(it.url) || isUploadOrImagePath(it.url)) {
           resultBox.textContent = "[ERROR] 連結池第 " + (i + 1) + " 條須為 http(s) 連結";
           return;
@@ -2849,6 +2926,8 @@ ADMIN_SCRIPTS = """
         resultBox.textContent = "[ERROR] 動態模式的跳轉目標須為 URL（不可為已上傳的圖片路徑）";
       } else if (detail === "dynamic_qr_targets_too_many" || detail === "dynamic_qr_targets_max_5") {
         resultBox.textContent = "[ERROR] 動態跳轉連結最多 " + QR_TARGET_POOL_MAX + " 條";
+      } else if (detail === "dynamic_qr_channel_name_required") {
+        resultBox.textContent = "[ERROR] 每條連結請填寫渠道名稱（例如「渠道A」）";
       } else if (detail === "invalid_target_daily_cap") {
         resultBox.textContent = "[ERROR] 當日出現上限須為 1–200 的整數（每條連結各自設定）";
       } else if (detail === "invalid_target_max_consecutive") {

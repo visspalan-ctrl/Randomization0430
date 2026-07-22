@@ -95,6 +95,7 @@ QR_MODES = frozenset({"dynamic", "static_url", "static_image"})
 DYNAMIC_QR_TARGET_MAX = 30  # 動態跳轉池最多條數（後台可逐條添加）
 DYNAMIC_QR_TARGET_DAILY_MAX_DEFAULT = 10  # 每條連結每日上限預設值（後台可改）
 DYNAMIC_QR_TARGET_DAILY_MAX_LIMIT = 200  # 後台可設上限的硬頂
+DYNAMIC_QR_TARGET_NAME_MAX_LEN = 64
 # 同一連結最多連續出現次數（後台可調）；達此數後下一次必須換其他連結
 DYNAMIC_QR_TARGET_MAX_CONSECUTIVE_DEFAULT = 3
 DYNAMIC_QR_TARGET_MAX_CONSECUTIVE_LIMIT = 20
@@ -423,6 +424,10 @@ def ensure_schema_migrations() -> None:
         if site_cols and "enrollment_mode" not in site_cols:
             conn.execute(text("ALTER TABLE sites ADD COLUMN enrollment_mode VARCHAR(16) DEFAULT 'trial'"))
             conn.execute(text("UPDATE sites SET enrollment_mode = 'trial' WHERE enrollment_mode IS NULL"))
+        hit_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('qr_target_daily_hits')")).fetchall()]
+        if hit_cols and "channel_name" not in hit_cols:
+            conn.execute(text("ALTER TABLE qr_target_daily_hits ADD COLUMN channel_name VARCHAR(64) DEFAULT ''"))
+            conn.execute(text("UPDATE qr_target_daily_hits SET channel_name = '' WHERE channel_name IS NULL"))
 
 
 @app.on_event("startup")
@@ -530,6 +535,7 @@ class RecruitmentBatchOpenRequest(BaseModel):
 
 class QRTargetItem(BaseModel):
     url: str
+    name: str | None = None  # 渠道命名，例如「渠道A」
     daily_cap: int | None = None
 
 
@@ -626,12 +632,22 @@ def _max_consecutive_from_config(cfg: QRConfig) -> int:
     return n
 
 
-def _parse_target_entry(item: object, default_cap: int) -> dict[str, object] | None:
+def _normalize_channel_name(raw: object | None, *, fallback: str = "") -> str:
+    name = str(raw or "").strip()
+    if not name:
+        name = str(fallback or "").strip()
+    if len(name) > DYNAMIC_QR_TARGET_NAME_MAX_LEN:
+        name = name[:DYNAMIC_QR_TARGET_NAME_MAX_LEN]
+    return name
+
+
+def _parse_target_entry(item: object, default_cap: int, *, index: int = 1) -> dict[str, object] | None:
+    fallback_name = f"渠道{index}"
     if isinstance(item, str):
         url = item.strip()
         if not url:
             return None
-        return {"url": url, "daily_cap": default_cap}
+        return {"url": url, "name": fallback_name, "daily_cap": default_cap}
     if isinstance(item, dict):
         url = str(item.get("url") or "").strip()
         if not url:
@@ -645,7 +661,11 @@ def _parse_target_entry(item: object, default_cap: int) -> dict[str, object] | N
             cap = 1
         if cap > DYNAMIC_QR_TARGET_DAILY_MAX_LIMIT:
             cap = DYNAMIC_QR_TARGET_DAILY_MAX_LIMIT
-        return {"url": url, "daily_cap": cap}
+        name = _normalize_channel_name(
+            item.get("name") if item.get("name") is not None else item.get("channel"),
+            fallback=fallback_name,
+        )
+        return {"url": url, "name": name or fallback_name, "daily_cap": cap}
     return None
 
 
@@ -654,8 +674,9 @@ def _normalize_dynamic_target_entries(
     fallback_value: str = "",
     default_cap: int = DYNAMIC_QR_TARGET_DAILY_MAX_DEFAULT,
 ) -> list[dict[str, object]]:
-    """整理動態跳轉池條目：{url, daily_cap}，去重保序，最多 DYNAMIC_QR_TARGET_MAX。"""
-    seen: set[str] = set()
+    """整理動態跳轉池條目：{url, name, daily_cap}，去重保序，最多 DYNAMIC_QR_TARGET_MAX。"""
+    seen_urls: set[str] = set()
+    seen_names: set[str] = set()
     out: list[dict[str, object]] = []
     candidates: list[object] = []
     if raw_items:
@@ -663,13 +684,24 @@ def _normalize_dynamic_target_entries(
     if fallback_value:
         candidates.append(fallback_value)
     for item in candidates:
-        entry = _parse_target_entry(item, default_cap)
+        entry = _parse_target_entry(item, default_cap, index=len(out) + 1)
         if entry is None:
             continue
         url = str(entry["url"])
-        if url in seen:
+        if url in seen_urls:
             continue
-        seen.add(url)
+        name = str(entry["name"] or "").strip() or f"渠道{len(out) + 1}"
+        # 渠道名重複時自動加後綴，避免統計合併混淆
+        base = name
+        suffix = 2
+        while name.lower() in seen_names:
+            name = f"{base}-{suffix}"
+            suffix += 1
+            if len(name) > DYNAMIC_QR_TARGET_NAME_MAX_LEN:
+                name = name[:DYNAMIC_QR_TARGET_NAME_MAX_LEN]
+        entry["name"] = name
+        seen_urls.add(url)
+        seen_names.add(name.lower())
         out.append(entry)
         if len(out) >= DYNAMIC_QR_TARGET_MAX:
             break
@@ -705,7 +737,7 @@ def _target_entries_from_config(cfg: QRConfig) -> list[dict[str, object]]:
             pass
     value = (cfg.qr_value or "").strip()
     if value:
-        return [{"url": value, "daily_cap": default_cap}]
+        return [{"url": value, "name": "渠道1", "daily_cap": default_cap}]
     return []
 
 
@@ -726,7 +758,28 @@ def _daily_hit_counts(db: Session, group: str, day_key: str, targets: list[str])
     return {r.target_url: int(r.hit_count or 0) for r in rows}
 
 
-def _increment_daily_hit(db: Session, group: str, day_key: str, target_url: str) -> int:
+def _lifetime_hit_counts(db: Session, group: str, targets: list[str]) -> dict[str, int]:
+    if not targets:
+        return {}
+    rows = db.execute(
+        select(QRTargetDailyHit.target_url, func.coalesce(func.sum(QRTargetDailyHit.hit_count), 0))
+        .where(
+            QRTargetDailyHit.group_type == group,
+            QRTargetDailyHit.target_url.in_(targets),
+        )
+        .group_by(QRTargetDailyHit.target_url)
+    ).all()
+    return {str(url): int(total or 0) for url, total in rows}
+
+
+def _increment_daily_hit(
+    db: Session,
+    group: str,
+    day_key: str,
+    target_url: str,
+    *,
+    channel_name: str = "",
+) -> int:
     row = db.scalar(
         select(QRTargetDailyHit).where(
             QRTargetDailyHit.group_type == group,
@@ -734,11 +787,13 @@ def _increment_daily_hit(db: Session, group: str, day_key: str, target_url: str)
             QRTargetDailyHit.target_url == target_url,
         )
     )
+    name = _normalize_channel_name(channel_name)
     if row is None:
         row = QRTargetDailyHit(
             group_type=group,
             day_key=day_key,
             target_url=target_url,
+            channel_name=name,
             hit_count=1,
         )
         db.add(row)
@@ -746,6 +801,8 @@ def _increment_daily_hit(db: Session, group: str, day_key: str, target_url: str)
         db.refresh(row)
         return 1
     row.hit_count = int(row.hit_count or 0) + 1
+    if name:
+        row.channel_name = name
     db.commit()
     db.refresh(row)
     return int(row.hit_count)
@@ -804,7 +861,12 @@ def _pick_dynamic_target(cfg: QRConfig, db: Session, day_key: str | None = None)
             available = switched
 
     chosen = available[0] if len(available) == 1 else secrets.choice(available)
-    _increment_daily_hit(db, cfg.group_type, day, chosen)
+    chosen_name = ""
+    for e in entries:
+        if str(e["url"]) == chosen:
+            chosen_name = str(e.get("name") or "")
+            break
+    _increment_daily_hit(db, cfg.group_type, day, chosen, channel_name=chosen_name)
     _update_streak_state(db, cfg.group_type, chosen)
     return chosen
 
@@ -867,11 +929,26 @@ def _serialize_qr_config(
         item["target_max_consecutive"] = max_consecutive
         day = hk_date_stamp()
         counts = _daily_hit_counts(db, cfg.group_type, day, targets) if db is not None else {}
+        totals = _lifetime_hit_counts(db, cfg.group_type, targets) if db is not None else {}
         item["qr_targets_daily"] = [
             {
                 "url": str(e["url"]),
+                "name": str(e.get("name") or ""),
+                "channel": str(e.get("name") or ""),
                 "daily_cap": int(e["daily_cap"]),
                 "hits_today": int(counts.get(str(e["url"]), 0)),
+                "hits_total": int(totals.get(str(e["url"]), 0)),
+                "remaining_today": max(0, int(e["daily_cap"]) - int(counts.get(str(e["url"]), 0))),
+            }
+            for e in entries
+        ]
+        item["qr_channel_stats"] = [
+            {
+                "name": str(e.get("name") or ""),
+                "url": str(e["url"]),
+                "daily_cap": int(e["daily_cap"]),
+                "hits_today": int(counts.get(str(e["url"]), 0)),
+                "hits_total": int(totals.get(str(e["url"]), 0)),
                 "remaining_today": max(0, int(e["daily_cap"]) - int(counts.get(str(e["url"]), 0))),
             }
             for e in entries
@@ -880,8 +957,14 @@ def _serialize_qr_config(
         if db is not None:
             streak = _get_streak_state(db, cfg.group_type)
             if streak is not None and streak.last_target_url:
+                last_name = ""
+                for e in entries:
+                    if str(e["url"]) == streak.last_target_url:
+                        last_name = str(e.get("name") or "")
+                        break
                 item["qr_target_streak"] = {
                     "last_url": streak.last_target_url,
+                    "last_name": last_name,
                     "consecutive_count": int(streak.consecutive_count or 0),
                     "must_switch_next": int(streak.consecutive_count or 0) >= max_consecutive,
                 }
@@ -2542,7 +2625,10 @@ def update_qr_config(payload: QRUpdateRequest, db: Session = Depends(get_db)):
             for it in payload.qr_target_items:
                 if it.daily_cap is not None:
                     _normalize_target_daily_cap(it.daily_cap, required=True)
-                raw_items.append({"url": it.url, "daily_cap": it.daily_cap})
+                name = _normalize_channel_name(it.name)
+                if not name:
+                    raise HTTPException(status_code=400, detail="dynamic_qr_channel_name_required")
+                raw_items.append({"url": it.url, "name": name, "daily_cap": it.daily_cap})
         elif payload.qr_targets is not None:
             if len(payload.qr_targets) > DYNAMIC_QR_TARGET_MAX:
                 raise HTTPException(status_code=400, detail="dynamic_qr_targets_too_many")
