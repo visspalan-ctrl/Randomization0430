@@ -1100,7 +1100,7 @@ def panel_qr() -> str:
         <div id="qrTargetsDailyHint" class="muted" style="margin:0 0 10px;font-size:12px;color:#0c4a6e;"></div>
         <div id="qrTargetRows"></div>
         <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-          <button type="button" class="secondary" id="qrTargetAddBtn" onclick="addDynamicTargetRow()">添加連結</button>
+          <button type="button" class="secondary" id="qrTargetAddBtn" onclick="addDynamicTargetRow('', 10, true)">添加連結</button>
           <span id="qrTargetCountHint" class="muted" style="font-size:12px;"></span>
         </div>
       </div>
