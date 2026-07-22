@@ -65,6 +65,8 @@ class QRConfig(Base):
     qr_value: Mapped[str] = mapped_column(String(512), nullable=False)
     # JSON 陣列：動態模式下最多 5 條跳轉連結，掃碼時隨機其一；qr_value 同步為第一條
     qr_targets_json: Mapped[str | None] = mapped_column(String(4096), nullable=True)
+    # 每條動態連結每個香港日最多出現次數（後台可調，預設 10）
+    target_daily_cap: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
     qr_logo_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     wechat_qr_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)

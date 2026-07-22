@@ -11,7 +11,7 @@ from app.models import (
 
 PageId = Literal["settings", "sites", "qr", "records"]
 
-ADMIN_UI_BUILD_ID = "2026-07-19-streak-cap-v1"
+ADMIN_UI_BUILD_ID = "2026-07-22-daily-cap-setting-v1"
 
 ADMIN_CSS = """
 :root {
@@ -1088,7 +1088,10 @@ def panel_qr() -> str:
       <input id="qrValue" placeholder="https://wa.me/..." oninput="onQrValueInput()" />
       <div id="qrDynamicTargets" style="display:none;margin-top:10px;padding:12px;border:1px solid #bae6fd;border-radius:10px;background:#f0f9ff;">
         <label style="margin:0 0 6px;display:block;font-weight:600;color:#0369a1;">動態跳轉連結池（最多 5 條）</label>
-        <p class="muted" style="margin:0 0 10px;font-size:12px;">印刷用固定碼不變；每次掃碼從下方已填連結中<strong>隨機</strong>跳轉一條。至少 1 條、最多 5 條。<strong>每條連結每個香港日最多出現 10 次</strong>；且<strong>同一連結不可連續出現 3 次</strong>（連續 2 次後必須換其他連結）。當日全部達上限後掃碼將暫時無法跳轉，翌日自動重置。</p>
+        <p class="muted" style="margin:0 0 10px;font-size:12px;">印刷用固定碼不變；每次掃碼從下方已填連結中<strong>隨機</strong>跳轉一條。至少 1 條、最多 5 條。每條連結每個香港日出現次數上限可在下方設定；且<strong>同一連結不可連續出現 3 次</strong>（連續 2 次後必須換其他連結）。當日全部達上限後掃碼將暫時無法跳轉，翌日自動重置。</p>
+        <label for="qrTargetDailyCap">每條連結當日最多出現次數（香港日）</label>
+        <input id="qrTargetDailyCap" type="number" min="1" max="200" value="10" style="max-width:140px;" />
+        <p class="muted" style="margin:4px 0 10px;font-size:12px;">預設 10；可改 1–200。與「儲存主碼設定」一併生效。</p>
         <div id="qrTargetsDailyHint" class="muted" style="margin:0 0 10px;font-size:12px;color:#0c4a6e;"></div>
         <label>連結 1</label>
         <input id="qrTarget1" placeholder="https://wa.me/..." oninput="onDynamicTargetsInput()" />
@@ -2407,6 +2410,11 @@ ADMIN_SCRIPTS = """
       ? ((current.qr_targets && current.qr_targets.length) ? current.qr_targets : (current.qr_value ? [current.qr_value] : []))
       : [];
     fillDynamicTargets(targets);
+    const dailyCapInp = document.getElementById("qrTargetDailyCap");
+    if (dailyCapInp) {
+      const capVal = current.target_daily_cap || current.qr_target_daily_cap || 10;
+      dailyCapInp.value = String(capVal);
+    }
     const stableInp = document.getElementById("qrStableUrl");
     if (stableInp) stableInp.value = current.stable_qr_url || "";
     const logoEl = document.getElementById("qrLogoCurrent");
@@ -2616,6 +2624,7 @@ ADMIN_SCRIPTS = """
     }
     let qrValue = (document.getElementById("qrValue")?.value || "").trim();
     let qrTargets = null;
+    let targetDailyCap = null;
     if (mode === "dynamic") {
       qrTargets = collectDynamicTargets();
       if (!qrTargets.length) {
@@ -2643,6 +2652,13 @@ ADMIN_SCRIPTS = """
         }
       }
       qrValue = qrTargets[0];
+      const capEl = document.getElementById("qrTargetDailyCap");
+      const capRaw = capEl ? Number(capEl.value) : NaN;
+      if (!Number.isFinite(capRaw) || capRaw < 1 || capRaw > 200) {
+        resultBox.textContent = "[ERROR] 當日最多出現次數須為 1–200 的整數";
+        return;
+      }
+      targetDailyCap = Math.floor(capRaw);
     }
     if (mode === "static_url" && !qrValue) {
       resultBox.textContent = "[ERROR] 請填寫二維碼連結（URL）";
@@ -2657,12 +2673,15 @@ ADMIN_SCRIPTS = """
         changed_by: document.getElementById("qrBy").value,
         reason: document.getElementById("qrReason").value || (mode === "dynamic" ? "switch to dynamic" : "manual update")
       };
-      if (mode === "dynamic") body.qr_targets = qrTargets;
+      if (mode === "dynamic") {
+        body.qr_targets = qrTargets;
+        body.target_daily_cap = targetDailyCap;
+      }
       const res = await api("/admin/qr-config", "POST", body);
       if (mode === "dynamic") rememberDynamicQrTarget(group, qrValue);
       await loadQrCurrent();
       resultBox.textContent = mode === "dynamic"
-        ? ("[OK] 已儲存動態二維碼連結池（" + (qrTargets ? qrTargets.length : 1) + " 條，掃碼隨機跳轉）\\n固定碼: " + (res.stable_qr_path || ("/r/" + group)))
+        ? ("[OK] 已儲存動態二維碼連結池（" + (qrTargets ? qrTargets.length : 1) + " 條；每條每日≤" + targetDailyCap + " 次）\\n固定碼: " + (res.stable_qr_path || ("/r/" + group)))
         : "[OK] 已儲存二維碼設定（模式: " + mode + "）";
     } catch (err) {
       const detail = err && err.message ? String(err.message) : String(err);
@@ -2672,6 +2691,8 @@ ADMIN_SCRIPTS = """
         resultBox.textContent = "[ERROR] 動態模式的跳轉目標須為 URL（不可為已上傳的圖片路徑）";
       } else if (detail === "dynamic_qr_targets_max_5") {
         resultBox.textContent = "[ERROR] 動態跳轉連結最多 5 條";
+      } else if (detail === "invalid_target_daily_cap") {
+        resultBox.textContent = "[ERROR] 當日最多出現次數須為 1–200 的整數";
       } else {
         resultBox.textContent = "[ERROR] 儲存二維碼失敗\\n" + detail;
       }

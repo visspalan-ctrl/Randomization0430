@@ -93,7 +93,8 @@ ENROLLMENT_MODE_NONTrial = "nontrial"
 QR_GROUP_TYPES = frozenset({"GENAI", "HUMAN"})
 QR_MODES = frozenset({"dynamic", "static_url", "static_image"})
 DYNAMIC_QR_TARGET_MAX = 5
-DYNAMIC_QR_TARGET_DAILY_MAX = 10  # 每條連結每個香港日最多出現次數
+DYNAMIC_QR_TARGET_DAILY_MAX_DEFAULT = 10  # 每條連結每日上限預設值（後台可改）
+DYNAMIC_QR_TARGET_DAILY_MAX_LIMIT = 200  # 後台可設上限的硬頂
 # 同一連結最多連續出現次數；達此數後下一次必須換其他連結（不可連續加滿 3 人）
 DYNAMIC_QR_TARGET_MAX_CONSECUTIVE = 2
 QR_GROUP_COLORS: dict[str, dict[str, str]] = {
@@ -359,6 +360,19 @@ def ensure_schema_migrations() -> None:
         qr_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('qr_configs')")).fetchall()]
         if qr_cols and "qr_targets_json" not in qr_cols:
             conn.execute(text("ALTER TABLE qr_configs ADD COLUMN qr_targets_json VARCHAR(4096)"))
+        qr_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('qr_configs')")).fetchall()]
+        if qr_cols and "target_daily_cap" not in qr_cols:
+            conn.execute(
+                text(
+                    f"ALTER TABLE qr_configs ADD COLUMN target_daily_cap INTEGER DEFAULT {DYNAMIC_QR_TARGET_DAILY_MAX_DEFAULT}"
+                )
+            )
+            conn.execute(
+                text(
+                    f"UPDATE qr_configs SET target_daily_cap = {DYNAMIC_QR_TARGET_DAILY_MAX_DEFAULT} "
+                    "WHERE target_daily_cap IS NULL"
+                )
+            )
         rr_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_records')")).fetchall()]
         if rr_cols and "trial_status" not in rr_cols:
             conn.execute(text("ALTER TABLE randomization_records ADD COLUMN trial_status VARCHAR(16) DEFAULT 'trial'"))
@@ -506,6 +520,8 @@ class QRUpdateRequest(BaseModel):
     qr_value: str = ""
     # 動態模式可傳 1–5 條連結；掃碼時隨機跳轉其一。未傳則退回 qr_value 單條。
     qr_targets: list[str] | None = None
+    # 每條連結每個香港日最多出現次數；僅動態模式生效
+    target_daily_cap: int | None = None
     changed_by: str
     reason: str = ""
 
@@ -574,6 +590,33 @@ def _targets_from_config(cfg: QRConfig) -> list[str]:
     return [value] if value else []
 
 
+def _daily_cap_from_config(cfg: QRConfig) -> int:
+    raw = getattr(cfg, "target_daily_cap", None)
+    try:
+        cap = int(raw) if raw is not None else DYNAMIC_QR_TARGET_DAILY_MAX_DEFAULT
+    except (TypeError, ValueError):
+        cap = DYNAMIC_QR_TARGET_DAILY_MAX_DEFAULT
+    if cap < 1:
+        return 1
+    if cap > DYNAMIC_QR_TARGET_DAILY_MAX_LIMIT:
+        return DYNAMIC_QR_TARGET_DAILY_MAX_LIMIT
+    return cap
+
+
+def _normalize_target_daily_cap(value: int | None, *, required: bool = False) -> int | None:
+    if value is None:
+        if required:
+            return DYNAMIC_QR_TARGET_DAILY_MAX_DEFAULT
+        return None
+    try:
+        cap = int(value)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="invalid_target_daily_cap")
+    if cap < 1 or cap > DYNAMIC_QR_TARGET_DAILY_MAX_LIMIT:
+        raise HTTPException(status_code=400, detail="invalid_target_daily_cap")
+    return cap
+
+
 def _daily_hit_counts(db: Session, group: str, day_key: str, targets: list[str]) -> dict[str, int]:
     if not targets:
         return {}
@@ -640,8 +683,9 @@ def _pick_dynamic_target(cfg: QRConfig, db: Session, day_key: str | None = None)
     if not targets:
         raise HTTPException(status_code=404, detail="target_not_configured")
     day = day_key or hk_date_stamp()
+    daily_cap = _daily_cap_from_config(cfg)
     counts = _daily_hit_counts(db, cfg.group_type, day, targets)
-    available = [u for u in targets if counts.get(u, 0) < DYNAMIC_QR_TARGET_DAILY_MAX]
+    available = [u for u in targets if counts.get(u, 0) < daily_cap]
     if not available:
         raise HTTPException(status_code=429, detail="dynamic_qr_daily_cap_reached")
 
@@ -708,10 +752,12 @@ def _serialize_qr_config(
         "changed_at": utc_iso(cfg.changed_at),
     }
     if mode == "dynamic":
+        daily_cap = _daily_cap_from_config(cfg)
         item["stable_qr_url"] = _stable_qr_url(cfg.group_type, request)
         item["stable_qr_path"] = _stable_qr_path(cfg.group_type)
         item["qr_targets_count"] = len(targets)
-        item["qr_target_daily_cap"] = DYNAMIC_QR_TARGET_DAILY_MAX
+        item["qr_target_daily_cap"] = daily_cap
+        item["target_daily_cap"] = daily_cap
         item["qr_target_max_consecutive"] = DYNAMIC_QR_TARGET_MAX_CONSECUTIVE
         day = hk_date_stamp()
         counts = _daily_hit_counts(db, cfg.group_type, day, targets) if db is not None else {}
@@ -719,7 +765,7 @@ def _serialize_qr_config(
             {
                 "url": u,
                 "hits_today": int(counts.get(u, 0)),
-                "remaining_today": max(0, DYNAMIC_QR_TARGET_DAILY_MAX - int(counts.get(u, 0))),
+                "remaining_today": max(0, daily_cap - int(counts.get(u, 0))),
             }
             for u in targets
         ]
@@ -2366,6 +2412,7 @@ def update_qr_config(payload: QRUpdateRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="invalid_qr_mode")
     qr_value = (payload.qr_value or "").strip()
     targets_json: str | None = None
+    daily_cap_to_set: int | None = None
     if payload.qr_mode == "dynamic":
         if payload.qr_targets is not None and len(payload.qr_targets) > DYNAMIC_QR_TARGET_MAX:
             raise HTTPException(status_code=400, detail="dynamic_qr_targets_max_5")
@@ -2376,6 +2423,9 @@ def update_qr_config(payload: QRUpdateRequest, db: Session = Depends(get_db)):
             _validate_dynamic_target_url(url)
         qr_value = targets[0]
         targets_json = json.dumps(targets, ensure_ascii=False)
+        # 動態模式：未傳則保留原值 / 新建用預設
+        if payload.target_daily_cap is not None:
+            daily_cap_to_set = _normalize_target_daily_cap(payload.target_daily_cap, required=True)
     if payload.qr_mode == "static_url" and not qr_value:
         raise HTTPException(status_code=400, detail="static_url_required")
     if payload.qr_mode == "static_image" and not qr_value:
@@ -2387,6 +2437,11 @@ def update_qr_config(payload: QRUpdateRequest, db: Session = Depends(get_db)):
             qr_mode=payload.qr_mode,
             qr_value=qr_value,
             qr_targets_json=targets_json,
+            target_daily_cap=(
+                daily_cap_to_set
+                if daily_cap_to_set is not None
+                else DYNAMIC_QR_TARGET_DAILY_MAX_DEFAULT
+            ),
             changed_by=payload.changed_by,
             reason=payload.reason,
         )
@@ -2396,6 +2451,10 @@ def update_qr_config(payload: QRUpdateRequest, db: Session = Depends(get_db)):
         cfg.qr_mode = payload.qr_mode
         cfg.qr_value = qr_value
         cfg.qr_targets_json = targets_json
+        if daily_cap_to_set is not None:
+            cfg.target_daily_cap = daily_cap_to_set
+        elif payload.qr_mode == "dynamic" and not getattr(cfg, "target_daily_cap", None):
+            cfg.target_daily_cap = DYNAMIC_QR_TARGET_DAILY_MAX_DEFAULT
         cfg.changed_by = payload.changed_by
         cfg.reason = payload.reason
     db.commit()
@@ -2408,12 +2467,15 @@ def update_qr_config(payload: QRUpdateRequest, db: Session = Depends(get_db)):
             "version": cfg.version,
             "qr_mode": cfg.qr_mode,
             "qr_targets_count": len(_targets_from_config(cfg)) if payload.qr_mode == "dynamic" else 0,
+            "target_daily_cap": _daily_cap_from_config(cfg) if payload.qr_mode == "dynamic" else None,
         },
     )
     result = {"ok": True, "group": payload.group, "version": cfg.version, "qr_mode": cfg.qr_mode}
     if payload.qr_mode == "dynamic":
         result["stable_qr_path"] = _stable_qr_path(payload.group)
         result["qr_targets"] = _targets_from_config(cfg)
+        result["target_daily_cap"] = _daily_cap_from_config(cfg)
+        result["qr_target_daily_cap"] = result["target_daily_cap"]
     return result
 
 

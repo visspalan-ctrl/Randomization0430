@@ -680,15 +680,16 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     page = admin_get(client, "/admin/web", params={"page": "qr"})
     assert page.status_code == 200
     html = page.text
-    assert "2026-07-19-streak-cap-v1" in html
+    assert "2026-07-22-daily-cap-setting-v1" in html
     assert "二維碼（WhatsApp/微信）" in html
     assert "上傳微信二維碼" in html
     assert "儲存主碼設定" in html
     assert "微信二維碼上傳" in html
     assert 'id="qrWechatSection"' in html
     assert 'id="qrDynamicTargets"' in html
+    assert 'id="qrTargetDailyCap"' in html
     assert "qrTarget5" in html
-    assert "每條連結每個香港日最多出現 10 次" in html
+    assert "每條連結當日最多出現次數" in html
     assert "同一連結不可連續出現 3 次" in html
     assert "confirm_replace_dynamic" in html
     assert "REPLACE" in html
@@ -746,6 +747,55 @@ def test_dynamic_qr_target_cannot_streak_three_times():
     configs = admin_get(client, "/admin/qr-configs").json()
     genai = next(i for i in configs["items"] if i["group_type"] == "GENAI")
     assert genai["qr_target_max_consecutive"] == 2
+
+
+def test_dynamic_qr_target_daily_cap_is_configurable():
+    client = TestClient(app)
+    targets = ["https://wa.me/cfg_a", "https://wa.me/cfg_b"]
+    saved = admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_targets": targets,
+            "target_daily_cap": 3,
+            "changed_by": "admin",
+            "reason": "configurable daily cap",
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["target_daily_cap"] == 3
+
+    counts = {u: 0 for u in targets}
+    for _ in range(6):
+        r = client.get("/r/GENAI", follow_redirects=False)
+        assert r.status_code == 302, r.text
+        counts[r.headers["location"]] += 1
+    assert counts["https://wa.me/cfg_a"] == 3
+    assert counts["https://wa.me/cfg_b"] == 3
+
+    blocked = client.get("/r/GENAI", follow_redirects=False)
+    assert blocked.status_code == 429
+
+    bad = admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_targets": targets,
+            "target_daily_cap": 0,
+            "changed_by": "admin",
+        },
+    )
+    assert bad.status_code == 400
+    assert bad.json()["detail"] == "invalid_target_daily_cap"
+
+    configs = admin_get(client, "/admin/qr-configs").json()
+    genai = next(i for i in configs["items"] if i["group_type"] == "GENAI")
+    assert genai["target_daily_cap"] == 3
+    assert genai["qr_target_daily_cap"] == 3
 
 
 def test_dynamic_qr_target_daily_cap_10():
