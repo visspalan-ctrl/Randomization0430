@@ -11,7 +11,7 @@ from app.models import (
 
 PageId = Literal["settings", "sites", "qr", "records"]
 
-ADMIN_UI_BUILD_ID = "2026-07-22-streak-3-then-switch-v1"
+ADMIN_UI_BUILD_ID = "2026-07-22-configurable-streak-v1"
 
 ADMIN_CSS = """
 :root {
@@ -1088,7 +1088,14 @@ def panel_qr() -> str:
       <input id="qrValue" placeholder="https://wa.me/..." oninput="onQrValueInput()" />
       <div id="qrDynamicTargets" style="display:none;margin-top:10px;padding:12px;border:1px solid #bae6fd;border-radius:10px;background:#f0f9ff;">
         <label style="margin:0 0 6px;display:block;font-weight:600;color:#0369a1;">動態跳轉連結池（最多 5 條）</label>
-        <p class="muted" style="margin:0 0 10px;font-size:12px;">印刷用固定碼不變；每次掃碼從下方已填連結中<strong>隨機</strong>跳轉一條。至少 1 條、最多 5 條。<strong>每條連結各自設定</strong>當日出現上限（香港日，預設 10，可改 1–200）；且<strong>同一連結最多連續出現 3 次，連續三次之後必須換其他連結</strong>。當日全部達上限後掃碼將暫時無法跳轉，翌日自動重置。</p>
+        <p class="muted" style="margin:0 0 10px;font-size:12px;">印刷用固定碼不變；每次掃碼從下方已填連結中<strong>隨機</strong>跳轉一條。至少 1 條、最多 5 條。<strong>每條連結各自設定</strong>當日出現上限（香港日，預設 10，可改 1–200）。下方可設定「同一連結連續出現幾次後必須換鏈」（預設 3，可改 1–20）。當日全部達上限後掃碼將暫時無法跳轉，翌日自動重置。</p>
+        <div style="display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin:0 0 12px;">
+          <div>
+            <label for="qrTargetMaxConsecutive">連續出現幾次後換連結</label>
+            <input id="qrTargetMaxConsecutive" type="number" min="1" max="20" value="3" style="max-width:100px;" />
+          </div>
+          <p class="muted" style="margin:0;font-size:12px;align-self:center;">例如填 3：同一連結最多連續 3 次，第 4 次必須換其他連結</p>
+        </div>
         <div id="qrTargetsDailyHint" class="muted" style="margin:0 0 10px;font-size:12px;color:#0c4a6e;"></div>
         <div style="display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin:0 0 8px;">
           <div style="flex:1 1 16rem;min-width:12rem;">
@@ -2474,6 +2481,11 @@ ADMIN_SCRIPTS = """
       ? current.qr_target_items
       : (Array.isArray(current.qr_targets_daily) ? current.qr_targets_daily : []);
     fillDynamicTargets(targets, targetItems);
+    const streakInp = document.getElementById("qrTargetMaxConsecutive");
+    if (streakInp) {
+      const streakVal = current.target_max_consecutive || current.qr_target_max_consecutive || 3;
+      streakInp.value = String(streakVal);
+    }
     const stableInp = document.getElementById("qrStableUrl");
     if (stableInp) stableInp.value = current.stable_qr_url || "";
     const logoEl = document.getElementById("qrLogoCurrent");
@@ -2517,7 +2529,9 @@ ADMIN_SCRIPTS = """
           dailyHint.textContent = "";
         }
       }
-      text.textContent = "v" + current.version + " · 動態碼池 " + targets.length + " 條（每條可設獨立每日上限） → " + (targets.join(" | ") || "");
+      text.textContent = "v" + current.version + " · 動態碼池 " + targets.length + " 條（連續≤"
+        + (current.target_max_consecutive || current.qr_target_max_consecutive || 3)
+        + " 次後換鏈；每條可設獨立每日上限） → " + (targets.join(" | ") || "");
       if (img) { img.style.display = "none"; }
       return;
     }
@@ -2684,6 +2698,7 @@ ADMIN_SCRIPTS = """
     let qrValue = (document.getElementById("qrValue")?.value || "").trim();
     let qrTargets = null;
     let qrTargetItems = null;
+    let targetMaxConsecutive = null;
     if (mode === "dynamic") {
       let collected = collectDynamicTargetItems();
       if (collected.error) {
@@ -2724,6 +2739,13 @@ ADMIN_SCRIPTS = """
         }
       }
       qrValue = qrTargets[0];
+      const streakEl = document.getElementById("qrTargetMaxConsecutive");
+      const streakRaw = streakEl ? Number(streakEl.value) : NaN;
+      if (!Number.isFinite(streakRaw) || streakRaw < 1 || streakRaw > 20) {
+        resultBox.textContent = "[ERROR] 「連續出現幾次後換連結」須為 1–20 的整數";
+        return;
+      }
+      targetMaxConsecutive = Math.floor(streakRaw);
     }
     if (mode === "static_url" && !qrValue) {
       resultBox.textContent = "[ERROR] 請填寫二維碼連結（URL）";
@@ -2741,13 +2763,14 @@ ADMIN_SCRIPTS = """
       if (mode === "dynamic") {
         body.qr_target_items = qrTargetItems;
         body.qr_targets = qrTargets;
+        body.target_max_consecutive = targetMaxConsecutive;
       }
       const res = await api("/admin/qr-config", "POST", body);
       if (mode === "dynamic") rememberDynamicQrTarget(group, qrValue);
       await loadQrCurrent();
       const capsSummary = (qrTargetItems || []).map(function(it) { return it.daily_cap; }).join("/");
       resultBox.textContent = mode === "dynamic"
-        ? ("[OK] 已儲存動態二維碼連結池（" + (qrTargets ? qrTargets.length : 1) + " 條；各連結當日上限 " + capsSummary + "）\\n固定碼: " + (res.stable_qr_path || ("/r/" + group)))
+        ? ("[OK] 已儲存動態二維碼連結池（" + (qrTargets ? qrTargets.length : 1) + " 條；各連結當日上限 " + capsSummary + "；連續 " + targetMaxConsecutive + " 次後換鏈）\\n固定碼: " + (res.stable_qr_path || ("/r/" + group)))
         : "[OK] 已儲存二維碼設定（模式: " + mode + "）";
     } catch (err) {
       const detail = err && err.message ? String(err.message) : String(err);
@@ -2759,6 +2782,8 @@ ADMIN_SCRIPTS = """
         resultBox.textContent = "[ERROR] 動態跳轉連結最多 5 條";
       } else if (detail === "invalid_target_daily_cap") {
         resultBox.textContent = "[ERROR] 當日出現上限須為 1–200 的整數（每條連結各自設定）";
+      } else if (detail === "invalid_target_max_consecutive") {
+        resultBox.textContent = "[ERROR] 「連續出現幾次後換連結」須為 1–20 的整數";
       } else {
         resultBox.textContent = "[ERROR] 儲存二維碼失敗\\n" + detail;
       }

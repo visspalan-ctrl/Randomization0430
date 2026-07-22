@@ -680,7 +680,7 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     page = admin_get(client, "/admin/web", params={"page": "qr"})
     assert page.status_code == 200
     html = page.text
-    assert "2026-07-22-streak-3-then-switch-v1" in html
+    assert "2026-07-22-configurable-streak-v1" in html
     assert "二維碼（WhatsApp/微信）" in html
     assert "上傳微信二維碼" in html
     assert "儲存主碼設定" in html
@@ -689,10 +689,11 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     assert 'id="qrDynamicTargets"' in html
     assert 'id="qrTargetCap1"' in html
     assert 'id="qrTargetCap5"' in html
+    assert 'id="qrTargetMaxConsecutive"' in html
     assert 'id="qrTargetDailyCap"' not in html
     assert "qrTarget5" in html
     assert "每條連結各自設定" in html
-    assert "連續三次之後必須換其他連結" in html
+    assert "連續出現幾次後換連結" in html
     assert "confirm_replace_dynamic" in html
     assert "REPLACE" in html
     assert "已選擇微信圖片" in html
@@ -706,7 +707,7 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
 
 
 def test_dynamic_qr_target_must_switch_after_three_consecutive():
-    """同一連結最多連續 3 次，連續三次之後必須換其他連結（尚有其他可用連結時）。"""
+    """預設：同一連結最多連續 3 次，之後必須換其他連結。"""
     client = TestClient(app)
     targets = [
         "https://wa.me/streak_a",
@@ -755,6 +756,61 @@ def test_dynamic_qr_target_must_switch_after_three_consecutive():
     configs = admin_get(client, "/admin/qr-configs").json()
     genai = next(i for i in configs["items"] if i["group_type"] == "GENAI")
     assert genai["qr_target_max_consecutive"] == 3
+    assert genai["target_max_consecutive"] == 3
+
+
+def test_dynamic_qr_target_max_consecutive_is_configurable():
+    """後台可設定連續出現幾次後換鏈。"""
+    client = TestClient(app)
+    targets = [
+        "https://wa.me/cfg_streak_a",
+        "https://wa.me/cfg_streak_b",
+        "https://wa.me/cfg_streak_c",
+    ]
+    saved = admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_targets": targets,
+            "target_max_consecutive": 1,
+            "changed_by": "admin",
+            "reason": "configurable streak",
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["target_max_consecutive"] == 1
+
+    sequence = []
+    for _ in range(20):
+        r = client.get("/r/GENAI", follow_redirects=False)
+        if r.status_code == 429:
+            break
+        assert r.status_code == 302, r.text
+        sequence.append(r.headers["location"])
+    assert len(sequence) >= 2
+    for i in range(len(sequence) - 1):
+        assert sequence[i] != sequence[i + 1], sequence[i : i + 2]
+
+    bad = admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_targets": targets,
+            "target_max_consecutive": 0,
+            "changed_by": "admin",
+        },
+    )
+    assert bad.status_code == 400
+    assert bad.json()["detail"] == "invalid_target_max_consecutive"
+
+    configs = admin_get(client, "/admin/qr-configs").json()
+    genai = next(i for i in configs["items"] if i["group_type"] == "GENAI")
+    assert genai["target_max_consecutive"] == 1
+    assert genai["qr_target_max_consecutive"] == 1
 
 
 def test_dynamic_qr_target_daily_cap_is_configurable():

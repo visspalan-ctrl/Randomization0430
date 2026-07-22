@@ -67,6 +67,8 @@ class QRConfig(Base):
     qr_targets_json: Mapped[str | None] = mapped_column(String(4096), nullable=True)
     # 每條動態連結每個香港日最多出現次數（後台可調，預設 10）
     target_daily_cap: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    # 同一連結連續出現幾次後必須換鏈（後台可調，預設 3）
+    target_max_consecutive: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
     qr_logo_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     wechat_qr_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)

@@ -95,8 +95,9 @@ QR_MODES = frozenset({"dynamic", "static_url", "static_image"})
 DYNAMIC_QR_TARGET_MAX = 5
 DYNAMIC_QR_TARGET_DAILY_MAX_DEFAULT = 10  # 每條連結每日上限預設值（後台可改）
 DYNAMIC_QR_TARGET_DAILY_MAX_LIMIT = 200  # 後台可設上限的硬頂
-# 同一連結最多連續出現次數；達此數後下一次必須換其他連結
-DYNAMIC_QR_TARGET_MAX_CONSECUTIVE = 3
+# 同一連結最多連續出現次數（後台可調）；達此數後下一次必須換其他連結
+DYNAMIC_QR_TARGET_MAX_CONSECUTIVE_DEFAULT = 3
+DYNAMIC_QR_TARGET_MAX_CONSECUTIVE_LIMIT = 20
 QR_GROUP_COLORS: dict[str, dict[str, str]] = {
     "GENAI": {"dark": "#dc2626", "light": "#ffffff"},
     "HUMAN": {"dark": "#2563eb", "light": "#ffffff"},
@@ -373,6 +374,19 @@ def ensure_schema_migrations() -> None:
                     "WHERE target_daily_cap IS NULL"
                 )
             )
+        qr_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('qr_configs')")).fetchall()]
+        if qr_cols and "target_max_consecutive" not in qr_cols:
+            conn.execute(
+                text(
+                    f"ALTER TABLE qr_configs ADD COLUMN target_max_consecutive INTEGER DEFAULT {DYNAMIC_QR_TARGET_MAX_CONSECUTIVE_DEFAULT}"
+                )
+            )
+            conn.execute(
+                text(
+                    f"UPDATE qr_configs SET target_max_consecutive = {DYNAMIC_QR_TARGET_MAX_CONSECUTIVE_DEFAULT} "
+                    "WHERE target_max_consecutive IS NULL"
+                )
+            )
         rr_cols = [row[1] for row in conn.execute(text("PRAGMA table_info('randomization_records')")).fetchall()]
         if rr_cols and "trial_status" not in rr_cols:
             conn.execute(text("ALTER TABLE randomization_records ADD COLUMN trial_status VARCHAR(16) DEFAULT 'trial'"))
@@ -528,6 +542,8 @@ class QRUpdateRequest(BaseModel):
     qr_target_items: list[QRTargetItem] | None = None
     # 組級預設每日上限（當某條未單獨設定時回退）；仍保留兼容
     target_daily_cap: int | None = None
+    # 同一連結連續出現幾次後必須換鏈（動態模式）
+    target_max_consecutive: int | None = None
     changed_by: str
     reason: str = ""
 
@@ -568,6 +584,20 @@ def _normalize_target_daily_cap(value: int | None, *, required: bool = False) ->
     return cap
 
 
+def _normalize_target_max_consecutive(value: int | None, *, required: bool = False) -> int | None:
+    if value is None:
+        if required:
+            return DYNAMIC_QR_TARGET_MAX_CONSECUTIVE_DEFAULT
+        return None
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="invalid_target_max_consecutive")
+    if n < 1 or n > DYNAMIC_QR_TARGET_MAX_CONSECUTIVE_LIMIT:
+        raise HTTPException(status_code=400, detail="invalid_target_max_consecutive")
+    return n
+
+
 def _daily_cap_from_config(cfg: QRConfig) -> int:
     """組級預設每日上限（單條未指定時回退）。"""
     raw = getattr(cfg, "target_daily_cap", None)
@@ -580,6 +610,20 @@ def _daily_cap_from_config(cfg: QRConfig) -> int:
     if cap > DYNAMIC_QR_TARGET_DAILY_MAX_LIMIT:
         return DYNAMIC_QR_TARGET_DAILY_MAX_LIMIT
     return cap
+
+
+def _max_consecutive_from_config(cfg: QRConfig) -> int:
+    """同一連結連續出現上限（達此數後下一次必須換鏈）。"""
+    raw = getattr(cfg, "target_max_consecutive", None)
+    try:
+        n = int(raw) if raw is not None else DYNAMIC_QR_TARGET_MAX_CONSECUTIVE_DEFAULT
+    except (TypeError, ValueError):
+        n = DYNAMIC_QR_TARGET_MAX_CONSECUTIVE_DEFAULT
+    if n < 1:
+        return 1
+    if n > DYNAMIC_QR_TARGET_MAX_CONSECUTIVE_LIMIT:
+        return DYNAMIC_QR_TARGET_MAX_CONSECUTIVE_LIMIT
+    return n
 
 
 def _parse_target_entry(item: object, default_cap: int) -> dict[str, object] | None:
@@ -745,13 +789,14 @@ def _pick_dynamic_target(cfg: QRConfig, db: Session, day_key: str | None = None)
     if not available:
         raise HTTPException(status_code=429, detail="dynamic_qr_daily_cap_reached")
 
-    # 同一連結已連續出現 MAX_CONSECUTIVE 次後，必須換其他仍可用的連結
+    # 同一連結已連續出現達上限後，必須換其他仍可用的連結
+    max_consecutive = _max_consecutive_from_config(cfg)
     state = _get_streak_state(db, cfg.group_type)
     streak_blocked = ""
     if (
         state is not None
         and state.last_target_url
-        and int(state.consecutive_count or 0) >= DYNAMIC_QR_TARGET_MAX_CONSECUTIVE
+        and int(state.consecutive_count or 0) >= max_consecutive
     ):
         streak_blocked = state.last_target_url
         switched = [u for u in available if u != streak_blocked]
@@ -816,7 +861,9 @@ def _serialize_qr_config(
         item["qr_targets_count"] = len(targets)
         item["qr_target_daily_cap"] = default_cap
         item["target_daily_cap"] = default_cap
-        item["qr_target_max_consecutive"] = DYNAMIC_QR_TARGET_MAX_CONSECUTIVE
+        max_consecutive = _max_consecutive_from_config(cfg)
+        item["qr_target_max_consecutive"] = max_consecutive
+        item["target_max_consecutive"] = max_consecutive
         day = hk_date_stamp()
         counts = _daily_hit_counts(db, cfg.group_type, day, targets) if db is not None else {}
         item["qr_targets_daily"] = [
@@ -835,7 +882,7 @@ def _serialize_qr_config(
                 item["qr_target_streak"] = {
                     "last_url": streak.last_target_url,
                     "consecutive_count": int(streak.consecutive_count or 0),
-                    "must_switch_next": int(streak.consecutive_count or 0) >= DYNAMIC_QR_TARGET_MAX_CONSECUTIVE,
+                    "must_switch_next": int(streak.consecutive_count or 0) >= max_consecutive,
                 }
     return item
 
@@ -2472,10 +2519,15 @@ def update_qr_config(payload: QRUpdateRequest, db: Session = Depends(get_db)):
     qr_value = (payload.qr_value or "").strip()
     targets_json: str | None = None
     daily_cap_to_set: int | None = None
+    max_consecutive_to_set: int | None = None
     if payload.qr_mode == "dynamic":
         daily_cap_to_set = None
         if payload.target_daily_cap is not None:
             daily_cap_to_set = _normalize_target_daily_cap(payload.target_daily_cap, required=True)
+        if payload.target_max_consecutive is not None:
+            max_consecutive_to_set = _normalize_target_max_consecutive(
+                payload.target_max_consecutive, required=True
+            )
         # 單條未帶 daily_cap 時的回退：組級傳入值 → 預設 10
         default_cap = (
             int(daily_cap_to_set)
@@ -2517,6 +2569,11 @@ def update_qr_config(payload: QRUpdateRequest, db: Session = Depends(get_db)):
                 if daily_cap_to_set is not None
                 else DYNAMIC_QR_TARGET_DAILY_MAX_DEFAULT
             ),
+            target_max_consecutive=(
+                max_consecutive_to_set
+                if max_consecutive_to_set is not None
+                else DYNAMIC_QR_TARGET_MAX_CONSECUTIVE_DEFAULT
+            ),
             changed_by=payload.changed_by,
             reason=payload.reason,
         )
@@ -2530,6 +2587,10 @@ def update_qr_config(payload: QRUpdateRequest, db: Session = Depends(get_db)):
             cfg.target_daily_cap = daily_cap_to_set
         elif payload.qr_mode == "dynamic" and not getattr(cfg, "target_daily_cap", None):
             cfg.target_daily_cap = DYNAMIC_QR_TARGET_DAILY_MAX_DEFAULT
+        if max_consecutive_to_set is not None:
+            cfg.target_max_consecutive = max_consecutive_to_set
+        elif payload.qr_mode == "dynamic" and not getattr(cfg, "target_max_consecutive", None):
+            cfg.target_max_consecutive = DYNAMIC_QR_TARGET_MAX_CONSECUTIVE_DEFAULT
         cfg.changed_by = payload.changed_by
         cfg.reason = payload.reason
     db.commit()
@@ -2543,6 +2604,9 @@ def update_qr_config(payload: QRUpdateRequest, db: Session = Depends(get_db)):
             "qr_mode": cfg.qr_mode,
             "qr_targets_count": len(_targets_from_config(cfg)) if payload.qr_mode == "dynamic" else 0,
             "target_daily_cap": _daily_cap_from_config(cfg) if payload.qr_mode == "dynamic" else None,
+            "target_max_consecutive": (
+                _max_consecutive_from_config(cfg) if payload.qr_mode == "dynamic" else None
+            ),
         },
     )
     result = {"ok": True, "group": payload.group, "version": cfg.version, "qr_mode": cfg.qr_mode}
@@ -2553,6 +2617,8 @@ def update_qr_config(payload: QRUpdateRequest, db: Session = Depends(get_db)):
         result["qr_target_items"] = entries
         result["target_daily_cap"] = _daily_cap_from_config(cfg)
         result["qr_target_daily_cap"] = result["target_daily_cap"]
+        result["target_max_consecutive"] = _max_consecutive_from_config(cfg)
+        result["qr_target_max_consecutive"] = result["target_max_consecutive"]
     return result
 
 
