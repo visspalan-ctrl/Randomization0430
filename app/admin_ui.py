@@ -11,7 +11,7 @@ from app.models import (
 
 PageId = Literal["settings", "sites", "qr", "records"]
 
-ADMIN_UI_BUILD_ID = "2026-07-23-qr-link-save-btn-v1"
+ADMIN_UI_BUILD_ID = "2026-07-23-qr-remove-logo-ui-v1"
 QR_TARGET_POOL_MAX = 30
 
 ADMIN_CSS = """
@@ -1105,18 +1105,11 @@ def panel_qr() -> str:
           <button type="button" id="qrTargetSaveBtn" onclick="saveQrLinks()" style="background:#059669;border-color:#047857;">保存連結</button>
           <span id="qrTargetCountHint" class="muted" style="font-size:12px;"></span>
         </div>
-        <p class="muted" style="margin:8px 0 0;font-size:12px;color:#0c4a6e;">「保存連結」只寫入當前組的渠道名稱、跳轉 URL、當日上限與啟用狀態；微信圖 / Logo 請用對應上傳按鈕。</p>
+        <p class="muted" style="margin:8px 0 0;font-size:12px;color:#0c4a6e;">「保存連結」只寫入當前組的渠道名稱、跳轉 URL、當日上限與啟用狀態；微信圖請用上方綠色「上傳微信二維碼」。</p>
       </div>
       <div id="qrDynamicExtras" style="display:none;margin-top:10px;">
         <label>固定二維碼連結（印刷用，不變）</label>
         <input id="qrStableUrl" readonly />
-        <label id="qrLogoLabel" style="margin-top:12px;">中心 Logo（可選，PNG/JPG）</label>
-        <input id="qrLogoFile" type="file" accept="image/png,image/jpeg,image/webp" />
-        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
-          <button type="button" class="secondary" onclick="uploadQrLogo()">上傳 Logo</button>
-          <button type="button" class="secondary" onclick="removeQrLogo()">移除 Logo</button>
-        </div>
-        <div id="qrLogoCurrent" class="muted" style="margin-top:6px;"></div>
       </div>
       <div id="qrStaticImageBlock" style="display:none;margin-top:12px;padding:12px;border:1px solid #fecaca;border-radius:10px;background:#fef2f2;">
         <label id="qrFileLabel" style="color:#991b1b;">上傳靜態主二維碼圖片（會覆蓋動態跳轉目標）</label>
@@ -2606,36 +2599,6 @@ ADMIN_SCRIPTS = """
     window.open(url, "_blank");
   }
 
-  async function uploadQrLogo() {
-    const fileInput = document.getElementById("qrLogoFile");
-    if (!fileInput || !fileInput.files || !fileInput.files.length) {
-      resultBox.textContent = "[ERROR] 請選擇 Logo 圖片";
-      return;
-    }
-    const fd = new FormData();
-    fd.append("group", document.getElementById("qrGroup").value);
-    fd.append("changed_by", document.getElementById("qrBy").value || "admin");
-    fd.append("file", fileInput.files[0]);
-    const res = await fetch("/admin/qr-config/logo", { method: "POST", body: fd });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) { resultBox.textContent = "[ERROR] logo upload\\n" + JSON.stringify(data, null, 2); return; }
-    resultBox.textContent = "[OK] Logo 已上傳";
-    fileInput.value = "";
-    await loadQrCurrent({ preferDraft: false });
-    updateQrLivePreview();
-  }
-
-  async function removeQrLogo() {
-    const group = document.getElementById("qrGroup")?.value;
-    if (!group) return;
-    const res = await fetch("/admin/qr-config/logo?group=" + encodeURIComponent(group), { method: "DELETE" });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) { resultBox.textContent = "[ERROR] remove logo\\n" + JSON.stringify(data, null, 2); return; }
-    resultBox.textContent = "[OK] Logo 已移除";
-    await loadQrCurrent({ preferDraft: false });
-    updateQrLivePreview();
-  }
-
   async function uploadWechatQr() {
     const fileInput = document.getElementById("qrWechatFile");
     if (!fileInput || !fileInput.files || !fileInput.files.length) {
@@ -2718,8 +2681,6 @@ ADMIN_SCRIPTS = """
     if (!current) {
       text.textContent = "尚無已儲存設定，可選擇模式並預覽後點擊儲存";
       if (img) img.style.display = "none";
-      const logoEl = document.getElementById("qrLogoCurrent");
-      if (logoEl) logoEl.textContent = "尚未上傳中心 Logo";
       window.__qrServerMode = "";
       window.__qrServerValue = "";
       syncQrModeRadio("dynamic");
@@ -2757,12 +2718,6 @@ ADMIN_SCRIPTS = """
     }
     const stableInp = document.getElementById("qrStableUrl");
     if (stableInp) stableInp.value = current.stable_qr_url || "";
-    const logoEl = document.getElementById("qrLogoCurrent");
-    if (logoEl) {
-      logoEl.textContent = current.qr_logo_path
-        ? "當前 Logo：" + current.qr_logo_path
-        : "尚未上傳中心 Logo";
-    }
     const wechatEl = document.getElementById("qrWechatCurrent");
     const wechatPrev = document.getElementById("qrWechatPreview");
     if (wechatEl) {
