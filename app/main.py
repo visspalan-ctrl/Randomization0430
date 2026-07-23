@@ -540,6 +540,7 @@ class QRTargetItem(BaseModel):
     url: str
     name: str | None = None  # 渠道命名，例如「渠道A」
     daily_cap: int | None = None
+    enabled: bool | None = True  # 是否啟用；停用後不參與掃碼跳轉
 
 
 class QRUpdateRequest(BaseModel):
@@ -650,7 +651,7 @@ def _parse_target_entry(item: object, default_cap: int, *, index: int = 1) -> di
         url = item.strip()
         if not url:
             return None
-        return {"url": url, "name": fallback_name, "daily_cap": default_cap}
+        return {"url": url, "name": fallback_name, "daily_cap": default_cap, "enabled": True}
     if isinstance(item, dict):
         url = str(item.get("url") or "").strip()
         if not url:
@@ -668,8 +669,24 @@ def _parse_target_entry(item: object, default_cap: int, *, index: int = 1) -> di
             item.get("name") if item.get("name") is not None else item.get("channel"),
             fallback=fallback_name,
         )
-        return {"url": url, "name": name or fallback_name, "daily_cap": cap}
+        enabled_raw = item.get("enabled", True)
+        if isinstance(enabled_raw, str):
+            enabled = enabled_raw.strip().lower() not in {"0", "false", "no", "off", ""}
+        else:
+            enabled = bool(True if enabled_raw is None else enabled_raw)
+        return {
+            "url": url,
+            "name": name or fallback_name,
+            "daily_cap": cap,
+            "enabled": enabled,
+        }
     return None
+
+
+def _entry_is_enabled(entry: dict[str, object] | None) -> bool:
+    if not entry:
+        return False
+    return bool(entry.get("enabled", True))
 
 
 def _normalize_dynamic_target_entries(
@@ -677,7 +694,7 @@ def _normalize_dynamic_target_entries(
     fallback_value: str = "",
     default_cap: int = DYNAMIC_QR_TARGET_DAILY_MAX_DEFAULT,
 ) -> list[dict[str, object]]:
-    """整理動態跳轉池條目：{url, name, daily_cap}，去重保序，最多 DYNAMIC_QR_TARGET_MAX。"""
+    """整理動態跳轉池條目：{url, name, daily_cap, enabled}，去重保序，最多 DYNAMIC_QR_TARGET_MAX。"""
     seen_urls: set[str] = set()
     seen_names: set[str] = set()
     out: list[dict[str, object]] = []
@@ -703,6 +720,7 @@ def _normalize_dynamic_target_entries(
             if len(name) > DYNAMIC_QR_TARGET_NAME_MAX_LEN:
                 name = name[:DYNAMIC_QR_TARGET_NAME_MAX_LEN]
         entry["name"] = name
+        entry["enabled"] = _entry_is_enabled(entry)
         seen_urls.add(url)
         seen_names.add(name.lower())
         out.append(entry)
@@ -740,7 +758,7 @@ def _target_entries_from_config(cfg: QRConfig) -> list[dict[str, object]]:
             pass
     value = (cfg.qr_value or "").strip()
     if value:
-        return [{"url": value, "name": "渠道1", "daily_cap": default_cap}]
+        return [{"url": value, "name": "渠道1", "daily_cap": default_cap, "enabled": True}]
     return []
 
 
@@ -834,19 +852,22 @@ def _update_streak_state(db: Session, group: str, chosen: str) -> int:
 
 
 def _pick_dynamic_target(cfg: QRConfig, db: Session, day_key: str | None = None) -> tuple[str, str]:
-    """從連結池挑選目標：避開當日已滿額，且同一連結不可連續達上限後仍再出。
+    """從連結池挑選目標：僅已啟用連結；避開當日已滿額，且同一連結不可連續達上限後仍再出。
 
     返回 (target_url, channel_name)。
     """
     entries = _target_entries_from_config(cfg)
     if not entries:
         raise HTTPException(status_code=404, detail="target_not_configured")
+    enabled_entries = [e for e in entries if _entry_is_enabled(e)]
+    if not enabled_entries:
+        raise HTTPException(status_code=503, detail="dynamic_qr_no_enabled_target")
     day = day_key or hk_date_stamp()
-    targets = [str(e["url"]) for e in entries]
+    targets = [str(e["url"]) for e in enabled_entries]
     counts = _daily_hit_counts(db, cfg.group_type, day, targets)
     available = [
         str(e["url"])
-        for e in entries
+        for e in enabled_entries
         if counts.get(str(e["url"]), 0) < int(e["daily_cap"])
     ]
     if not available:
@@ -868,7 +889,7 @@ def _pick_dynamic_target(cfg: QRConfig, db: Session, day_key: str | None = None)
 
     chosen = available[0] if len(available) == 1 else secrets.choice(available)
     chosen_name = ""
-    for e in entries:
+    for e in enabled_entries:
         if str(e["url"]) == chosen:
             chosen_name = str(e.get("name") or "")
             break
@@ -978,6 +999,7 @@ def _serialize_qr_config(
                 "name": str(e.get("name") or ""),
                 "channel": str(e.get("name") or ""),
                 "daily_cap": int(e["daily_cap"]),
+                "enabled": _entry_is_enabled(e),
                 "hits_today": int(counts.get(str(e["url"]), 0)),
                 "hits_total": int(totals.get(str(e["url"]), 0)),
                 "remaining_today": max(0, int(e["daily_cap"]) - int(counts.get(str(e["url"]), 0))),
@@ -989,12 +1011,15 @@ def _serialize_qr_config(
                 "name": str(e.get("name") or ""),
                 "url": str(e["url"]),
                 "daily_cap": int(e["daily_cap"]),
+                "enabled": _entry_is_enabled(e),
                 "hits_today": int(counts.get(str(e["url"]), 0)),
                 "hits_total": int(totals.get(str(e["url"]), 0)),
                 "remaining_today": max(0, int(e["daily_cap"]) - int(counts.get(str(e["url"]), 0))),
             }
             for e in entries
         ]
+        item["qr_targets_enabled_count"] = sum(1 for e in entries if _entry_is_enabled(e))
+        item["qr_targets_disabled_count"] = len(entries) - int(item["qr_targets_enabled_count"])
         item["qr_targets_daily_day"] = day
         if db is not None:
             streak = _get_streak_state(db, cfg.group_type)
@@ -2700,7 +2725,12 @@ def update_qr_config(payload: QRUpdateRequest, db: Session = Depends(get_db)):
                 if not name:
                     # 允許空名：後續 normalize 會自動填「渠道N」
                     name = ""
-                raw_items.append({"url": it.url, "name": name, "daily_cap": it.daily_cap})
+                raw_items.append({
+                    "url": it.url,
+                    "name": name,
+                    "daily_cap": it.daily_cap,
+                    "enabled": True if it.enabled is None else bool(it.enabled),
+                })
         elif payload.qr_targets is not None:
             if len(payload.qr_targets) > DYNAMIC_QR_TARGET_MAX:
                 raise HTTPException(status_code=400, detail="dynamic_qr_targets_too_many")
@@ -2708,9 +2738,12 @@ def update_qr_config(payload: QRUpdateRequest, db: Session = Depends(get_db)):
         entries = _normalize_dynamic_target_entries(raw_items, qr_value, int(default_cap))
         if not entries:
             raise HTTPException(status_code=400, detail="dynamic_qr_target_required")
+        if not any(_entry_is_enabled(e) for e in entries):
+            raise HTTPException(status_code=400, detail="dynamic_qr_enabled_target_required")
         for entry in entries:
             _validate_dynamic_target_url(str(entry["url"]))
-        qr_value = str(entries[0]["url"])
+        # qr_value 同步為第一條「已啟用」連結
+        qr_value = next(str(e["url"]) for e in entries if _entry_is_enabled(e))
         targets_json = json.dumps(entries, ensure_ascii=False)
     if payload.qr_mode == "static_url" and not qr_value:
         raise HTTPException(status_code=400, detail="static_url_required")
@@ -2774,6 +2807,8 @@ def update_qr_config(payload: QRUpdateRequest, db: Session = Depends(get_db)):
         result["stable_qr_path"] = _stable_qr_path(payload.group)
         result["qr_targets"] = [str(e["url"]) for e in entries]
         result["qr_target_items"] = entries
+        result["qr_targets_enabled_count"] = sum(1 for e in entries if _entry_is_enabled(e))
+        result["qr_targets_disabled_count"] = len(entries) - int(result["qr_targets_enabled_count"])
         result["target_daily_cap"] = _daily_cap_from_config(cfg)
         result["qr_target_daily_cap"] = result["target_daily_cap"]
         result["target_max_consecutive"] = _max_consecutive_from_config(cfg)

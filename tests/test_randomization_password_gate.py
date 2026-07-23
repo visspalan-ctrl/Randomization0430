@@ -680,7 +680,7 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     page = admin_get(client, "/admin/web", params={"page": "qr"})
     assert page.status_code == 200
     html = page.text
-    assert "2026-07-23-qr-pool-draft-v1" in html
+    assert "2026-07-23-qr-link-enable-v1" in html
     assert "二維碼（WhatsApp/微信）" in html
     assert "上傳微信二維碼" in html
     assert "儲存主碼設定" in html
@@ -700,6 +700,9 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     assert "snapshotQrPoolDraft" in html
     assert "reloadQrFromServer" in html
     assert "干預組與對照組的連結池" in html
+    assert "qr-target-enable" in html
+    assert "已啟用" in html
+    assert "已停用" in html
     assert "confirm_replace_dynamic" in html
     assert "REPLACE" in html
     assert "已選擇微信圖片" in html
@@ -709,7 +712,7 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     records_page = admin_get(client, "/admin/web", params={"page": "records"})
     assert records_page.status_code == 200
     records_html = records_page.text
-    assert "2026-07-23-qr-pool-draft-v1" in records_html
+    assert "2026-07-23-qr-link-enable-v1" in records_html
     assert 'id="recordsFilterChannelName"' in records_html
     assert 'id="recordsChannelCounts"' in records_html
     assert "rec-channel-name-input" in records_html
@@ -1060,6 +1063,58 @@ def test_both_groups_can_save_many_named_channels():
     assert len(human["qr_target_items"]) == 5
     assert {it["name"] for it in genai["qr_target_items"]} == {f"干預渠道{i}" for i in range(1, 9)}
     assert {it["name"] for it in human["qr_target_items"]} == {f"對照渠道{i}" for i in range(1, 6)}
+
+
+def test_dynamic_qr_link_enable_disable_controls_redirect():
+    """停用連結不參與掃碼跳轉；至少需啟用 1 條才能儲存。"""
+    client = TestClient(app)
+    items = [
+        {"url": "https://wa.me/en_a", "name": "啟用渠道", "daily_cap": 20, "enabled": True},
+        {"url": "https://wa.me/en_b", "name": "停用渠道", "daily_cap": 20, "enabled": False},
+    ]
+    saved = admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_target_items": items,
+            "changed_by": "admin",
+            "reason": "enable toggle",
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["qr_targets_enabled_count"] == 1
+    assert saved.json()["qr_targets_disabled_count"] == 1
+    by_name = {it["name"]: it for it in saved.json()["qr_target_items"]}
+    assert by_name["啟用渠道"]["enabled"] is True
+    assert by_name["停用渠道"]["enabled"] is False
+
+    for _ in range(8):
+        r = client.get("/r/GENAI", follow_redirects=False)
+        assert r.status_code == 302, r.text
+        assert r.headers["location"] == "https://wa.me/en_a"
+
+    all_off = admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_target_items": [
+                {"url": "https://wa.me/off_a", "name": "全關A", "enabled": False},
+                {"url": "https://wa.me/off_b", "name": "全關B", "enabled": False},
+            ],
+            "changed_by": "admin",
+        },
+    )
+    assert all_off.status_code == 400
+    assert all_off.json()["detail"] == "dynamic_qr_enabled_target_required"
+
+    configs = admin_get(client, "/admin/qr-configs").json()
+    genai = next(i for i in configs["items"] if i["group_type"] == "GENAI")
+    assert genai["qr_targets_enabled_count"] == 1
+    assert any(d["name"] == "停用渠道" and d["enabled"] is False for d in genai["qr_channel_stats"])
 
 
 def test_records_list_channel_name_edit_and_options():

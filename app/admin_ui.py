@@ -11,7 +11,7 @@ from app.models import (
 
 PageId = Literal["settings", "sites", "qr", "records"]
 
-ADMIN_UI_BUILD_ID = "2026-07-23-qr-pool-draft-v1"
+ADMIN_UI_BUILD_ID = "2026-07-23-qr-link-enable-v1"
 QR_TARGET_POOL_MAX = 30
 
 ADMIN_CSS = """
@@ -1089,7 +1089,7 @@ def panel_qr() -> str:
       <input id="qrValue" placeholder="https://wa.me/..." oninput="onQrValueInput()" />
       <div id="qrDynamicTargets" style="display:none;margin-top:10px;padding:12px;border:1px solid #bae6fd;border-radius:10px;background:#f0f9ff;">
         <label style="margin:0 0 6px;display:block;font-weight:600;color:#0369a1;">動態跳轉連結池（干預組 / 對照組各自最多 """ + str(QR_TARGET_POOL_MAX) + """ 條）</label>
-        <p class="muted" style="margin:0 0 10px;font-size:12px;">干預組與對照組的連結池<strong>分開儲存</strong>，互不影響；每組可點「添加連結」擴充至最多 """ + str(QR_TARGET_POOL_MAX) + """ 條。印刷用固定碼不變；每次掃碼從下方已填連結中<strong>隨機</strong>跳轉一條。每條請填<strong>渠道名稱</strong>（可留空，儲存時自動命名為渠道1、渠道2…），並可各自設定當日出現上限（香港日，預設 10）。下方可設定「同一連結連續出現幾次後必須換鏈」。當日全部達上限後掃碼將暫時無法跳轉，翌日自動重置。切換組別前未儲存的修改會暫存在本頁，切回仍可繼續編輯。</p>
+        <p class="muted" style="margin:0 0 10px;font-size:12px;">干預組與對照組的連結池<strong>分開儲存</strong>，互不影響；每組可點「添加連結」擴充至最多 """ + str(QR_TARGET_POOL_MAX) + """ 條。每條可用<strong>啟用 / 停用</strong>控制是否參與掃碼跳轉（停用不會刪除，儲存後生效）。印刷用固定碼不變；每次掃碼從<strong>已啟用</strong>連結中<strong>隨機</strong>跳轉一條。每條請填<strong>渠道名稱</strong>（可留空，儲存時自動命名為渠道1、渠道2…），並可各自設定當日出現上限（香港日，預設 10）。下方可設定「同一連結連續出現幾次後必須換鏈」。當日全部已啟用連結達上限後掃碼將暫時無法跳轉，翌日自動重置。切換組別前未儲存的修改會暫存在本頁，切回仍可繼續編輯。</p>
         <div style="display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin:0 0 12px;">
           <div>
             <label for="qrTargetMaxConsecutive">連續出現幾次後換連結</label>
@@ -1101,7 +1101,7 @@ def panel_qr() -> str:
         <div id="qrChannelStats" class="muted" style="margin:0 0 12px;padding:8px 10px;border:1px dashed #7dd3fc;border-radius:8px;background:#f0f9ff;font-size:12px;color:#0c4a6e;display:none;"></div>
         <div id="qrTargetRows"></div>
         <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-          <button type="button" class="secondary" id="qrTargetAddBtn" onclick="addDynamicTargetRow('', 10, true, '')">添加連結</button>
+          <button type="button" class="secondary" id="qrTargetAddBtn" onclick="addDynamicTargetRow('', 10, true, '', true)">添加連結</button>
           <span id="qrTargetCountHint" class="muted" style="font-size:12px;"></span>
         </div>
       </div>
@@ -2156,8 +2156,28 @@ ADMIN_SCRIPTS = """
     const hint = document.getElementById("qrTargetCountHint");
     const addBtn = document.getElementById("qrTargetAddBtn");
     const n = qrTargetRowCount();
-    if (hint) hint.textContent = "目前 " + n + " / " + QR_TARGET_POOL_MAX + " 條";
+    const got = collectDynamicTargetItems({ autoName: false, allowIncomplete: true });
+    const items = (!got.error && got.items) ? got.items : [];
+    const enabledN = items.filter(function(it) { return it.enabled !== false; }).length;
+    if (hint) {
+      hint.textContent = "目前 " + n + " / " + QR_TARGET_POOL_MAX + " 條（已啟用 " + enabledN + " 條）";
+    }
     if (addBtn) addBtn.disabled = n >= QR_TARGET_POOL_MAX;
+  }
+
+  function syncQrTargetEnableButton(row) {
+    if (!row) return;
+    const btn = row.querySelector(".qr-target-enable");
+    const enabled = row.dataset.enabled !== "0";
+    row.style.opacity = enabled ? "1" : "0.55";
+    row.style.background = enabled ? "" : "#f8fafc";
+    if (btn) {
+      btn.textContent = enabled ? "已啟用" : "已停用";
+      btn.title = enabled ? "點擊停用（停用後不參與掃碼跳轉）" : "點擊啟用（啟用後參與掃碼跳轉）";
+      btn.style.background = enabled ? "#059669" : "#94a3b8";
+      btn.style.borderColor = enabled ? "#047857" : "#64748b";
+      btn.style.color = "#fff";
+    }
   }
 
   function renumberQrTargetRows() {
@@ -2190,11 +2210,12 @@ ADMIN_SCRIPTS = """
       }
       const rm = row.querySelector(".qr-target-remove");
       if (rm) rm.style.visibility = rows.length > 1 ? "visible" : "hidden";
+      syncQrTargetEnableButton(row);
     });
     updateQrTargetCountHint();
   }
 
-  function addDynamicTargetRow(url, dailyCap, focus, name) {
+  function addDynamicTargetRow(url, dailyCap, focus, name, enabled) {
     const box = document.getElementById("qrTargetRows");
     if (!box) return null;
     if (qrTargetRowCount() >= QR_TARGET_POOL_MAX) {
@@ -2203,7 +2224,8 @@ ADMIN_SCRIPTS = """
     }
     const row = document.createElement("div");
     row.className = "qr-target-row";
-    row.style.cssText = "display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin:0 0 8px;";
+    row.dataset.enabled = (enabled === false || enabled === 0 || enabled === "0") ? "0" : "1";
+    row.style.cssText = "display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin:0 0 8px;padding:8px;border-radius:8px;border:1px solid #e2e8f0;";
     row.innerHTML =
       "<div style='flex:0 1 9rem;min-width:7rem;'>"
       + "<label class='qr-target-name-label'>渠道名稱</label>"
@@ -2218,11 +2240,16 @@ ADMIN_SCRIPTS = """
       + "<input class='qr-target-cap' type='number' min='1' max='200' value='10' style='max-width:100px;' />"
       + "</div>"
       + "<div style='flex:0 0 auto;'>"
+      + "<label style='display:block;font-size:12px;color:#64748b;'>狀態</label>"
+      + "<button type='button' class='secondary qr-target-enable' style='margin:0;padding:6px 12px;font-size:12px;min-width:4.5rem;'>已啟用</button>"
+      + "</div>"
+      + "<div style='flex:0 0 auto;'>"
       + "<button type='button' class='secondary qr-target-remove' style='margin:0;padding:6px 10px;font-size:12px;'>移除</button>"
       + "</div>";
     const nameInp = row.querySelector(".qr-target-name");
     const urlInp = row.querySelector(".qr-target-url");
     const capInp = row.querySelector(".qr-target-cap");
+    const enableBtn = row.querySelector(".qr-target-enable");
     if (nameInp) {
       if (name) nameInp.value = String(name);
       nameInp.addEventListener("input", onDynamicTargetsInput);
@@ -2236,6 +2263,13 @@ ADMIN_SCRIPTS = """
       capInp.value = String(cap);
       capInp.addEventListener("input", onDynamicTargetsInput);
     }
+    if (enableBtn) {
+      enableBtn.addEventListener("click", function() {
+        row.dataset.enabled = row.dataset.enabled === "0" ? "1" : "0";
+        syncQrTargetEnableButton(row);
+        onDynamicTargetsInput();
+      });
+    }
     const rm = row.querySelector(".qr-target-remove");
     if (rm) {
       rm.addEventListener("click", function() {
@@ -2243,6 +2277,8 @@ ADMIN_SCRIPTS = """
           if (nameInp) nameInp.value = "";
           if (urlInp) urlInp.value = "";
           if (capInp) capInp.value = "10";
+          row.dataset.enabled = "1";
+          syncQrTargetEnableButton(row);
           onDynamicTargetsInput();
           return;
         }
@@ -2261,7 +2297,7 @@ ADMIN_SCRIPTS = """
     const box = document.getElementById("qrTargetRows");
     if (!box) return;
     const need = Math.max(1, Math.min(QR_TARGET_POOL_MAX, Number(minCount) || 1));
-    while (qrTargetRowCount() < need) addDynamicTargetRow("", 10, false, "");
+    while (qrTargetRowCount() < need) addDynamicTargetRow("", 10, false, "", true);
     while (qrTargetRowCount() > need) {
       const last = box.querySelector(".qr-target-row:last-child");
       if (!last) break;
@@ -2273,6 +2309,7 @@ ADMIN_SCRIPTS = """
   function collectDynamicTargetItems(opts) {
     const options = opts || {};
     const autoName = options.autoName !== false;
+    const allowIncomplete = !!options.allowIncomplete;
     const box = document.getElementById("qrTargetRows");
     const rows = box ? box.querySelectorAll(".qr-target-row") : [];
     const out = [];
@@ -2285,18 +2322,25 @@ ADMIN_SCRIPTS = """
       const capInp = row.querySelector(".qr-target-cap");
       const url = (urlInp && urlInp.value ? urlInp.value : "").trim();
       let name = (nameInp && nameInp.value ? nameInp.value : "").trim();
+      const enabled = row.dataset.enabled !== "0";
       if (!url && !name) continue;
       if (!url) {
+        if (allowIncomplete) continue;
         return { error: "連結 " + (i + 1) + " 請填寫跳轉 URL" };
       }
       if (!name && autoName) {
         name = "渠道" + (out.length + 1);
-        if (nameInp) nameInp.value = name;
+        if (nameInp && !allowIncomplete) nameInp.value = name;
       }
       if (!name) {
-        return { error: "連結 " + (i + 1) + " 請填寫渠道名稱" };
+        if (allowIncomplete) {
+          name = "渠道" + (out.length + 1);
+        } else {
+          return { error: "連結 " + (i + 1) + " 請填寫渠道名稱" };
+        }
       }
       if (seenUrl[url]) {
+        if (allowIncomplete) continue;
         return { error: "連結 URL 重複：" + url };
       }
       let nameKey = name.toLowerCase();
@@ -2309,15 +2353,16 @@ ADMIN_SCRIPTS = """
         }
         name = unique;
         nameKey = name.toLowerCase();
-        if (nameInp) nameInp.value = name;
+        if (nameInp && !allowIncomplete) nameInp.value = name;
       }
       seenUrl[url] = true;
       seenName[nameKey] = true;
       const capRaw = capInp ? Number(capInp.value) : NaN;
       if (!Number.isFinite(capRaw) || capRaw < 1 || capRaw > 200) {
+        if (allowIncomplete) continue;
         return { error: "連結 " + (i + 1) + " 的當日上限須為 1–200 的整數" };
       }
-      out.push({ url: url, name: name, daily_cap: Math.floor(capRaw) });
+      out.push({ url: url, name: name, daily_cap: Math.floor(capRaw), enabled: enabled });
     }
     return { items: out };
   }
@@ -2378,21 +2423,28 @@ ADMIN_SCRIPTS = """
       const url = it.url || "";
       const fromCap = it.daily_cap != null ? it.daily_cap : 10;
       const fromName = it.name || it.channel || (url ? ("渠道" + (i + 1)) : "");
-      addDynamicTargetRow(url, fromCap, false, fromName);
+      const fromEnabled = it.enabled !== false && it.enabled !== 0 && it.enabled !== "0";
+      addDynamicTargetRow(url, fromCap, false, fromName, fromEnabled);
     }
     const valueEl = document.getElementById("qrValue");
-    if (valueEl) valueEl.value = (list[0] && list[0].url) || "";
+    if (valueEl) {
+      const firstEnabled = list.find(function(it) {
+        return it && it.url && it.enabled !== false && it.enabled !== 0 && it.enabled !== "0";
+      });
+      valueEl.value = (firstEnabled && firstEnabled.url) || (list[0] && list[0].url) || "";
+    }
     updateQrTargetCountHint();
   }
 
   function fillDynamicTargets(targets, items) {
-    // 優先以 qr_target_items（含渠道名）為準，避免只回填 URL 列表時丟名或條數不對
+    // 優先以 qr_target_items（含渠道名 / 啟用狀態）為準
     if (Array.isArray(items) && items.length) {
       const normalized = items.slice(0, QR_TARGET_POOL_MAX).map(function(it, idx) {
         return {
           url: (it && it.url) ? String(it.url) : "",
           name: (it && (it.name || it.channel)) ? String(it.name || it.channel) : ("渠道" + (idx + 1)),
-          daily_cap: (it && it.daily_cap != null) ? it.daily_cap : 10
+          daily_cap: (it && it.daily_cap != null) ? it.daily_cap : 10,
+          enabled: !(it && (it.enabled === false || it.enabled === 0 || it.enabled === "0"))
         };
       }).filter(function(it) { return !!it.url; });
       if (normalized.length) {
@@ -2402,7 +2454,7 @@ ADMIN_SCRIPTS = """
     }
     const list = Array.isArray(targets) ? targets.slice(0, QR_TARGET_POOL_MAX) : [];
     fillDynamicTargetsFromItems(list.map(function(url, idx) {
-      return { url: url, name: url ? ("渠道" + (idx + 1)) : "", daily_cap: 10 };
+      return { url: url, name: url ? ("渠道" + (idx + 1)) : "", daily_cap: 10, enabled: true };
     }));
   }
 
@@ -2493,17 +2545,19 @@ ADMIN_SCRIPTS = """
     }
     const targets = collectDynamicTargets();
     if (hint) {
-      const got = collectDynamicTargetItems();
+      const got = collectDynamicTargetItems({ autoName: true });
       const items = (!got.error && got.items) ? got.items : [];
+      const enabledItems = items.filter(function(it) { return it.enabled !== false; });
       hint.innerHTML = "固定碼連結：<strong>" + stableUrl + "</strong>"
         + (items.length
-          ? ("<br>跳轉池 " + items.length + " 條（掃碼隨機其一，儲存後生效）：<br>"
+          ? ("<br>跳轉池 " + items.length + " 條（已啟用 " + enabledItems.length + " 條；掃碼只從已啟用中隨機，儲存後生效）：<br>"
             + items.map(function(it, i){
-              return (i+1) + ". <strong>" + escapeHtml(it.name || ("渠道"+(i+1))) + "</strong> → " + escapeHtml(it.url);
+              const st = it.enabled === false ? "停用" : "啟用";
+              return (i+1) + ". [" + st + "] <strong>" + escapeHtml(it.name || ("渠道"+(i+1))) + "</strong> → " + escapeHtml(it.url);
             }).join("<br>"))
           : (targets.length
             ? ("<br>跳轉池 " + targets.length + " 條（掃碼隨機其一，儲存後生效）：<br>" + targets.map(function(u, i){ return (i+1) + ". " + escapeHtml(u); }).join("<br>"))
-            : "<br>請至少填寫 1 條跳轉連結與渠道名稱後點擊儲存"));
+            : "<br>請至少填寫並<strong>啟用</strong> 1 條跳轉連結後點擊儲存"));
     }
   }
 
@@ -2740,7 +2794,8 @@ ADMIN_SCRIPTS = """
             + daily.map(function(d, i) {
               const cap = (d.daily_cap != null) ? d.daily_cap : (current.qr_target_daily_cap || 10);
               const label = d.name || d.channel || ("渠道" + (i + 1));
-              return (i + 1) + ". <strong>" + escapeHtml(label) + "</strong> → "
+              const st = (d.enabled === false) ? "停用" : "啟用";
+              return (i + 1) + ". [" + st + "] <strong>" + escapeHtml(label) + "</strong> → "
                 + (d.hits_today || 0) + "/" + cap
                 + "（剩 " + (d.remaining_today != null ? d.remaining_today : "?") + "）"
                 + "<br><span style='color:#64748b'>" + escapeHtml(d.url || "") + "</span>";
@@ -2755,10 +2810,13 @@ ADMIN_SCRIPTS = """
           const totalAll = channelStats.reduce(function(s, d) { return s + (Number(d.hits_total) || 0); }, 0);
           const todayAll = channelStats.reduce(function(s, d) { return s + (Number(d.hits_today) || 0); }, 0);
           statsEl.innerHTML = "<strong>渠道數量統計</strong>（累計 / 今日）共累計 "
-            + totalAll + "、今日 " + todayAll + "<br>"
+            + totalAll + "、今日 " + todayAll
+            + "；已啟用 " + (current.qr_targets_enabled_count != null ? current.qr_targets_enabled_count : channelStats.filter(function(d){ return d.enabled !== false; }).length)
+            + " 條<br>"
             + channelStats.map(function(d, i) {
               const label = d.name || d.channel || ("渠道" + (i + 1));
-              return (i + 1) + ". <strong>" + escapeHtml(label) + "</strong>：累計 "
+              const st = (d.enabled === false) ? "停用" : "啟用";
+              return (i + 1) + ". [" + st + "] <strong>" + escapeHtml(label) + "</strong>：累計 "
                 + (d.hits_total || 0) + " · 今日 " + (d.hits_today || 0);
             }).join("<br>");
         } else {
@@ -2766,7 +2824,9 @@ ADMIN_SCRIPTS = """
           statsEl.textContent = "";
         }
       }
-      text.textContent = "v" + current.version + " · 動態碼池 " + targets.length + " 條（連續≤"
+      text.textContent = "v" + current.version + " · 動態碼池 " + targets.length + " 條（已啟用 "
+        + (current.qr_targets_enabled_count != null ? current.qr_targets_enabled_count : targets.length)
+        + "；連續≤"
         + (current.target_max_consecutive || current.qr_target_max_consecutive || 3)
         + " 次後換鏈） → " + (channelStats.map(function(d){ return d.name || d.url; }).join(" | ") || targets.join(" | ") || "");
       if (img) { img.style.display = "none"; }
@@ -2990,12 +3050,18 @@ ADMIN_SCRIPTS = """
         if (!it.name || !String(it.name).trim()) {
           it.name = "渠道" + (i + 1);
         }
+        if (it.enabled === undefined) it.enabled = true;
         if (!isHttpUrl(it.url) || isUploadOrImagePath(it.url)) {
           resultBox.textContent = "[ERROR] 連結池第 " + (i + 1) + " 條須為 http(s) 連結";
           return;
         }
       }
-      qrValue = qrTargets[0];
+      const enabledItems = qrTargetItems.filter(function(it) { return it.enabled !== false; });
+      if (!enabledItems.length) {
+        resultBox.textContent = "[ERROR] 請至少「啟用」1 條連結（可點行內綠色「已啟用 / 已停用」按鈕）";
+        return;
+      }
+      qrValue = enabledItems[0].url;
       const streakEl = document.getElementById("qrTargetMaxConsecutive");
       const streakRaw = streakEl ? Number(streakEl.value) : NaN;
       if (!Number.isFinite(streakRaw) || streakRaw < 1 || streakRaw > 20) {
@@ -3031,9 +3097,12 @@ ADMIN_SCRIPTS = """
       const savedCount = (res && res.qr_targets && res.qr_targets.length)
         ? res.qr_targets.length
         : (qrTargets ? qrTargets.length : 1);
+      const enabledCount = (res && res.qr_targets_enabled_count != null)
+        ? res.qr_targets_enabled_count
+        : (qrTargetItems || []).filter(function(it) { return it.enabled !== false; }).length;
       const capsSummary = (qrTargetItems || []).map(function(it) { return it.daily_cap; }).join("/");
       resultBox.textContent = mode === "dynamic"
-        ? ("[OK] 已儲存「" + group + "」動態連結池 " + savedCount + " 條（各連結當日上限 " + capsSummary + "；連續 " + targetMaxConsecutive + " 次後換鏈）\\n固定碼: " + (res.stable_qr_path || ("/r/" + group)) + "\\n提示：干預組與對照組需分別選擇後儲存，每組最多 " + QR_TARGET_POOL_MAX + " 條")
+        ? ("[OK] 已儲存「" + group + "」動態連結池 " + savedCount + " 條（已啟用 " + enabledCount + " 條；各連結當日上限 " + capsSummary + "；連續 " + targetMaxConsecutive + " 次後換鏈）\\n固定碼: " + (res.stable_qr_path || ("/r/" + group)) + "\\n提示：掃碼只會跳轉「已啟用」連結；干預/對照需分別儲存")
         : "[OK] 已儲存二維碼設定（模式: " + mode + "）";
     } catch (err) {
       const detail = err && err.message ? String(err.message) : String(err);
@@ -3043,6 +3112,8 @@ ADMIN_SCRIPTS = """
         resultBox.textContent = "[ERROR] 動態模式的跳轉目標須為 URL（不可為已上傳的圖片路徑）";
       } else if (detail === "dynamic_qr_targets_too_many" || detail === "dynamic_qr_targets_max_5") {
         resultBox.textContent = "[ERROR] 動態跳轉連結最多 " + QR_TARGET_POOL_MAX + " 條";
+      } else if (detail === "dynamic_qr_enabled_target_required") {
+        resultBox.textContent = "[ERROR] 請至少啟用 1 條連結後再儲存";
       } else if (detail === "dynamic_qr_channel_name_required") {
         resultBox.textContent = "[ERROR] 每條連結請填寫渠道名稱（例如「渠道A」）";
       } else if (detail === "invalid_target_daily_cap") {
