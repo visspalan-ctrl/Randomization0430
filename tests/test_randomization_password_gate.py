@@ -680,7 +680,7 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     page = admin_get(client, "/admin/web", params={"page": "qr"})
     assert page.status_code == 200
     html = page.text
-    assert "2026-07-23-qr-remove-logo-ui-v1" in html
+    assert "2026-07-23-records-wa-wechat-label-v1" in html
     assert "二維碼（WhatsApp/微信）" in html
     assert "上傳微信二維碼" in html
     assert "儲存主碼設定" in html
@@ -718,7 +718,9 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     records_page = admin_get(client, "/admin/web", params={"page": "records"})
     assert records_page.status_code == 200
     records_html = records_page.text
-    assert "2026-07-23-qr-remove-logo-ui-v1" in records_html
+    assert "2026-07-23-records-wa-wechat-label-v1" in records_html
+    assert "WhatsApp/Wechat 號" in records_html
+    assert ">WhatsApp 號<" not in records_html
     assert 'id="recordsFilterChannelName"' in records_html
     assert 'id="recordsChannelCounts"' in records_html
     assert "rec-channel-name-input" in records_html

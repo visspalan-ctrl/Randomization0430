@@ -11,7 +11,7 @@ from app.models import (
 
 PageId = Literal["settings", "sites", "qr", "records"]
 
-ADMIN_UI_BUILD_ID = "2026-07-23-qr-remove-logo-ui-v1"
+ADMIN_UI_BUILD_ID = "2026-07-23-records-wa-wechat-label-v1"
 QR_TARGET_POOL_MAX = 30
 
 ADMIN_CSS = """
@@ -1187,7 +1187,7 @@ def panel_records() -> str:
           <button type="button" class="secondary" onclick="exportRecordsCsv()">匯出 CSV</button>
         </div>
       </div>
-      <p class="muted" style="margin:8px 0 0;font-size:12px;">多人可同時打開本頁改不同行；保存互不鎖定整表。重新整理前請先保存自己的修改（有未保存草稿時會提示）。「渠道名」對應二維碼連結池中的渠道命名（如「渠道A」），可從下拉選擇或手填。「歸屬周」：若站點已設歸屬周，入組時會自動寫入並在此顯示；可改寫覆蓋。「參加者姓名」在手機號右側；「WhatsApp 號」默認與手機號相同，可單獨修改。「已添加帳號」為手動核對（對方已添加或我方已添加對方），勾選後立即保存。Non-trial 記錄的「分組」可改 GENAI/HUMAN，Trial 記錄分組只讀。其餘修改後點該行「保存修改」或上方「全部保存」。</p>
+      <p class="muted" style="margin:8px 0 0;font-size:12px;">多人可同時打開本頁改不同行；保存互不鎖定整表。重新整理前請先保存自己的修改（有未保存草稿時會提示）。「渠道名」對應二維碼連結池中的渠道命名（如「渠道A」），可從下拉選擇或手填。「歸屬周」：若站點已設歸屬周，入組時會自動寫入並在此顯示；可改寫覆蓋。「參加者姓名」在手機號右側；「WhatsApp/Wechat 號」默認與手機號相同，可單獨修改。「已添加帳號」為手動核對（對方已添加或我方已添加對方），勾選後立即保存。Non-trial 記錄的「分組」可改 GENAI/HUMAN，Trial 記錄分組只讀。其餘修改後點該行「保存修改」或上方「全部保存」。</p>
       <div class="row" style="margin-top:10px;max-width:none;flex-wrap:wrap;">
         <div style="flex:1 1 0;min-width:0;">
           <label>站點</label>
@@ -1250,7 +1250,7 @@ def panel_records() -> str:
       <div id="recordsChannelCounts" class="muted" style="margin-top:10px;font-size:12px;color:#0c4a6e;"></div>
       <div class="table-wrap" style="margin-top:12px;">
         <table class="data" id="recordsTable">
-          <thead><tr><th>頁內序號</th><th class="sortable-th" id="recordsSortEnrollmentNo" title="點擊按入組編號排序">入組編號<span id="recordsSortEnrollmentNoIcon" class="sort-indicator"></span></th><th title="手動核對：對方已添加或我方已添加對方">已添加帳號</th><th title="參加者實際添加的渠道">添加渠道</th><th title="對應二維碼連結池渠道名稱">渠道名</th><th>歸屬周</th><th class="sortable-th" id="recordsSortSubjectCode" title="點擊按受試者編碼排序">受試者編碼<span id="recordsSortSubjectCodeIcon" class="sort-indicator"></span></th><th>手機號</th><th>WhatsApp 號</th><th>參加者姓名</th><th>站點</th><th>招募員姓名</th><th>分組</th><th>狀態</th><th>時間（香港時間）</th><th>操作</th></tr></thead>
+          <thead><tr><th>頁內序號</th><th class="sortable-th" id="recordsSortEnrollmentNo" title="點擊按入組編號排序">入組編號<span id="recordsSortEnrollmentNoIcon" class="sort-indicator"></span></th><th title="手動核對：對方已添加或我方已添加對方">已添加帳號</th><th title="參加者實際添加的渠道">添加渠道</th><th title="對應二維碼連結池渠道名稱">渠道名</th><th>歸屬周</th><th class="sortable-th" id="recordsSortSubjectCode" title="點擊按受試者編碼排序">受試者編碼<span id="recordsSortSubjectCodeIcon" class="sort-indicator"></span></th><th>手機號</th><th title="WhatsApp 或微信帳號，默認與手機號相同，可單獨修改">WhatsApp/Wechat 號</th><th>參加者姓名</th><th>站點</th><th>招募員姓名</th><th>分組</th><th>狀態</th><th>時間（香港時間）</th><th>操作</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -4166,7 +4166,7 @@ ADMIN_SCRIPTS = """
         + weekVal + "' placeholder='" + escapeHtml(weekHint) + "' title='" + escapeHtml(weekTitle) + "' /></td>"
         + "<td><input type='text' class='rec-subject-code-input' value='" + codeVal + "' placeholder='可選' /></td>"
         + "<td><input type='text' class='rec-phone-input' value='" + phoneVal + "' /></td>"
-        + "<td><input type='text' class='rec-whatsapp-input' value='" + waVal + "' title='默認與手機號相同，可單獨修改' /></td>"
+        + "<td><input type='text' class='rec-whatsapp-input' value='" + waVal + "' title='WhatsApp/Wechat 號：默認與手機號相同，可單獨修改' /></td>"
         + "<td><input type='text' class='rec-participant-name-input' value='" + pnameVal + "' placeholder='可選' /></td><td>"
         + escapeHtml(row.site_id) + "</td><td>"
         + escapeHtml(row.recruiter_id || "") + "</td><td class='rec-group-cell'>"
@@ -4591,7 +4591,7 @@ ADMIN_SCRIPTS = """
     }
     if (change.whatsapp !== undefined) {
       const wa = change.whatsapp.trim().replace(/\s+/g, "");
-      if (wa.length < 6) throw new Error("入組編號 " + en + " 的 WhatsApp 號至少 6 位");
+      if (wa.length < 6) throw new Error("入組編號 " + en + " 的 WhatsApp/Wechat 號至少 6 位");
       await api("/admin/randomization-records/whatsapp", "PATCH", {
         enrollment_no: en,
         whatsapp_number: wa,
@@ -4636,7 +4636,7 @@ ADMIN_SCRIPTS = """
     }
     if (change.subject_code !== undefined) parts.push("編碼");
     if (change.phone !== undefined) parts.push("手機號");
-    if (change.whatsapp !== undefined) parts.push("WhatsApp 號");
+    if (change.whatsapp !== undefined) parts.push("WhatsApp/Wechat 號");
     if (change.participant_name !== undefined) parts.push("參加者姓名");
     if (change.allocation_group !== undefined) parts.push("分組");
     if (change.assigned_recruitment_week !== undefined) parts.push("歸屬周");
@@ -4694,7 +4694,7 @@ ADMIN_SCRIPTS = """
     if (statusN) parts.push("狀態 " + statusN + " 條");
     if (codeN) parts.push("編碼 " + codeN + " 條");
     if (phoneN) parts.push("手機號 " + phoneN + " 條");
-    if (waN) parts.push("WhatsApp 號 " + waN + " 條");
+    if (waN) parts.push("WhatsApp/Wechat 號 " + waN + " 條");
     if (pnameN) parts.push("參加者姓名 " + pnameN + " 條");
     if (groupN) parts.push("分組 " + groupN + " 條");
     if (weekN) parts.push("歸屬周 " + weekN + " 條");
