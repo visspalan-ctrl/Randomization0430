@@ -11,7 +11,7 @@ from app.models import (
 
 PageId = Literal["settings", "sites", "qr", "records"]
 
-ADMIN_UI_BUILD_ID = "2026-07-23-qr-link-enable-v1"
+ADMIN_UI_BUILD_ID = "2026-07-23-qr-link-save-btn-v1"
 QR_TARGET_POOL_MAX = 30
 
 ADMIN_CSS = """
@@ -1089,7 +1089,7 @@ def panel_qr() -> str:
       <input id="qrValue" placeholder="https://wa.me/..." oninput="onQrValueInput()" />
       <div id="qrDynamicTargets" style="display:none;margin-top:10px;padding:12px;border:1px solid #bae6fd;border-radius:10px;background:#f0f9ff;">
         <label style="margin:0 0 6px;display:block;font-weight:600;color:#0369a1;">動態跳轉連結池（干預組 / 對照組各自最多 """ + str(QR_TARGET_POOL_MAX) + """ 條）</label>
-        <p class="muted" style="margin:0 0 10px;font-size:12px;">干預組與對照組的連結池<strong>分開儲存</strong>，互不影響；每組可點「添加連結」擴充至最多 """ + str(QR_TARGET_POOL_MAX) + """ 條。每條可用<strong>啟用 / 停用</strong>控制是否參與掃碼跳轉（停用不會刪除，儲存後生效）。印刷用固定碼不變；每次掃碼從<strong>已啟用</strong>連結中<strong>隨機</strong>跳轉一條。每條請填<strong>渠道名稱</strong>（可留空，儲存時自動命名為渠道1、渠道2…），並可各自設定當日出現上限（香港日，預設 10）。下方可設定「同一連結連續出現幾次後必須換鏈」。當日全部已啟用連結達上限後掃碼將暫時無法跳轉，翌日自動重置。切換組別前未儲存的修改會暫存在本頁，切回仍可繼續編輯。</p>
+        <p class="muted" style="margin:0 0 10px;font-size:12px;">干預組與對照組的連結池<strong>分開儲存</strong>，互不影響；每組可點「添加連結」擴充至最多 """ + str(QR_TARGET_POOL_MAX) + """ 條。填好<strong>渠道名稱</strong>與<strong>連結</strong>後，請點下方綠色<strong>保存連結</strong>寫入伺服器（啟用狀態、當日上限一併保存）。每條可用<strong>啟用 / 停用</strong>控制是否參與掃碼跳轉（停用不會刪除）。印刷用固定碼不變；每次掃碼從<strong>已啟用</strong>連結中<strong>隨機</strong>跳轉一條。渠道名稱可留空，保存時自動命名為渠道1、渠道2…。下方可設定「同一連結連續出現幾次後必須換鏈」。當日全部已啟用連結達上限後掃碼將暫時無法跳轉，翌日自動重置。切換組別前未保存的修改會暫存在本頁，切回仍可繼續編輯。</p>
         <div style="display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin:0 0 12px;">
           <div>
             <label for="qrTargetMaxConsecutive">連續出現幾次後換連結</label>
@@ -1102,8 +1102,10 @@ def panel_qr() -> str:
         <div id="qrTargetRows"></div>
         <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
           <button type="button" class="secondary" id="qrTargetAddBtn" onclick="addDynamicTargetRow('', 10, true, '', true)">添加連結</button>
+          <button type="button" id="qrTargetSaveBtn" onclick="saveQrLinks()" style="background:#059669;border-color:#047857;">保存連結</button>
           <span id="qrTargetCountHint" class="muted" style="font-size:12px;"></span>
         </div>
+        <p class="muted" style="margin:8px 0 0;font-size:12px;color:#0c4a6e;">「保存連結」只寫入當前組的渠道名稱、跳轉 URL、當日上限與啟用狀態；微信圖 / Logo 請用對應上傳按鈕。</p>
       </div>
       <div id="qrDynamicExtras" style="display:none;margin-top:10px;">
         <label>固定二維碼連結（印刷用，不變）</label>
@@ -2706,7 +2708,7 @@ ADMIN_SCRIPTS = """
     const group = document.getElementById("qrGroup").value;
     window.__qrGroupCurrent = group;
     if (preferDraft && applyQrPoolDraft(group)) {
-      text.textContent = "已恢復本頁未儲存的「" + group + "」連結池草稿（請記得點「儲存主碼設定」）";
+      text.textContent = "已恢復本頁未保存的「" + group + "」連結池草稿（請記得點「保存連結」）";
       if (img) img.style.display = "none";
       updateQrLivePreview();
       return;
@@ -2945,6 +2947,134 @@ ADMIN_SCRIPTS = """
     await saveQr();
   }
 
+  async function saveQrLinks() {
+    const wechatFile = document.getElementById("qrWechatFile");
+    if (wechatFile && wechatFile.files && wechatFile.files.length > 0) {
+      resultBox.textContent = "[ERROR] 已選擇微信圖片。請點「上傳微信二維碼」，不要點「保存連結」。";
+      return;
+    }
+    const fileInput = document.getElementById("qrFile");
+    if (fileInput && fileInput.files && fileInput.files.length > 0) {
+      fileInput.value = "";
+    }
+    // 保存連結一律按動態連結池處理
+    syncQrModeRadio("dynamic");
+    onQrModeChange();
+    const group = document.getElementById("qrGroup")?.value;
+    if (!group) {
+      resultBox.textContent = "[ERROR] 請先選擇干預組或對照組";
+      return;
+    }
+    let collected = collectDynamicTargetItems({ autoName: true });
+    if (collected.error) {
+      resultBox.textContent = "[ERROR] " + collected.error;
+      return;
+    }
+    let qrTargetItems = collected.items || [];
+    let qrTargets = qrTargetItems.map(function(it) { return it.url; });
+    if (!qrTargets.length) {
+      const suggested = recalledDynamicQrTarget(group);
+      const entered = window.prompt(
+        "請輸入至少 1 條跳轉 URL（例如 https://wa.me/852xxxxxxxx；可再點「添加連結」擴充）",
+        suggested
+      );
+      if (entered == null) {
+        resultBox.textContent = "[取消] 未保存連結";
+        return;
+      }
+      const url = String(entered).trim();
+      if (!isHttpUrl(url) || isUploadOrImagePath(url)) {
+        resultBox.textContent = "[ERROR] 跳轉目標須為 http(s) 連結，不能是圖片路徑";
+        return;
+      }
+      fillDynamicTargets([url], [{ url: url, name: "渠道1", daily_cap: 10, enabled: true }]);
+      collected = collectDynamicTargetItems({ autoName: true });
+      if (collected.error) {
+        resultBox.textContent = "[ERROR] " + collected.error;
+        return;
+      }
+      qrTargetItems = collected.items || [];
+      qrTargets = qrTargetItems.map(function(it) { return it.url; });
+    }
+    for (let i = 0; i < qrTargetItems.length; i++) {
+      const it = qrTargetItems[i];
+      if (!it.name || !String(it.name).trim()) it.name = "渠道" + (i + 1);
+      if (it.enabled === undefined) it.enabled = true;
+      if (!isHttpUrl(it.url) || isUploadOrImagePath(it.url)) {
+        resultBox.textContent = "[ERROR] 連結池第 " + (i + 1) + " 條須為 http(s) 連結";
+        return;
+      }
+    }
+    const enabledItems = qrTargetItems.filter(function(it) { return it.enabled !== false; });
+    if (!enabledItems.length) {
+      resultBox.textContent = "[ERROR] 請至少「啟用」1 條連結（可點行內「已啟用 / 已停用」按鈕）";
+      return;
+    }
+    const streakEl = document.getElementById("qrTargetMaxConsecutive");
+    const streakRaw = streakEl ? Number(streakEl.value) : NaN;
+    if (!Number.isFinite(streakRaw) || streakRaw < 1 || streakRaw > 20) {
+      resultBox.textContent = "[ERROR] 「連續出現幾次後換連結」須為 1–20 的整數";
+      return;
+    }
+    const targetMaxConsecutive = Math.floor(streakRaw);
+    const qrValue = enabledItems[0].url;
+    const saveBtn = document.getElementById("qrTargetSaveBtn");
+    if (saveBtn) saveBtn.disabled = true;
+    try {
+      const body = {
+        group: group,
+        qr_mode: "dynamic",
+        qr_value: qrValue,
+        qr_target_items: qrTargetItems,
+        qr_targets: qrTargets,
+        target_max_consecutive: targetMaxConsecutive,
+        changed_by: document.getElementById("qrBy").value || "admin",
+        reason: document.getElementById("qrReason").value || "save link pool"
+      };
+      const res = await api("/admin/qr-config", "POST", body);
+      rememberDynamicQrTarget(group, qrValue);
+      markQrPoolDraftSaved(group, qrTargetItems, "dynamic", targetMaxConsecutive);
+      await loadQrCurrent({ preferDraft: false });
+      const savedCount = (res && res.qr_targets && res.qr_targets.length)
+        ? res.qr_targets.length
+        : qrTargets.length;
+      const enabledCount = (res && res.qr_targets_enabled_count != null)
+        ? res.qr_targets_enabled_count
+        : enabledItems.length;
+      const lines = qrTargetItems.map(function(it, i) {
+        const st = it.enabled === false ? "停用" : "啟用";
+        return (i + 1) + ". [" + st + "] " + (it.name || ("渠道" + (i + 1))) + " → " + it.url;
+      });
+      resultBox.textContent = "[OK] 已保存「" + group + "」連結 "
+        + savedCount + " 條（已啟用 " + enabledCount + " 條）\\n"
+        + "已寫入：渠道名稱 + 跳轉連結\\n"
+        + lines.join("\\n")
+        + "\\n固定碼: " + (res.stable_qr_path || ("/r/" + group))
+        + "\\n提示：干預組 / 對照組請分別選擇後再點「保存連結」";
+    } catch (err) {
+      const detail = err && err.message ? String(err.message) : String(err);
+      if (detail === "dynamic_qr_target_required") {
+        resultBox.textContent = "[ERROR] 請至少填寫 1 條跳轉連結（例如 https://wa.me/...）";
+      } else if (detail === "dynamic_qr_target_must_be_url") {
+        resultBox.textContent = "[ERROR] 跳轉目標須為 http(s) 連結（不可為已上傳的圖片路徑）";
+      } else if (detail === "dynamic_qr_targets_too_many" || detail === "dynamic_qr_targets_max_5") {
+        resultBox.textContent = "[ERROR] 動態跳轉連結最多 " + QR_TARGET_POOL_MAX + " 條";
+      } else if (detail === "dynamic_qr_enabled_target_required") {
+        resultBox.textContent = "[ERROR] 請至少啟用 1 條連結後再保存";
+      } else if (detail === "dynamic_qr_channel_name_required") {
+        resultBox.textContent = "[ERROR] 每條連結請填寫渠道名稱（例如「渠道A」）";
+      } else if (detail === "invalid_target_daily_cap") {
+        resultBox.textContent = "[ERROR] 當日出現上限須為 1–200 的整數（每條連結各自設定）";
+      } else if (detail === "invalid_target_max_consecutive") {
+        resultBox.textContent = "[ERROR] 「連續出現幾次後換連結」須為 1–20 的整數";
+      } else {
+        resultBox.textContent = "[ERROR] 保存連結失敗\\n" + detail;
+      }
+    } finally {
+      if (saveBtn) saveBtn.disabled = false;
+    }
+  }
+
   async function saveQr() {
     const mode = document.getElementById("qrMode")?.value || "static_url";
     const group = document.getElementById("qrGroup")?.value;
@@ -2957,10 +3087,10 @@ ADMIN_SCRIPTS = """
       resultBox.textContent = "[ERROR] 已選擇微信圖片。請點「上傳微信二維碼」，不要點「儲存主碼設定」。";
       return;
     }
-    // 動態模式下若誤選了主上傳檔案：禁止覆蓋 WhatsApp 連結
-    if (mode === "dynamic" && hasFile) {
-      if (fileInput) fileInput.value = "";
-      resultBox.textContent = "[ERROR] 當前是動態 WhatsApp 模式。微信圖片請用下方「上傳微信二維碼」；不要用「靜態圖片」上傳，否則跳轉目標會變成圖片路徑。";
+    // 動態模式：改走「保存連結」，專門保存渠道名稱與跳轉 URL
+    if (mode === "dynamic") {
+      if (hasFile && fileInput) fileInput.value = "";
+      await saveQrLinks();
       return;
     }
     // 僅在「靜態圖片」模式下走上傳；切回動態/靜態 URL 時忽略殘留的已選檔案

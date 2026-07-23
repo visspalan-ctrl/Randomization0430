@@ -680,7 +680,7 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     page = admin_get(client, "/admin/web", params={"page": "qr"})
     assert page.status_code == 200
     html = page.text
-    assert "2026-07-23-qr-link-enable-v1" in html
+    assert "2026-07-23-qr-link-save-btn-v1" in html
     assert "二維碼（WhatsApp/微信）" in html
     assert "上傳微信二維碼" in html
     assert "儲存主碼設定" in html
@@ -689,6 +689,9 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     assert 'id="qrDynamicTargets"' in html
     assert 'id="qrTargetRows"' in html
     assert 'id="qrTargetAddBtn"' in html
+    assert 'id="qrTargetSaveBtn"' in html
+    assert "saveQrLinks" in html
+    assert "保存連結" in html
     assert 'id="qrChannelStats"' in html
     assert "添加連結" in html
     assert "渠道名稱" in html
@@ -712,7 +715,7 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     records_page = admin_get(client, "/admin/web", params={"page": "records"})
     assert records_page.status_code == 200
     records_html = records_page.text
-    assert "2026-07-23-qr-link-enable-v1" in records_html
+    assert "2026-07-23-qr-link-save-btn-v1" in records_html
     assert 'id="recordsFilterChannelName"' in records_html
     assert 'id="recordsChannelCounts"' in records_html
     assert "rec-channel-name-input" in records_html
