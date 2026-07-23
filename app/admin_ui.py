@@ -11,7 +11,7 @@ from app.models import (
 
 PageId = Literal["settings", "sites", "qr", "records"]
 
-ADMIN_UI_BUILD_ID = "2026-07-23-records-wa-wechat-label-v1"
+ADMIN_UI_BUILD_ID = "2026-07-23-records-merged-search-v1"
 QR_TARGET_POOL_MAX = 30
 
 ADMIN_CSS = """
@@ -1214,13 +1214,9 @@ def panel_records() -> str:
             <option value="voided">作廢</option>
           </select>
         </div>
-        <div style="flex:1 1 0;min-width:0;">
-          <label>受試者編碼</label>
-          <input id="recordsFilterSubjectCode" type="search" placeholder="搜尋編碼（部分匹配）" autocomplete="off" />
-        </div>
-        <div style="flex:1 1 0;min-width:0;">
-          <label>手機號</label>
-          <input id="recordsFilterPhone" type="search" placeholder="搜尋手機號（部分匹配）" autocomplete="off" />
+        <div style="flex:1.4 1 12rem;min-width:12rem;">
+          <label>關鍵字搜尋</label>
+          <input id="recordsFilterKeyword" type="search" placeholder="編碼 / 手機號 / WhatsApp·Wechat 號 / 姓名" title="可搜尋受試者編碼、手機號、WhatsApp/Wechat 號、參加者姓名（部分匹配）" autocomplete="off" />
         </div>
         <div style="flex:1 1 0;min-width:0;">
           <label>已添加帳號</label>
@@ -4338,6 +4334,37 @@ ADMIN_SCRIPTS = """
     return String(raw).replace(/\s+/g, "").toLowerCase();
   }
 
+  function recordWhatsappForFilter(row) {
+    const en = row.enrollment_no;
+    const draft = (window.__recordsDrafts || {})[en];
+    const raw = draft && draft.whatsapp !== undefined ? draft.whatsapp : (row.whatsapp_number || "");
+    return String(raw).replace(/\s+/g, "").toLowerCase();
+  }
+
+  function recordParticipantNameForFilter(row) {
+    const en = row.enrollment_no;
+    const draft = (window.__recordsDrafts || {})[en];
+    if (draft && draft.participant_name !== undefined) return String(draft.participant_name || "").trim();
+    return String(row.participant_name || "").trim();
+  }
+
+  function recordMatchesKeyword(row, keywordRaw) {
+    const q = String(keywordRaw || "").trim().toLowerCase();
+    if (!q) return true;
+    const qCompact = q.replace(/\s+/g, "");
+    const code = recordSubjectCodeForFilter(row).toLowerCase();
+    const phone = recordPhoneForFilter(row);
+    const wa = recordWhatsappForFilter(row);
+    const name = recordParticipantNameForFilter(row).toLowerCase();
+    if (code && code.includes(q)) return true;
+    if (name && name.includes(q)) return true;
+    if (qCompact) {
+      if (phone && phone.includes(qCompact)) return true;
+      if (wa && wa.includes(qCompact)) return true;
+    }
+    return false;
+  }
+
   function compareEnrollmentNoSort(a, b, dir) {
     const ea = String(a.enrollment_no || "").trim();
     const eb = String(b.enrollment_no || "").trim();
@@ -4405,8 +4432,7 @@ ADMIN_SCRIPTS = """
     const date = (document.getElementById("recordsFilterDate")?.value || "").trim();
     const group = (document.getElementById("recordsFilterGroup")?.value || "").trim();
     const status = (document.getElementById("recordsFilterStatus")?.value || "").trim();
-    const codeQ = (document.getElementById("recordsFilterSubjectCode")?.value || "").trim().toLowerCase();
-    const phoneQ = (document.getElementById("recordsFilterPhone")?.value || "").trim().replace(/\s+/g, "").toLowerCase();
+    const keyword = (document.getElementById("recordsFilterKeyword")?.value || "").trim();
     const accountAdded = (document.getElementById("recordsFilterAccountAdded")?.value || "").trim();
     const contactChannel = (document.getElementById("recordsFilterContactChannel")?.value || "").trim();
     const channelNameFilter = (document.getElementById("recordsFilterChannelName")?.value || "").trim();
@@ -4422,14 +4448,7 @@ ADMIN_SCRIPTS = """
       if (channelNameFilter === "unset" && recordChannelNameForFilter(row)) return false;
       if (channelNameFilter && channelNameFilter !== "unset"
           && recordChannelNameForFilter(row) !== channelNameFilter) return false;
-      if (codeQ) {
-        const code = recordSubjectCodeForFilter(row).toLowerCase();
-        if (!code.includes(codeQ)) return false;
-      }
-      if (phoneQ) {
-        const phone = recordPhoneForFilter(row);
-        if (!phone.includes(phoneQ)) return false;
-      }
+      if (!recordMatchesKeyword(row, keyword)) return false;
       if (date) {
         const d = hkDateFromIso(row.randomized_at);
         if (d !== date) return false;
@@ -4456,7 +4475,7 @@ ADMIN_SCRIPTS = """
   }
 
   function resetRecordsFilter() {
-    const ids = ["recordsFilterSite", "recordsFilterDate", "recordsFilterGroup", "recordsFilterStatus", "recordsFilterSubjectCode", "recordsFilterPhone", "recordsFilterAccountAdded", "recordsFilterContactChannel", "recordsFilterChannelName"];
+    const ids = ["recordsFilterSite", "recordsFilterDate", "recordsFilterGroup", "recordsFilterStatus", "recordsFilterKeyword", "recordsFilterAccountAdded", "recordsFilterContactChannel", "recordsFilterChannelName"];
     ids.forEach(id => {
       const el = document.getElementById(id);
       if (!el) return;
@@ -4827,8 +4846,7 @@ ADMIN_SCRIPTS = """
     const dateInp = document.getElementById("recordsFilterDate");
     const groupSel = document.getElementById("recordsFilterGroup");
     const statusSel = document.getElementById("recordsFilterStatus");
-    const subjectCodeInp = document.getElementById("recordsFilterSubjectCode");
-    const phoneInp = document.getElementById("recordsFilterPhone");
+    const keywordInp = document.getElementById("recordsFilterKeyword");
     const accountAddedSel = document.getElementById("recordsFilterAccountAdded");
     const contactChannelSel = document.getElementById("recordsFilterContactChannel");
     const channelNameSel = document.getElementById("recordsFilterChannelName");
@@ -4849,11 +4867,7 @@ ADMIN_SCRIPTS = """
         applyRecordsFilter();
       });
     });
-    if (subjectCodeInp) subjectCodeInp.addEventListener("input", function() {
-      window.__recordsCurrentPage = 1;
-      applyRecordsFilter();
-    });
-    if (phoneInp) phoneInp.addEventListener("input", function() {
+    if (keywordInp) keywordInp.addEventListener("input", function() {
       window.__recordsCurrentPage = 1;
       applyRecordsFilter();
     });
