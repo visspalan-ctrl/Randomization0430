@@ -11,7 +11,7 @@ from app.models import (
 
 PageId = Literal["settings", "sites", "qr", "records"]
 
-ADMIN_UI_BUILD_ID = "2026-07-23-records-merged-search-v1"
+ADMIN_UI_BUILD_ID = "2026-07-23-records-filter-layout-v1"
 QR_TARGET_POOL_MAX = 30
 
 ADMIN_CSS = """
@@ -1188,59 +1188,61 @@ def panel_records() -> str:
         </div>
       </div>
       <p class="muted" style="margin:8px 0 0;font-size:12px;">多人可同時打開本頁改不同行；保存互不鎖定整表。重新整理前請先保存自己的修改（有未保存草稿時會提示）。「渠道名」對應二維碼連結池中的渠道命名（如「渠道A」），可從下拉選擇或手填。「歸屬周」：若站點已設歸屬周，入組時會自動寫入並在此顯示；可改寫覆蓋。「參加者姓名」在手機號右側；「WhatsApp/Wechat 號」默認與手機號相同，可單獨修改。「已添加帳號」為手動核對（對方已添加或我方已添加對方），勾選後立即保存。Non-trial 記錄的「分組」可改 GENAI/HUMAN，Trial 記錄分組只讀。其餘修改後點該行「保存修改」或上方「全部保存」。</p>
-      <div class="row" style="margin-top:10px;max-width:none;flex-wrap:wrap;">
-        <div style="flex:1 1 0;min-width:0;">
-          <label>站點</label>
-          <select id="recordsFilterSite">
-            <option value="">全部站點</option>
-          </select>
+      <div class="row records-filter-bar" style="margin-top:10px;max-width:none;flex-wrap:wrap;align-items:flex-end;gap:12px;">
+        <div class="records-filter-selects" style="display:flex;flex:1 1 auto;gap:12px;flex-wrap:wrap;min-width:0;align-items:flex-end;">
+          <div style="flex:1 1 7rem;min-width:6.5rem;max-width:11rem;">
+            <label>站點</label>
+            <select id="recordsFilterSite">
+              <option value="">全部站點</option>
+            </select>
+          </div>
+          <div style="flex:1 1 8rem;min-width:7.5rem;max-width:12rem;">
+            <label>日期（香港時間）</label>
+            <input id="recordsFilterDate" type="date" />
+          </div>
+          <div style="flex:1 1 6.5rem;min-width:6rem;max-width:10rem;">
+            <label>分組</label>
+            <select id="recordsFilterGroup">
+              <option value="">全部分組</option>
+            </select>
+          </div>
+          <div style="flex:1 1 6.5rem;min-width:6rem;max-width:10rem;">
+            <label>狀態</label>
+            <select id="recordsFilterStatus">
+              <option value="">全部狀態</option>
+              <option value="trial">Trial</option>
+              <option value="nontrial">Non-trial</option>
+              <option value="voided">作廢</option>
+            </select>
+          </div>
+          <div style="flex:1 1 7rem;min-width:6.5rem;max-width:11rem;">
+            <label>已添加帳號</label>
+            <select id="recordsFilterAccountAdded">
+              <option value="">全部</option>
+              <option value="no">僅未添加</option>
+              <option value="yes">僅已添加</option>
+            </select>
+          </div>
+          <div style="flex:1 1 7rem;min-width:6.5rem;max-width:11rem;">
+            <label>添加渠道</label>
+            <select id="recordsFilterContactChannel">
+              <option value="">全部</option>
+              <option value="whatsapp">WhatsApp</option>
+              <option value="wechat">微信</option>
+              <option value="unset">未選擇</option>
+            </select>
+          </div>
+          <div style="flex:1 1 7rem;min-width:6.5rem;max-width:11rem;">
+            <label>渠道名</label>
+            <select id="recordsFilterChannelName">
+              <option value="">全部</option>
+              <option value="unset">未填</option>
+            </select>
+          </div>
         </div>
-        <div style="flex:1 1 0;min-width:0;">
-          <label>日期（香港時間）</label>
-          <input id="recordsFilterDate" type="date" />
-        </div>
-        <div style="flex:1 1 0;min-width:0;">
-          <label>分組</label>
-          <select id="recordsFilterGroup">
-            <option value="">全部分組</option>
-          </select>
-        </div>
-        <div style="flex:1 1 0;min-width:0;">
-          <label>狀態</label>
-          <select id="recordsFilterStatus">
-            <option value="">全部狀態</option>
-            <option value="trial">Trial</option>
-            <option value="nontrial">Non-trial</option>
-            <option value="voided">作廢</option>
-          </select>
-        </div>
-        <div style="flex:1.4 1 12rem;min-width:12rem;">
+        <div class="records-filter-search" style="flex:0 1 18rem;min-width:14rem;margin-left:auto;">
           <label>關鍵字搜尋</label>
           <input id="recordsFilterKeyword" type="search" placeholder="編碼 / 手機號 / WhatsApp·Wechat 號 / 姓名" title="可搜尋受試者編碼、手機號、WhatsApp/Wechat 號、參加者姓名（部分匹配）" autocomplete="off" />
-        </div>
-        <div style="flex:1 1 0;min-width:0;">
-          <label>已添加帳號</label>
-          <select id="recordsFilterAccountAdded">
-            <option value="">全部</option>
-            <option value="no">僅未添加</option>
-            <option value="yes">僅已添加</option>
-          </select>
-        </div>
-        <div style="flex:1 1 0;min-width:0;">
-          <label>添加渠道</label>
-          <select id="recordsFilterContactChannel">
-            <option value="">全部</option>
-            <option value="whatsapp">WhatsApp</option>
-            <option value="wechat">微信</option>
-            <option value="unset">未選擇</option>
-          </select>
-        </div>
-        <div style="flex:1 1 0;min-width:0;">
-          <label>渠道名</label>
-          <select id="recordsFilterChannelName">
-            <option value="">全部</option>
-            <option value="unset">未填</option>
-          </select>
         </div>
       </div>
       <div id="recordsChannelCounts" class="muted" style="margin-top:10px;font-size:12px;color:#0c4a6e;"></div>
