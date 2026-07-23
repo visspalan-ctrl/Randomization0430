@@ -680,7 +680,7 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     page = admin_get(client, "/admin/web", params={"page": "qr"})
     assert page.status_code == 200
     html = page.text
-    assert "2026-07-22-records-channel-auto-v1" in html
+    assert "2026-07-23-qr-pool-draft-v1" in html
     assert "二維碼（WhatsApp/微信）" in html
     assert "上傳微信二維碼" in html
     assert "儲存主碼設定" in html
@@ -697,6 +697,9 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     assert 'id="qrTargetDailyCap"' not in html
     assert "連續出現幾次後換連結" in html
     assert "QR_TARGET_POOL_MAX" in html
+    assert "snapshotQrPoolDraft" in html
+    assert "reloadQrFromServer" in html
+    assert "干預組與對照組的連結池" in html
     assert "confirm_replace_dynamic" in html
     assert "REPLACE" in html
     assert "已選擇微信圖片" in html
@@ -706,7 +709,7 @@ def test_admin_qr_panel_isolates_wechat_from_main_upload():
     records_page = admin_get(client, "/admin/web", params={"page": "records"})
     assert records_page.status_code == 200
     records_html = records_page.text
-    assert "2026-07-22-records-channel-auto-v1" in records_html
+    assert "2026-07-23-qr-pool-draft-v1" in records_html
     assert 'id="recordsFilterChannelName"' in records_html
     assert 'id="recordsChannelCounts"' in records_html
     assert "rec-channel-name-input" in records_html
@@ -971,7 +974,7 @@ def test_dynamic_qr_channel_name_and_stats():
     assert saved.status_code == 200, saved.text
     assert {it["name"] for it in saved.json()["qr_target_items"]} == {"渠道甲", "渠道乙"}
 
-    missing_name = admin_post(
+    blank_name = admin_post(
         client,
         "/admin/qr-config",
         json={
@@ -981,9 +984,21 @@ def test_dynamic_qr_channel_name_and_stats():
             "changed_by": "admin",
         },
     )
-    assert missing_name.status_code == 400
-    assert missing_name.json()["detail"] == "dynamic_qr_channel_name_required"
+    assert blank_name.status_code == 200, blank_name.text
+    assert blank_name.json()["qr_target_items"][0]["name"] == "渠道1"
 
+    # 恢復雙渠道以便統計斷言
+    admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_target_items": items,
+            "changed_by": "admin",
+            "reason": "restore channels",
+        },
+    )
     for _ in range(5):
         r = client.get("/r/GENAI", follow_redirects=False)
         assert r.status_code == 302, r.text
@@ -998,6 +1013,53 @@ def test_dynamic_qr_channel_name_and_stats():
     daily = {d["name"]: d for d in genai["qr_targets_daily"]}
     assert daily["渠道甲"]["channel"] == "渠道甲"
     assert daily["渠道乙"]["url"] == "https://wa.me/ch_b"
+
+
+def test_both_groups_can_save_many_named_channels():
+    """干預組與對照組連結池各自獨立，均可保存遠多於 3/1 條。"""
+    client = TestClient(app)
+    genai_items = [
+        {"url": f"https://wa.me/genai_many_{i}", "name": f"干預渠道{i}", "daily_cap": 10}
+        for i in range(1, 9)
+    ]
+    human_items = [
+        {"url": f"https://wa.me/human_many_{i}", "name": f"對照渠道{i}", "daily_cap": 10}
+        for i in range(1, 6)
+    ]
+    g = admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "GENAI",
+            "qr_mode": "dynamic",
+            "qr_target_items": genai_items,
+            "changed_by": "admin",
+            "reason": "genai many",
+        },
+    )
+    assert g.status_code == 200, g.text
+    assert len(g.json()["qr_targets"]) == 8
+    h = admin_post(
+        client,
+        "/admin/qr-config",
+        json={
+            "group": "HUMAN",
+            "qr_mode": "dynamic",
+            "qr_target_items": human_items,
+            "changed_by": "admin",
+            "reason": "human many",
+        },
+    )
+    assert h.status_code == 200, h.text
+    assert len(h.json()["qr_targets"]) == 5
+
+    configs = admin_get(client, "/admin/qr-configs").json()
+    genai = next(i for i in configs["items"] if i["group_type"] == "GENAI")
+    human = next(i for i in configs["items"] if i["group_type"] == "HUMAN")
+    assert len(genai["qr_target_items"]) == 8
+    assert len(human["qr_target_items"]) == 5
+    assert {it["name"] for it in genai["qr_target_items"]} == {f"干預渠道{i}" for i in range(1, 9)}
+    assert {it["name"] for it in human["qr_target_items"]} == {f"對照渠道{i}" for i in range(1, 6)}
 
 
 def test_records_list_channel_name_edit_and_options():

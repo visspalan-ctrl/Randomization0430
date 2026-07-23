@@ -11,7 +11,7 @@ from app.models import (
 
 PageId = Literal["settings", "sites", "qr", "records"]
 
-ADMIN_UI_BUILD_ID = "2026-07-22-records-channel-auto-v1"
+ADMIN_UI_BUILD_ID = "2026-07-23-qr-pool-draft-v1"
 QR_TARGET_POOL_MAX = 30
 
 ADMIN_CSS = """
@@ -1088,8 +1088,8 @@ def panel_qr() -> str:
       <label id="qrValueLabel">跳轉目標（可隨時更換）</label>
       <input id="qrValue" placeholder="https://wa.me/..." oninput="onQrValueInput()" />
       <div id="qrDynamicTargets" style="display:none;margin-top:10px;padding:12px;border:1px solid #bae6fd;border-radius:10px;background:#f0f9ff;">
-        <label style="margin:0 0 6px;display:block;font-weight:600;color:#0369a1;">動態跳轉連結池（最多 """ + str(QR_TARGET_POOL_MAX) + """ 條）</label>
-        <p class="muted" style="margin:0 0 10px;font-size:12px;">印刷用固定碼不變；每次掃碼從下方已填連結中<strong>隨機</strong>跳轉一條。至少 1 條、最多 """ + str(QR_TARGET_POOL_MAX) + """ 條；點「添加連結」可新增。每條請填<strong>渠道名稱</strong>（例如「渠道A」），並可各自設定當日出現上限（香港日，預設 10）。下方可設定「同一連結連續出現幾次後必須換鏈」。當日全部達上限後掃碼將暫時無法跳轉，翌日自動重置。</p>
+        <label style="margin:0 0 6px;display:block;font-weight:600;color:#0369a1;">動態跳轉連結池（干預組 / 對照組各自最多 """ + str(QR_TARGET_POOL_MAX) + """ 條）</label>
+        <p class="muted" style="margin:0 0 10px;font-size:12px;">干預組與對照組的連結池<strong>分開儲存</strong>，互不影響；每組可點「添加連結」擴充至最多 """ + str(QR_TARGET_POOL_MAX) + """ 條。印刷用固定碼不變；每次掃碼從下方已填連結中<strong>隨機</strong>跳轉一條。每條請填<strong>渠道名稱</strong>（可留空，儲存時自動命名為渠道1、渠道2…），並可各自設定當日出現上限（香港日，預設 10）。下方可設定「同一連結連續出現幾次後必須換鏈」。當日全部達上限後掃碼將暫時無法跳轉，翌日自動重置。切換組別前未儲存的修改會暫存在本頁，切回仍可繼續編輯。</p>
         <div style="display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin:0 0 12px;">
           <div>
             <label for="qrTargetMaxConsecutive">連續出現幾次後換連結</label>
@@ -1127,7 +1127,7 @@ def panel_qr() -> str:
       <input id="qrReason" value="manual update" />
       <button type="button" onclick="saveQr()">儲存主碼設定</button>
       <button type="button" class="secondary" onclick="switchQrToDynamic()">一鍵切換為動態二維碼</button>
-      <button type="button" class="secondary" onclick="loadQrCurrent()">讀取當前</button>
+      <button type="button" class="secondary" onclick="reloadQrFromServer()">讀取當前</button>
       <p class="muted" style="margin:8px 0 0;font-size:11px;">QR 面板版本：""" + ADMIN_UI_BUILD_ID + """</p>
 
       <div class="participant-ui-card" style="margin-top:18px;">
@@ -2270,7 +2270,9 @@ ADMIN_SCRIPTS = """
     renumberQrTargetRows();
   }
 
-  function collectDynamicTargetItems() {
+  function collectDynamicTargetItems(opts) {
+    const options = opts || {};
+    const autoName = options.autoName !== false;
     const box = document.getElementById("qrTargetRows");
     const rows = box ? box.querySelectorAll(".qr-target-row") : [];
     const out = [];
@@ -2282,10 +2284,14 @@ ADMIN_SCRIPTS = """
       const urlInp = row.querySelector(".qr-target-url");
       const capInp = row.querySelector(".qr-target-cap");
       const url = (urlInp && urlInp.value ? urlInp.value : "").trim();
-      const name = (nameInp && nameInp.value ? nameInp.value : "").trim();
+      let name = (nameInp && nameInp.value ? nameInp.value : "").trim();
       if (!url && !name) continue;
       if (!url) {
         return { error: "連結 " + (i + 1) + " 請填寫跳轉 URL" };
+      }
+      if (!name && autoName) {
+        name = "渠道" + (out.length + 1);
+        if (nameInp) nameInp.value = name;
       }
       if (!name) {
         return { error: "連結 " + (i + 1) + " 請填寫渠道名稱" };
@@ -2293,9 +2299,17 @@ ADMIN_SCRIPTS = """
       if (seenUrl[url]) {
         return { error: "連結 URL 重複：" + url };
       }
-      const nameKey = name.toLowerCase();
+      let nameKey = name.toLowerCase();
       if (seenName[nameKey]) {
-        return { error: "渠道名稱重複：" + name };
+        let suffix = 2;
+        let unique = name + "-" + suffix;
+        while (seenName[unique.toLowerCase()]) {
+          suffix += 1;
+          unique = name + "-" + suffix;
+        }
+        name = unique;
+        nameKey = name.toLowerCase();
+        if (nameInp) nameInp.value = name;
       }
       seenUrl[url] = true;
       seenName[nameKey] = true;
@@ -2309,38 +2323,95 @@ ADMIN_SCRIPTS = """
   }
 
   function collectDynamicTargets() {
-    const got = collectDynamicTargetItems();
+    const got = collectDynamicTargetItems({ autoName: true });
     if (got.error) return [];
     return (got.items || []).map(function(it) { return it.url; });
   }
 
-  function fillDynamicTargets(targets, items) {
-    const list = Array.isArray(targets) ? targets.slice(0, QR_TARGET_POOL_MAX) : [];
-    const itemByUrl = {};
-    if (Array.isArray(items)) {
-      items.forEach(function(it) {
-        if (it && it.url) itemByUrl[String(it.url)] = it;
-      });
+  function snapshotQrPoolDraft(group) {
+    if (!group) return;
+    window.__qrPoolDrafts = window.__qrPoolDrafts || {};
+    const mode = document.getElementById("qrMode")?.value || "dynamic";
+    const streakEl = document.getElementById("qrTargetMaxConsecutive");
+    const collected = collectDynamicTargetItems({ autoName: true });
+    window.__qrPoolDrafts[group] = {
+      mode: mode,
+      items: (!collected.error && collected.items) ? collected.items.slice() : [],
+      target_max_consecutive: streakEl ? Number(streakEl.value) || 3 : 3,
+      dirty: true,
+      savedAt: Date.now()
+    };
+  }
+
+  function applyQrPoolDraft(group) {
+    const draft = (window.__qrPoolDrafts || {})[group];
+    if (!draft || !draft.dirty) return false;
+    if (draft.mode) syncQrModeRadio(draft.mode);
+    fillDynamicTargetsFromItems(draft.items || []);
+    const streakInp = document.getElementById("qrTargetMaxConsecutive");
+    if (streakInp && draft.target_max_consecutive) {
+      streakInp.value = String(draft.target_max_consecutive);
     }
+    onQrModeChange();
+    return true;
+  }
+
+  function markQrPoolDraftSaved(group, items, mode, streak) {
+    if (!group) return;
+    window.__qrPoolDrafts = window.__qrPoolDrafts || {};
+    window.__qrPoolDrafts[group] = {
+      mode: mode || "dynamic",
+      items: Array.isArray(items) ? items.slice() : [],
+      target_max_consecutive: streak || 3,
+      dirty: false,
+      savedAt: Date.now()
+    };
+  }
+
+  function fillDynamicTargetsFromItems(items) {
+    const list = Array.isArray(items) ? items.slice(0, QR_TARGET_POOL_MAX) : [];
     const box = document.getElementById("qrTargetRows");
     if (box) box.innerHTML = "";
     const count = Math.max(1, list.length);
     for (let i = 0; i < count; i++) {
-      const url = list[i] || "";
-      const fromItem = url && itemByUrl[url] ? itemByUrl[url] : null;
-      const fromCap = fromItem && fromItem.daily_cap != null ? fromItem.daily_cap : 10;
-      const fromName = fromItem ? (fromItem.name || fromItem.channel || "") : "";
-      addDynamicTargetRow(url, fromCap, false, fromName || (url ? ("渠道" + (i + 1)) : ""));
+      const it = list[i] || {};
+      const url = it.url || "";
+      const fromCap = it.daily_cap != null ? it.daily_cap : 10;
+      const fromName = it.name || it.channel || (url ? ("渠道" + (i + 1)) : "");
+      addDynamicTargetRow(url, fromCap, false, fromName);
     }
     const valueEl = document.getElementById("qrValue");
-    if (valueEl) valueEl.value = list[0] || "";
+    if (valueEl) valueEl.value = (list[0] && list[0].url) || "";
     updateQrTargetCountHint();
+  }
+
+  function fillDynamicTargets(targets, items) {
+    // 優先以 qr_target_items（含渠道名）為準，避免只回填 URL 列表時丟名或條數不對
+    if (Array.isArray(items) && items.length) {
+      const normalized = items.slice(0, QR_TARGET_POOL_MAX).map(function(it, idx) {
+        return {
+          url: (it && it.url) ? String(it.url) : "",
+          name: (it && (it.name || it.channel)) ? String(it.name || it.channel) : ("渠道" + (idx + 1)),
+          daily_cap: (it && it.daily_cap != null) ? it.daily_cap : 10
+        };
+      }).filter(function(it) { return !!it.url; });
+      if (normalized.length) {
+        fillDynamicTargetsFromItems(normalized);
+        return;
+      }
+    }
+    const list = Array.isArray(targets) ? targets.slice(0, QR_TARGET_POOL_MAX) : [];
+    fillDynamicTargetsFromItems(list.map(function(url, idx) {
+      return { url: url, name: url ? ("渠道" + (idx + 1)) : "", daily_cap: 10 };
+    }));
   }
 
   function onDynamicTargetsInput() {
     const targets = collectDynamicTargets();
     const valueEl = document.getElementById("qrValue");
     if (valueEl) valueEl.value = targets[0] || "";
+    const group = document.getElementById("qrGroup")?.value || window.__qrGroupCurrent;
+    if (group) snapshotQrPoolDraft(group);
     updateQrLivePreview();
   }
 
@@ -2377,8 +2448,10 @@ ADMIN_SCRIPTS = """
     }
     const group = document.getElementById("qrGroup")?.value || "";
     if (mode === "dynamic") {
-      const targets = collectDynamicTargets();
-      if (!targets.length) {
+      // 僅在「完全沒有已填 URL」時才回填預設；勿因校驗錯誤而清空已填多條
+      const got = collectDynamicTargetItems({ autoName: true });
+      const hasUrls = !!(got.items && got.items.length);
+      if (!hasUrls && qrTargetRowCount() <= 1) {
         const recalled = recalledDynamicQrTarget(group);
         fillDynamicTargets(recalled === "https://wa.me/" ? [] : [recalled]);
       }
@@ -2492,7 +2565,7 @@ ADMIN_SCRIPTS = """
     if (!res.ok) { resultBox.textContent = "[ERROR] logo upload\\n" + JSON.stringify(data, null, 2); return; }
     resultBox.textContent = "[OK] Logo 已上傳";
     fileInput.value = "";
-    await loadQrCurrent();
+    await loadQrCurrent({ preferDraft: false });
     updateQrLivePreview();
   }
 
@@ -2503,7 +2576,7 @@ ADMIN_SCRIPTS = """
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { resultBox.textContent = "[ERROR] remove logo\\n" + JSON.stringify(data, null, 2); return; }
     resultBox.textContent = "[OK] Logo 已移除";
-    await loadQrCurrent();
+    await loadQrCurrent({ preferDraft: false });
     updateQrLivePreview();
   }
 
@@ -2549,7 +2622,7 @@ ADMIN_SCRIPTS = """
     const keptMode = data.qr_mode || "";
     if (beforeValue && keptValue && beforeValue !== keptValue) {
       resultBox.textContent = "[ERROR] 異常：上傳微信後主碼跳轉目標被改動了（" + beforeValue + " → " + keptValue + "）。請立即用「一鍵切換為動態二維碼」恢復。";
-      await loadQrCurrent();
+      await loadQrCurrent({ preferDraft: false });
       return;
     }
     let msg = "[OK] 微信二維碼已上傳（主碼跳轉目標未改；入組結果將雙碼展示）";
@@ -2557,7 +2630,7 @@ ADMIN_SCRIPTS = """
     if (keptValue) msg += "\\nWhatsApp 跳轉連結：" + keptValue;
     resultBox.textContent = msg;
     fileInput.value = "";
-    await loadQrCurrent();
+    await loadQrCurrent({ preferDraft: false });
   }
 
   async function removeWechatQr() {
@@ -2567,14 +2640,23 @@ ADMIN_SCRIPTS = """
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { resultBox.textContent = "[ERROR] remove wechat\\n" + JSON.stringify(data, null, 2); return; }
     resultBox.textContent = "[OK] 微信二維碼已移除";
-    await loadQrCurrent();
+    await loadQrCurrent({ preferDraft: false });
   }
 
-  async function loadQrCurrent() {
+  async function loadQrCurrent(opts) {
+    const options = opts || {};
+    const preferDraft = options.preferDraft !== false;
     const text = document.getElementById("qrCurrentText");
     const img = document.getElementById("qrPreview");
     if (!text) return;
     const group = document.getElementById("qrGroup").value;
+    window.__qrGroupCurrent = group;
+    if (preferDraft && applyQrPoolDraft(group)) {
+      text.textContent = "已恢復本頁未儲存的「" + group + "」連結池草稿（請記得點「儲存主碼設定」）";
+      if (img) img.style.display = "none";
+      updateQrLivePreview();
+      return;
+    }
     const data = await api("/admin/qr-configs", "GET");
     const current = (data.items || []).find(x => x.group_type === group);
     if (!current) {
@@ -2598,14 +2680,24 @@ ADMIN_SCRIPTS = """
     const targets = (mode === "dynamic")
       ? ((current.qr_targets && current.qr_targets.length) ? current.qr_targets : (current.qr_value ? [current.qr_value] : []))
       : [];
-    const targetItems = (mode === "dynamic" && Array.isArray(current.qr_target_items))
+    const targetItems = (mode === "dynamic" && Array.isArray(current.qr_target_items) && current.qr_target_items.length)
       ? current.qr_target_items
-      : (Array.isArray(current.qr_targets_daily) ? current.qr_targets_daily : []);
+      : (mode === "dynamic" && Array.isArray(current.qr_targets_daily) ? current.qr_targets_daily : []);
     fillDynamicTargets(targets, targetItems);
     const streakInp = document.getElementById("qrTargetMaxConsecutive");
     if (streakInp) {
       const streakVal = current.target_max_consecutive || current.qr_target_max_consecutive || 3;
       streakInp.value = String(streakVal);
+    }
+    if (mode === "dynamic") {
+      markQrPoolDraftSaved(
+        group,
+        targetItems.length ? targetItems : targets.map(function(u, i) {
+          return { url: u, name: "渠道" + (i + 1), daily_cap: 10 };
+        }),
+        mode,
+        streakInp ? Number(streakInp.value) || 3 : 3
+      );
     }
     const stableInp = document.getElementById("qrStableUrl");
     if (stableInp) stableInp.value = current.stable_qr_url || "";
@@ -2694,6 +2786,11 @@ ADMIN_SCRIPTS = """
     else if (img) { img.style.display = "none"; }
   }
 
+  async function reloadQrFromServer() {
+    await loadQrCurrent({ preferDraft: false });
+    onQrModeChange();
+  }
+
   async function loadParticipantPageUi() {
     const cb = document.getElementById("h5ShowAllocationGroup");
     if (!cb) return;
@@ -2728,12 +2825,19 @@ ADMIN_SCRIPTS = """
   function onQrGroupChange() {
     const sel = document.getElementById("qrGroup");
     const nameInp = document.getElementById("groupNameCurrent");
+    const nextGroup = sel ? sel.value : "";
+    const prevGroup = window.__qrGroupCurrent || "";
+    // 切換組別前，把當前表單（仍是上一組的內容）暫存，避免未儲存連結丟失
+    if (prevGroup && prevGroup !== nextGroup) {
+      snapshotQrPoolDraft(prevGroup);
+    }
+    window.__qrGroupCurrent = nextGroup;
     if (sel && nameInp) {
       const labels = window.__groupLabels || { GENAI: "干預組", HUMAN: "對照組" };
       nameInp.value = labels[sel.value] || "";
       nameInp.placeholder = sel.value === "GENAI" ? "請輸入干預組名稱" : "請輸入對照組名稱";
     }
-    loadQrCurrent().then(() => onQrModeChange());
+    loadQrCurrent({ preferDraft: true }).then(() => onQrModeChange());
   }
 
   async function saveGroupLabels() {
@@ -2835,7 +2939,7 @@ ADMIN_SCRIPTS = """
       }
       resultBox.textContent = "[OK] 已用靜態圖替換主碼（跳轉目標現為圖片路徑；不再是動態 wa.me）";
       fileInput.value = "";
-      await loadQrCurrent();
+      await loadQrCurrent({ preferDraft: false });
       return;
     }
     if (mode === "static_image" && !hasFile) {
@@ -2850,7 +2954,7 @@ ADMIN_SCRIPTS = """
     let qrTargetItems = null;
     let targetMaxConsecutive = null;
     if (mode === "dynamic") {
-      let collected = collectDynamicTargetItems();
+      let collected = collectDynamicTargetItems({ autoName: true });
       if (collected.error) {
         resultBox.textContent = "[ERROR] " + collected.error;
         return;
@@ -2860,7 +2964,7 @@ ADMIN_SCRIPTS = """
       if (!qrTargets.length) {
         const suggested = recalledDynamicQrTarget(group);
         const entered = window.prompt(
-          "動態二維碼：請輸入至少 1 條跳轉 URL（例如 https://wa.me/852xxxxxxxx；可再點「添加連結」擴充）",
+          "動態二維碼：請輸入至少 1 條跳轉 URL（例如 https://wa.me/852xxxxxxxx；可再點「添加連結」擴充，干預/對照各最多 " + QR_TARGET_POOL_MAX + " 條）",
           suggested
         );
         if (entered == null) {
@@ -2873,7 +2977,7 @@ ADMIN_SCRIPTS = """
           return;
         }
         fillDynamicTargets([url], [{ url: url, name: "渠道1", daily_cap: 10 }]);
-        collected = collectDynamicTargetItems();
+        collected = collectDynamicTargetItems({ autoName: true });
         if (collected.error) {
           resultBox.textContent = "[ERROR] " + collected.error;
           return;
@@ -2884,8 +2988,7 @@ ADMIN_SCRIPTS = """
       for (let i = 0; i < qrTargetItems.length; i++) {
         const it = qrTargetItems[i];
         if (!it.name || !String(it.name).trim()) {
-          resultBox.textContent = "[ERROR] 連結池第 " + (i + 1) + " 條請填寫渠道名稱";
-          return;
+          it.name = "渠道" + (i + 1);
         }
         if (!isHttpUrl(it.url) || isUploadOrImagePath(it.url)) {
           resultBox.textContent = "[ERROR] 連結池第 " + (i + 1) + " 條須為 http(s) 連結";
@@ -2920,11 +3023,17 @@ ADMIN_SCRIPTS = """
         body.target_max_consecutive = targetMaxConsecutive;
       }
       const res = await api("/admin/qr-config", "POST", body);
-      if (mode === "dynamic") rememberDynamicQrTarget(group, qrValue);
-      await loadQrCurrent();
+      if (mode === "dynamic") {
+        rememberDynamicQrTarget(group, qrValue);
+        markQrPoolDraftSaved(group, qrTargetItems, mode, targetMaxConsecutive);
+      }
+      await loadQrCurrent({ preferDraft: false });
+      const savedCount = (res && res.qr_targets && res.qr_targets.length)
+        ? res.qr_targets.length
+        : (qrTargets ? qrTargets.length : 1);
       const capsSummary = (qrTargetItems || []).map(function(it) { return it.daily_cap; }).join("/");
       resultBox.textContent = mode === "dynamic"
-        ? ("[OK] 已儲存動態二維碼連結池（" + (qrTargets ? qrTargets.length : 1) + " 條；各連結當日上限 " + capsSummary + "；連續 " + targetMaxConsecutive + " 次後換鏈）\\n固定碼: " + (res.stable_qr_path || ("/r/" + group)))
+        ? ("[OK] 已儲存「" + group + "」動態連結池 " + savedCount + " 條（各連結當日上限 " + capsSummary + "；連續 " + targetMaxConsecutive + " 次後換鏈）\\n固定碼: " + (res.stable_qr_path || ("/r/" + group)) + "\\n提示：干預組與對照組需分別選擇後儲存，每組最多 " + QR_TARGET_POOL_MAX + " 條")
         : "[OK] 已儲存二維碼設定（模式: " + mode + "）";
     } catch (err) {
       const detail = err && err.message ? String(err.message) : String(err);

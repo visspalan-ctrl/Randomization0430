@@ -2698,7 +2698,8 @@ def update_qr_config(payload: QRUpdateRequest, db: Session = Depends(get_db)):
                     _normalize_target_daily_cap(it.daily_cap, required=True)
                 name = _normalize_channel_name(it.name)
                 if not name:
-                    raise HTTPException(status_code=400, detail="dynamic_qr_channel_name_required")
+                    # 允許空名：後續 normalize 會自動填「渠道N」
+                    name = ""
                 raw_items.append({"url": it.url, "name": name, "daily_cap": it.daily_cap})
         elif payload.qr_targets is not None:
             if len(payload.qr_targets) > DYNAMIC_QR_TARGET_MAX:
